@@ -11,10 +11,10 @@ namespace Easy4K.Services.CommandBuilders;
 public static class RifeCommandBuilder
 {
     /// <summary>构建补帧命令。targetFrames = 原帧数 × 倍率。
-    /// 正常模式不指定 -j，由 ncnn-vulkan 自动调用全部 CPU/GPU 资源；
-    /// 仅显存不足/崩溃降级时用 -j 1:1:1 单线程保稳定。</summary>
+    /// 不指定 -j 等限制参数，由 ncnn-vulkan 自动调用全部 CPU/GPU 资源；
+    /// 仅崩溃/OOM 降级重试时用 -j 1:1:1 单线程保稳定。</summary>
     public static string Build(string inputFramesDir, string outputFramesDir, string model,
-        long targetFrames, int ifThreads, bool lowVram)
+        long targetFrames, bool lowVram)
     {
         Directory.CreateDirectory(outputFramesDir);
         // -m 模型名（不含路径，工作目录=exe 目录）  -g 0  -n 目标帧数  -u UHD
@@ -22,10 +22,9 @@ public static class RifeCommandBuilder
 
         if (lowVram)
         {
-            // 显存不足/安全降级：单线程，避免 OOM
+            // OOM 降级重试：单线程，避免再次崩溃
             args += " -j 1:1:1";
         }
-        // 正常模式：不加 -j，ncnn-vulkan 自动调用最大并行
         return args;
     }
 

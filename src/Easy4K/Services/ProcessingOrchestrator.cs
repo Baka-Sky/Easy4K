@@ -96,18 +96,17 @@ public sealed class ProcessingOrchestrator
             else
             {
                 _logger.Info($"超分开始: 模型 {ctx.SrModel} ×{ctx.SrScale}");
-                var lowVram = ctx.Gpu.VramMB > 0 && ctx.Gpu.VramMB < 6144;
-                var args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, ctx.Gpu, ctx.Settings.SrThreads, lowVram);
+                var args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, lowVram: false);
                 _logger.Command($"realesrgan-ncnn-vulkan {args}");
                 var exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中", totalFrames,
                     ctx.Tools.RealEsrganExe, args, srFrames, ct);
                 if (exit != 0)
                 {
-                    // BUG-06：显存不足重试一次
+                    // BUG-06：显存不足重试一次（仅实际崩溃后才降级）
                     if (await IsOomRetryable())
                     {
-                        _logger.Warn("检测到显存不足，降级为 -u -j 1:1:1 重试");
-                        args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, ctx.Gpu, 1, true);
+                        _logger.Warn("检测到显存不足，降级为 -j 1:1:1 重试");
+                        args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, lowVram: true);
                         _logger.Command($"realesrgan-ncnn-vulkan {args}");
                         exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中(低显存)", totalFrames,
                             ctx.Tools.RealEsrganExe, args, srFrames, ct);
@@ -128,8 +127,7 @@ public sealed class ProcessingOrchestrator
             else
             {
                 _logger.Info($"补帧开始: 模型 {ctx.IfModel} ×{ctx.IfMultiplier} ({ctx.Video.FrameRate:0.##}→{outFps:0.##}fps)");
-                var lowVram = ctx.Gpu.VramMB > 0 && ctx.Gpu.VramMB < 6144;
-                var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, targetFrames, ctx.Settings.IfThreads, lowVram);
+                var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, targetFrames, lowVram: false);
                 _logger.Command($"rife-ncnn-vulkan {args}");
                 var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中", targetFrames,
                     ctx.Tools.RifeExe, args, ifFrames, ct);
@@ -139,25 +137,25 @@ public sealed class ProcessingOrchestrator
                 {
                     _logger.Warn($"模型 {ctx.IfModel} 不被命令行版支持（BUG-04），自动切换为 rife-v4.6");
                     ifFrames = CleanPartialOutput(ifFrames);
-                    var args2 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, "rife-v4.6", targetFrames, ctx.Settings.IfThreads, lowVram);
+                    var args2 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, "rife-v4.6", targetFrames, lowVram: false);
                     _logger.Command($"rife-ncnn-vulkan {args2}");
                     exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(回退v4.6)", targetFrames,
                         ctx.Tools.RifeExe, args2, ifFrames, ct);
                 }
                 if (exit != 0 && await IsOomRetryable())
                 {
-                    // 如果开启安全帧率，尝试降级
+                    // 仅实际崩溃后才降级重试（安全帧率开启时额外提示降级横幅）
                     var safe = ctx.Settings.UseSafeFrameRate;
-                    _logger.Warn(safe ? "显存不足，自动降级安全模式重试" : "显存不足，尝试低显存重试");
+                    _logger.Warn("检测到显存不足，降级为 -j 1:1:1 重试");
                     ifFrames = CleanPartialOutput(ifFrames);
-                    var args3 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, targetFrames, safe ? 1 : 1, true);
+                    var args3 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, targetFrames, lowVram: true);
                     _logger.Command($"rife-ncnn-vulkan {args3}");
                     exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, safe ? "补帧中(安全降级)" : "补帧中(低显存)", targetFrames,
                         ctx.Tools.RifeExe, args3, ifFrames, ct);
                     // 安全帧率降级后通知 UI 显示横幅
                     if (safe && exit == 0)
                     {
-                        ProgressChanged?.Invoke(new ProcessProgress { DegradeNotice = "已降级运行：安全帧率模式（1线程低显存）" });
+                        ProgressChanged?.Invoke(new ProcessProgress { DegradeNotice = "已降级运行：安全帧率模式（单线程低显存）" });
                     }
                 }
                 if (exit != 0) return Fail("补帧失败");

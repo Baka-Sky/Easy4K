@@ -13,21 +13,20 @@ namespace Easy4K.Services.CommandBuilders;
 public static class RealEsrganCommandBuilder
 {
     /// <summary>构建超分命令。model 已是完整文件名（如 realesr-animevideov3-x2）。
-    /// 正常模式不指定 -j，由 ncnn-vulkan 自动调用全部 CPU/GPU 资源；
-    /// 仅显存不足/崩溃降级时用 -j 1:1:1 单线程保稳定。</summary>
+    /// 不指定 -t/-j 等限制参数，由 ncnn-vulkan 自动调用全部 CPU/GPU 资源；
+    /// 仅崩溃/OOM 降级重试时用 -j 1:1:1 单线程保稳定。</summary>
     public static string Build(string inputFramesDir, string outputFramesDir, string model,
-        int scale, GpuInfo gpu, int srThreads, bool lowVram)
+        int scale, bool lowVram)
     {
         Directory.CreateDirectory(outputFramesDir);
-        // -g 0 GPU0；-t 200 tile=200；-s scale 显式指定倍率；-n model
-        var args = $"-i \"{inputFramesDir}\" -o \"{outputFramesDir}\" -n {model} -s {scale} -g 0 -t 200";
+        // -g 0 GPU0；-s scale 显式指定倍率；-n model
+        var args = $"-i \"{inputFramesDir}\" -o \"{outputFramesDir}\" -n {model} -s {scale} -g 0";
 
         if (lowVram)
         {
-            // 显存不足/安全降级：单线程，避免 OOM
+            // OOM 降级重试：单线程，避免再次崩溃
             args += " -j 1:1:1";
         }
-        // 正常模式：不加 -j，ncnn-vulkan 自动调用最大并行
         return args;
     }
 

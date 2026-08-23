@@ -12,8 +12,6 @@ public sealed class AppSettings
     public int DefaultSrScale { get; set; } = 2;
     public int DefaultIfMultiplier { get; set; } = 2;
 
-    public int SrThreads { get; set; } = 2;
-    public int IfThreads { get; set; } = 2;
     public bool UseSafeFrameRate { get; set; } = false;
     public string EncodePreset { get; set; } = "medium";
 

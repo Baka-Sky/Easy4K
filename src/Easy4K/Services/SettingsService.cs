@@ -11,6 +11,7 @@ public sealed class SettingsService
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         WriteIndented = true,
+        PropertyNameCaseInsensitive = true, // 兼容文件里 PascalCase 与 Save 写入的 camelCase
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
@@ -34,9 +35,12 @@ public sealed class SettingsService
             {
                 using var stream = File.OpenRead(_settingsPath);
                 var doc = JsonDocument.Parse(stream);
-                if (doc.RootElement.TryGetProperty("appConfig", out var cfg))
+                // 兼容大小写：源文件用 PascalCase(AppConfig)，Save 写入 camelCase(appConfig)
+                if (doc.RootElement.TryGetProperty("AppConfig", out var cfg) ||
+                    doc.RootElement.TryGetProperty("appConfig", out cfg))
                     settings = cfg.Deserialize<AppSettings>(JsonOpts);
-                if (doc.RootElement.TryGetProperty("toolPaths", out var tp))
+                if (doc.RootElement.TryGetProperty("ToolPaths", out var tp) ||
+                    doc.RootElement.TryGetProperty("toolPaths", out tp))
                     paths = tp.Deserialize<ToolPathConfig>(JsonOpts);
             }
             catch
