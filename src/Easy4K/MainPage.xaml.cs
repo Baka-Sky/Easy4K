@@ -89,6 +89,43 @@ public sealed partial class MainPage : Page
         await doneDlg.ShowAsync();
     }
 
+    private async void OnSuperThreadChecked(object sender, RoutedEventArgs e)
+    {
+        // 确保两个 ContentDialog 都在 XamlRoot 可用时弹出
+        if (XamlRoot is null) return;
+
+        // 第一次警告
+        var dlg1 = new ContentDialog
+        {
+            Title = "警告：超级多线程",
+            Content = "开启超级多线程将调用 CPU 全部物理核心和 GPU 全部计算单元。\n\n系统可能出现短暂卡顿，这是正常现象。\n\n是否继续开启？",
+            PrimaryButtonText = "继续",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
+        };
+        if (await dlg1.ShowAsync() != ContentDialogResult.Primary)
+        {
+            SuperThreadCheck.IsChecked = false;
+            return;
+        }
+
+        // 第二次警告
+        var dlg2 = new ContentDialog
+        {
+            Title = "再次确认：超级多线程",
+            Content = "此模式下显卡和 CPU 将满载运行，可能影响其他正在运行的程序。\n\n如遇崩溃，请关闭此选项或开启安全帧率。\n\n确认开启？",
+            PrimaryButtonText = "确认开启",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
+        };
+        if (await dlg2.ShowAsync() != ContentDialogResult.Primary)
+        {
+            SuperThreadCheck.IsChecked = false;
+        }
+    }
+
     // ===================== 快捷键 =====================
 
     private async void OnAcceleratorOpen(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; await PickVideoAsync(); }

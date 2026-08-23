@@ -9,6 +9,8 @@ public sealed class ProcessProgress
     public long Total { get; set; }
     /// <summary>最新产出的帧文件路径（供预览图实时刷新，无则空）</summary>
     public string LatestFramePath { get; set; } = "";
+    /// <summary>降级提示文本（安全帧率触发时设置，空则无降级）</summary>
+    public string DegradeNotice { get; set; } = "";
     public double Percent => Total > 0 ? Math.Clamp(Current * 100.0 / Total, 0, 100) : 0;
     public string DetailText => Total > 0 ? $"{StageText} 第{Current}帧/共{Total}帧" : StageText;
 }

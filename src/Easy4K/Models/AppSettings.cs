@@ -14,6 +14,8 @@ public sealed class AppSettings
 
     public int SrThreads { get; set; } = 2;
     public int IfThreads { get; set; } = 2;
+    public bool UseSuperMultiThread { get; set; } = false;
+    public bool UseSafeFrameRate { get; set; } = false;
     public string EncodePreset { get; set; } = "medium";
 
     public string Language { get; set; } = "zh-CN";

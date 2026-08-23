@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8" ?>
+<?xml version="1.0" encoding="utf-8" ?>
 <Page
     x:Class="Easy4K.MainPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -226,14 +226,22 @@
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="饱和度" VerticalAlignment="Center" FontSize="12"/>
-                            <Slider  Grid.Column="1" Minimum="100" Maximum="400" StepFrequency="10" Value="{x:Bind Vm.HdrSaturation, Mode=TwoWay}" HorizontalAlignment="Stretch"/>
+                            <TextBlock Grid.Column="1" Text="200 (固定)" VerticalAlignment="Center" FontSize="12" Opacity="0.7"/>
                             <TextBlock Grid.Column="2" Text="对比度" VerticalAlignment="Center" FontSize="12"/>
-                            <Slider  Grid.Column="3" Minimum="100" Maximum="400" StepFrequency="10" Value="{x:Bind Vm.HdrContrast, Mode=TwoWay}" HorizontalAlignment="Stretch"/>
+                            <TextBlock Grid.Column="3" Text="200 (固定)" VerticalAlignment="Center" FontSize="12" Opacity="0.7"/>
                         </Grid>
                     </StackPanel>
                 </Border>
 
                 <!-- 警告/提示 -->
+                <Border Style="{StaticResource CardBorder}" BorderBrush="Orange" Background="{ThemeResource WarnBgBrush}">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="高级性能选项" Style="{StaticResource SectionTitle}"/>
+                        <CheckBox x:Name="SuperThreadCheck" Content="开启超级多线程 (需显卡支持)" IsChecked="{x:Bind Vm.UseSuperMultiThread, Mode=TwoWay}" Checked="OnSuperThreadChecked" FontSize="12"/>
+                        <CheckBox Content="开启安全帧率 (自动降级)" IsChecked="{x:Bind Vm.UseSafeFrameRate, Mode=TwoWay}" FontSize="12"/>
+                    </StackPanel>
+                </Border>
+
                 <Border Style="{StaticResource CardBorder}" BorderBrush="Orange" Background="{ThemeResource WarnBgBrush}">
                     <StackPanel Spacing="2">
                         <TextBlock Text="警告 / 提示" Style="{StaticResource SectionTitle}"/>

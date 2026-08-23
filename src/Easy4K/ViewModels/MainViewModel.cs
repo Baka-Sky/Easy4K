@@ -23,6 +23,7 @@ public partial class MainViewModel : ObservableObject
     private readonly ProcessRunner _runner;
     private CancellationTokenSource? _cts;
     private AppSettings _app;
+    private readonly ToolPathConfig _pathConfig;
     private readonly CpuGpuMonitor _monitor = new();
     private DateTime _startTime;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcherQueue;
@@ -52,6 +53,7 @@ public partial class MainViewModel : ObservableObject
         _orchestratorAssigned = orchestrator;
         _runner = runner;
         _app = app;
+        _pathConfig = toolCfg;
         _dispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
         // 日志追加调度到 UI 线程，保证 ObservableCollection 只在 UI 线程修改
         _logger.UiDispatcher = action => _dispatcherQueue.TryEnqueue(() => action());
@@ -69,6 +71,8 @@ public partial class MainViewModel : ObservableObject
         _ifMultiplier = app.DefaultIfMultiplier;
         _srModel = app.DefaultSrModel;
         _ifModel = app.DefaultIfModel;
+        _useSuperMultiThread = app.UseSuperMultiThread;
+        _useSafeFrameRate = app.UseSafeFrameRate;
 
         RefreshSrModels();
         RefreshIfModels();
@@ -169,6 +173,37 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanStart))]
     [NotifyPropertyChangedFor(nameof(CanStop))]
     private bool _isProcessing;
+
+    [ObservableProperty]
+    private bool _useSuperMultiThread;
+
+    [ObservableProperty]
+    private bool _useSafeFrameRate;
+
+    partial void OnUseSuperMultiThreadChanged(bool value)
+    {
+        if (value && UseSafeFrameRate) UseSafeFrameRate = false;
+        _app.UseSuperMultiThread = value;
+        _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnUseSafeFrameRateChanged(bool value)
+    {
+        if (value && UseSuperMultiThread) UseSuperMultiThread = false;
+        _app.UseSafeFrameRate = value;
+        _settings.Save(_app, _pathConfig);
+    }
+
+    /// <summary>开启超级多线程时由 UI 调用：连续弹两次确认警告。</summary>
+    public event Func<string, string, Task<bool>>? ShowDualWarningDialog;
+
+    /// <summary>安全帧率降级状态（供 ProgressPage 显示降级横幅）</summary>
+    [ObservableProperty]
+    private bool _isDegraded;
+
+    /// <summary>降级提示文本</summary>
+    [ObservableProperty]
+    private string _degradeNotice = "";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ProgressText))]
@@ -468,6 +503,8 @@ public partial class MainViewModel : ObservableObject
         ProgressDetail = "准备中...";
         Stage = ProcessStage.Idle;
         LatestFramePath = "";
+        IsDegraded = false;
+        DegradeNotice = "";
         _startTime = DateTime.Now;
         _monitor.Start(250); // 250ms 采样，CPU/GPU 更实时
         ProcessingStarted?.Invoke();
@@ -555,6 +592,14 @@ public partial class MainViewModel : ObservableObject
         // 后台线程 → 调度回 UI 线程更新进度/预览属性（供进行中页绑定）
         _dispatcherQueue.TryEnqueue(() =>
         {
+            // 降级通知（安全帧率触发时）
+            if (!string.IsNullOrEmpty(p.DegradeNotice))
+            {
+                IsDegraded = true;
+                DegradeNotice = p.DegradeNotice;
+                return;
+            }
+
             // 预览专用更新（只有 LatestFramePath、无进度数据）→ 只刷预览图，不动进度条，
             // 否则拆帧时轮询任务每 200ms 把 Total=0 的进度推来，进度条会乱蹦
             if (p.Total <= 0 && !string.IsNullOrEmpty(p.LatestFramePath))
@@ -663,8 +708,20 @@ public partial class MainViewModel : ObservableObject
         {
             if (Directory.Exists(TempRoot))
             {
-                Directory.Delete(TempRoot, recursive: true);
-                var msg = $"已清理临时目录: {TempRoot}";
+                // 只清理 TempRoot 下的子目录和文件，不删除 TempRoot 本身，
+                // 避免 TempRoot 与 OutputRoot 存在父子关系时误删输出
+                var count = 0;
+                foreach (var d in Directory.GetDirectories(TempRoot))
+                {
+                    try { Directory.Delete(d, recursive: true); count++; } catch { }
+                }
+                foreach (var f in Directory.GetFiles(TempRoot))
+                {
+                    try { File.Delete(f); count++; } catch { }
+                }
+                var msg = count > 0
+                    ? $"已清理 {count} 个临时项目: {TempRoot}"
+                    : "临时目录为空，无需清理";
                 _logger.Success(msg);
                 return msg;
             }
@@ -760,6 +817,6 @@ public partial class MainViewModel : ObservableObject
         _app.DefaultIfModel = IfModel;
         _app.DefaultSrScale = SrScale;
         _app.DefaultIfMultiplier = IfMultiplier;
-        _settings.Save(_app, new ToolPathConfig());
+        _settings.Save(_app, _pathConfig);
     }
 }

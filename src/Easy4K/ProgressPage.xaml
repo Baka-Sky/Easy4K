@@ -37,13 +37,20 @@
 
     <Grid Padding="16" RowSpacing="8">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="280"/>
+            <RowDefinition Height="Auto"/>      <!-- 降级横幅 -->
+            <RowDefinition Height="Auto"/>      <!-- 顶部进度条 -->
+            <RowDefinition Height="*"/>         <!-- 预览图占满剩余 -->
+            <RowDefinition Height="280"/>       <!-- 底部固定280px -->
         </Grid.RowDefinitions>
 
+        <!-- 降级横幅（安全帧率降级时显示） -->
+        <Border Grid.Row="0" x:Name="DegradeBanner" CornerRadius="6" Background="#40FF6600" Padding="10,6" Margin="0,0,0,4"
+                Visibility="{x:Bind Vm.IsDegraded, Mode=OneWay}">
+            <TextBlock Text="{x:Bind Vm.DegradeNotice, Mode=OneWay}" FontWeight="SemiBold" FontSize="12" Foreground="#FFFF8800"/>
+        </Border>
+
         <!-- 顶部：总进度 -->
-        <StackPanel Grid.Row="0" Spacing="6">
+        <StackPanel Grid.Row="1" Spacing="6">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -57,7 +64,7 @@
         </StackPanel>
 
         <!-- 预览图（占满剩余空间） -->
-        <Border Grid.Row="1" Style="{StaticResource CardBorder}">
+        <Border Grid.Row="2" Style="{StaticResource CardBorder}">
             <Grid>
                 <TextBlock x:Name="PreviewHint" Text="预览区：处理开始后实时显示最新帧" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.4" FontSize="14"/>
                 <Image x:Name="PreviewImage" Stretch="Uniform"/>
@@ -65,7 +72,7 @@
         </Border>
 
         <!-- 下区：CMD 日志 + CPU/GPU -->
-        <Grid Grid.Row="2" ColumnSpacing="10">
+        <Grid Grid.Row="3" ColumnSpacing="10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>

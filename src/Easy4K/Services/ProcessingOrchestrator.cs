@@ -96,8 +96,12 @@ public sealed class ProcessingOrchestrator
             else
             {
                 _logger.Info($"超分开始: 模型 {ctx.SrModel} ×{ctx.SrScale}");
-                var lowVram = ctx.Gpu.VramMB > 0 && ctx.Gpu.VramMB < 6144;
-                var args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, ctx.Gpu, ctx.Settings.SrThreads, lowVram);
+                // 显存限制处理：超级多线程不限制显存（调用全部 Compute），普通模式则根据 VRAM 自动限制
+                var useSuperThreads = ctx.Settings.UseSuperMultiThread;
+                var lowVram = !useSuperThreads && ctx.Gpu.VramMB > 0 && ctx.Gpu.VramMB < 6144;
+                
+                var threads = useSuperThreads ? 0 : ctx.Settings.SrThreads; // 0 通常表示 vulkan 自动探测最大核心
+                var args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, ctx.Gpu, threads, lowVram);
                 _logger.Command($"realesrgan-ncnn-vulkan {args}");
                 var exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中", totalFrames,
                     ctx.Tools.RealEsrganExe, args, srFrames, ct);
@@ -128,8 +132,10 @@ public sealed class ProcessingOrchestrator
             else
             {
                 _logger.Info($"补帧开始: 模型 {ctx.IfModel} ×{ctx.IfMultiplier} ({ctx.Video.FrameRate:0.##}→{outFps:0.##}fps)");
-                var lowVram = ctx.Gpu.VramMB > 0 && ctx.Gpu.VramMB < 6144;
-                var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, targetFrames, ctx.Settings.IfThreads, lowVram);
+                var useSuperThreads = ctx.Settings.UseSuperMultiThread;
+                var lowVram = !useSuperThreads && ctx.Gpu.VramMB > 0 && ctx.Gpu.VramMB < 6144;
+                var threads = useSuperThreads ? 0 : ctx.Settings.IfThreads;
+                var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, targetFrames, threads, lowVram);
                 _logger.Command($"rife-ncnn-vulkan {args}");
                 var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中", targetFrames,
                     ctx.Tools.RifeExe, args, ifFrames, ct);
@@ -144,15 +150,21 @@ public sealed class ProcessingOrchestrator
                     exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(回退v4.6)", targetFrames,
                         ctx.Tools.RifeExe, args2, ifFrames, ct);
                 }
-                else if (exit != 0 && await IsOomRetryable())
+                if (exit != 0 && await IsOomRetryable())
                 {
-                    // BUG-06
-                    _logger.Warn("检测到显存不足，降级为 -j 1:1:1 重试");
+                    // 如果开启安全帧率，尝试降级
+                    var safe = ctx.Settings.UseSafeFrameRate;
+                    _logger.Warn(safe ? "显存不足，自动降级安全模式重试" : "显存不足，尝试低显存重试");
                     ifFrames = CleanPartialOutput(ifFrames);
-                    var args3 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, targetFrames, 1, true);
+                    var args3 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, targetFrames, safe ? 1 : 1, true);
                     _logger.Command($"rife-ncnn-vulkan {args3}");
-                    exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(低显存)", targetFrames,
+                    exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, safe ? "补帧中(安全降级)" : "补帧中(低显存)", targetFrames,
                         ctx.Tools.RifeExe, args3, ifFrames, ct);
+                    // 安全帧率降级后通知 UI 显示横幅
+                    if (safe && exit == 0)
+                    {
+                        ProgressChanged?.Invoke(new ProcessProgress { DegradeNotice = "已降级运行：安全帧率模式（1线程低显存）" });
+                    }
                 }
                 if (exit != 0) return Fail("补帧失败");
                 _logger.Success($"补帧完成: {CountFrames(ifFrames)} 帧");
