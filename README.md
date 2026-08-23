@@ -33,7 +33,7 @@
 
 ## 截图
 
-![主界面](screenshot.png)
+![主界面](demo.png)
 
 ## 快速开始
 
