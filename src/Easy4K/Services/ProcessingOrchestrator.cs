@@ -96,12 +96,8 @@ public sealed class ProcessingOrchestrator
             else
             {
                 _logger.Info($"超分开始: 模型 {ctx.SrModel} ×{ctx.SrScale}");
-                // 显存限制处理：超级多线程不限制显存（调用全部 Compute），普通模式则根据 VRAM 自动限制
-                var useSuperThreads = ctx.Settings.UseSuperMultiThread;
-                var lowVram = !useSuperThreads && ctx.Gpu.VramMB > 0 && ctx.Gpu.VramMB < 6144;
-                
-                var threads = useSuperThreads ? 0 : ctx.Settings.SrThreads; // 0 通常表示 vulkan 自动探测最大核心
-                var args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, ctx.Gpu, threads, lowVram);
+                var lowVram = ctx.Gpu.VramMB > 0 && ctx.Gpu.VramMB < 6144;
+                var args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, ctx.Gpu, ctx.Settings.SrThreads, lowVram);
                 _logger.Command($"realesrgan-ncnn-vulkan {args}");
                 var exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中", totalFrames,
                     ctx.Tools.RealEsrganExe, args, srFrames, ct);
@@ -132,10 +128,8 @@ public sealed class ProcessingOrchestrator
             else
             {
                 _logger.Info($"补帧开始: 模型 {ctx.IfModel} ×{ctx.IfMultiplier} ({ctx.Video.FrameRate:0.##}→{outFps:0.##}fps)");
-                var useSuperThreads = ctx.Settings.UseSuperMultiThread;
-                var lowVram = !useSuperThreads && ctx.Gpu.VramMB > 0 && ctx.Gpu.VramMB < 6144;
-                var threads = useSuperThreads ? 0 : ctx.Settings.IfThreads;
-                var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, targetFrames, threads, lowVram);
+                var lowVram = ctx.Gpu.VramMB > 0 && ctx.Gpu.VramMB < 6144;
+                var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, targetFrames, ctx.Settings.IfThreads, lowVram);
                 _logger.Command($"rife-ncnn-vulkan {args}");
                 var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中", targetFrames,
                     ctx.Tools.RifeExe, args, ifFrames, ct);

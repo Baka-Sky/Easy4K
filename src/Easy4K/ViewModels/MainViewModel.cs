@@ -71,7 +71,6 @@ public partial class MainViewModel : ObservableObject
         _ifMultiplier = app.DefaultIfMultiplier;
         _srModel = app.DefaultSrModel;
         _ifModel = app.DefaultIfModel;
-        _useSuperMultiThread = app.UseSuperMultiThread;
         _useSafeFrameRate = app.UseSafeFrameRate;
 
         RefreshSrModels();
@@ -175,27 +174,13 @@ public partial class MainViewModel : ObservableObject
     private bool _isProcessing;
 
     [ObservableProperty]
-    private bool _useSuperMultiThread;
-
-    [ObservableProperty]
     private bool _useSafeFrameRate;
-
-    partial void OnUseSuperMultiThreadChanged(bool value)
-    {
-        if (value && UseSafeFrameRate) UseSafeFrameRate = false;
-        _app.UseSuperMultiThread = value;
-        _settings.Save(_app, _pathConfig);
-    }
 
     partial void OnUseSafeFrameRateChanged(bool value)
     {
-        if (value && UseSuperMultiThread) UseSuperMultiThread = false;
         _app.UseSafeFrameRate = value;
         _settings.Save(_app, _pathConfig);
     }
-
-    /// <summary>开启超级多线程时由 UI 调用：连续弹两次确认警告。</summary>
-    public event Func<string, string, Task<bool>>? ShowDualWarningDialog;
 
     /// <summary>安全帧率降级状态（供 ProgressPage 显示降级横幅）</summary>
     [ObservableProperty]
@@ -702,35 +687,41 @@ public partial class MainViewModel : ObservableObject
         var _ = Task.Delay(800).ContinueWith(_ => Application.Current?.Exit(), TaskScheduler.Default);
     }
 
+    /// <summary>清理临时中间产物。只删除本软件已知的帧目录/中间文件，
+    /// 绝不删除 TempRoot 下的未知内容（防止误删用户输出）。</summary>
     public string CleanTemp()
     {
+        // 软件产生的全部中间产物名（不含输出视频）
+        string[] tempDirs = { "input_frames", "4k_frames", "output_frames" };
+        string[] tempFiles = { "audio.flac", "temp_video.mkv", "audio_embedded.mkv" };
+
         try
         {
+            var count = 0;
             if (Directory.Exists(TempRoot))
             {
-                // 只清理 TempRoot 下的子目录和文件，不删除 TempRoot 本身，
-                // 避免 TempRoot 与 OutputRoot 存在父子关系时误删输出
-                var count = 0;
-                foreach (var d in Directory.GetDirectories(TempRoot))
+                foreach (var d in tempDirs)
                 {
-                    try { Directory.Delete(d, recursive: true); count++; } catch { }
+                    var p = Path.Combine(TempRoot, d);
+                    if (Directory.Exists(p))
+                    {
+                        try { Directory.Delete(p, recursive: true); count++; } catch { }
+                    }
                 }
-                foreach (var f in Directory.GetFiles(TempRoot))
+                foreach (var f in tempFiles)
                 {
-                    try { File.Delete(f); count++; } catch { }
+                    var p = Path.Combine(TempRoot, f);
+                    if (File.Exists(p))
+                    {
+                        try { File.Delete(p); count++; } catch { }
+                    }
                 }
-                var msg = count > 0
-                    ? $"已清理 {count} 个临时项目: {TempRoot}"
-                    : "临时目录为空，无需清理";
-                _logger.Success(msg);
-                return msg;
             }
-            else
-            {
-                var msg = "临时目录不存在，无需清理";
-                _logger.Info(msg);
-                return msg;
-            }
+            var msg = count > 0
+                ? $"已清理 {count} 项临时产物: {TempRoot}"
+                : "临时目录中没有待清理的中间产物";
+            _logger.Success(msg);
+            return msg;
         }
         catch (Exception ex)
         {

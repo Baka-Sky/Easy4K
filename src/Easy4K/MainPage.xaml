@@ -237,7 +237,6 @@
                 <Border Style="{StaticResource CardBorder}" BorderBrush="Orange" Background="{ThemeResource WarnBgBrush}">
                     <StackPanel Spacing="2">
                         <TextBlock Text="高级性能选项" Style="{StaticResource SectionTitle}"/>
-                        <CheckBox x:Name="SuperThreadCheck" Content="开启超级多线程 (需显卡支持)" IsChecked="{x:Bind Vm.UseSuperMultiThread, Mode=TwoWay}" Checked="OnSuperThreadChecked" FontSize="12"/>
                         <CheckBox Content="开启安全帧率 (自动降级)" IsChecked="{x:Bind Vm.UseSafeFrameRate, Mode=TwoWay}" FontSize="12"/>
                     </StackPanel>
                 </Border>
