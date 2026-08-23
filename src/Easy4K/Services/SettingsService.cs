@@ -51,6 +51,13 @@ public sealed class SettingsService
 
         settings ??= new AppSettings();
         paths ??= new ToolPathConfig();
+
+        // 若文件不存在（首次运行）或解析失败，自动生成默认配置，方便用户编辑
+        if (!File.Exists(_settingsPath))
+        {
+            try { Save(settings, paths); } catch { }
+        }
+
         return (settings, paths);
     }
 

@@ -515,8 +515,9 @@ public partial class MainViewModel : ObservableObject
             SrScale = SrScale,
             IfModel = IfModel,
             IfMultiplier = IfMultiplier,
-            HdrSaturation = NvEncCommandBuilder.ClampParam(HdrSaturation),
-            HdrContrast = NvEncCommandBuilder.ClampParam(HdrContrast),
+            // HDR 参数固定 200/200（规格书要求，UI 已锁定）
+            HdrSaturation = 200,
+            HdrContrast = 200,
             Gpu = Gpu,
             Settings = _app,
             Tools = Tools
