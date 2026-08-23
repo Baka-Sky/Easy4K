@@ -1,0 +1,32 @@
+## 构建产物
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+publish/
+*.user
+*.suo
+*.binlog
+*.log
+*.trx
+.vs/
+.idea/
+
+## 运行时目录
+Temp/
+Output/
+crash.log
+
+## 外部工具与模型（体积大，不入库，发布时单独复制）
+Tools/
+FFmpeg-Lei/
+NVEncC_9.32_x64/
+realesrgan-ncnn/
+rife/
+
+## 备份与测试产物
+Backup_*/
+selftest_*.txt
+re_stderr.txt
+DebugINFO.txt

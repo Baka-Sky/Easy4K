@@ -1,0 +1,175 @@
+using Easy4K.Models;
+using Easy4K.ViewModels;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+
+namespace Easy4K;
+
+/// <summary>处理进行中页面：总进度 + 实时预览 + 命令输出 + CPU/GPU 压力。</summary>
+public sealed partial class ProgressPage : Page
+{
+    private MainViewModel Vm => App.Services;
+    private string _lastPreviewPath = "";
+    private int _previewSeq;
+
+    public ProgressPage()
+    {
+        InitializeComponent();
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
+    }
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        Vm.ProgressChanged += OnProgress;
+        Vm.ProcessingCompleted += OnProcessingCompleted;
+        Vm.Logger.EntryAdded += OnLogEntryAdded;
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        Vm.ProgressChanged -= OnProgress;
+        Vm.ProcessingCompleted -= OnProcessingCompleted;
+        Vm.Logger.EntryAdded -= OnLogEntryAdded;
+    }
+
+    /// <summary>新日志直接追加到 TextBox 文本（不闪烁），自动滚底，超上限裁剪最早行</summary>
+    private void OnLogEntryAdded(LogEntry entry)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                var newText = CommandLogBox.Text.Length > 0
+                    ? CommandLogBox.Text + "\r\n" + entry.LogText
+                    : entry.LogText;
+
+                const int maxLines = 200;
+                var lines = newText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+                if (lines.Length > maxLines)
+                    newText = string.Join("\r\n", lines, lines.Length - maxLines, maxLines);
+
+                CommandLogBox.Text = newText;
+                // 布局更新后滚到底部（只读 TextBox 用内部 ScrollViewer 滚动）
+                DispatcherQueue.TryEnqueue(ScrollLogToBottom);
+            }
+            catch { }
+        });
+    }
+
+    /// <summary>把命令日志滚动到底部</summary>
+    private void ScrollLogToBottom()
+    {
+        try
+        {
+            var scroller = FindScrollViewer(CommandLogBox);
+            if (scroller is not null)
+                scroller.ChangeView(null, scroller.ScrollableHeight, null, disableAnimation: true);
+        }
+        catch { }
+    }
+
+    private static ScrollViewer? FindScrollViewer(DependencyObject root)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is ScrollViewer sv) return sv;
+            var nested = FindScrollViewer(child);
+            if (nested is not null) return nested;
+        }
+        return null;
+    }
+
+    private void OnProgress(ProcessProgress p)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!string.IsNullOrEmpty(p.LatestFramePath) && p.LatestFramePath != _lastPreviewPath)
+            {
+                _lastPreviewPath = p.LatestFramePath;
+                UpdatePreviewAsync(p.LatestFramePath);
+            }
+        });
+    }
+
+    /// <summary>异步加载新帧，解码完成前旧帧保持显示，避免闪烁。</summary>
+    private async void UpdatePreviewAsync(string path)
+    {
+        var seq = ++_previewSeq;
+        try
+        {
+            // 用 FileStream + FileShare.ReadWrite 读，避免进程写帧时锁文件加载失败
+            using var fs = new System.IO.FileStream(
+                path, System.IO.FileMode.Open,
+                System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite);
+            var bmp = new BitmapImage();
+            // 等解码完成（期间旧帧不隐藏）；流在解码完成后才释放
+            await bmp.SetSourceAsync(fs.AsRandomAccessStream());
+            // 期间已有更新的帧 → 丢弃本次，防止旧解码覆盖新帧
+            if (seq != _previewSeq) return;
+            PreviewImage.Source = bmp;
+            PreviewHint.Visibility = Visibility.Collapsed;
+        }
+        catch { }
+    }
+
+    private void OnProcessingCompleted(ProcessingResult r)
+    {
+        DispatcherQueue.TryEnqueue(() => _ = ShowCompleteDialogAsync(r));
+    }
+
+    /// <summary>弹"当前任务已完成"窗体：绿勾 + 产出路径 + 步骤 + 耗时 + 是否清理冗余文件。</summary>
+    private async Task ShowCompleteDialogAsync(ProcessingResult r)
+    {
+        var check = new FontIcon
+        {
+            Glyph = "\uE73E",
+            FontSize = 48,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 80, 200, 100))
+        };
+
+        var panel = new StackPanel { Spacing = 10, MinWidth = 360 };
+        panel.Children.Add(new StackPanel
+        {
+            Spacing = 4,
+            Children =
+            {
+                check,
+                new TextBlock { Text = "当前任务已完成!", FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center }
+            }
+        });
+        panel.Children.Add(new TextBlock { Text = $"文件产出在：{r.OutputPath}", TextWrapping = TextWrapping.Wrap, FontSize = 13 });
+        panel.Children.Add(new TextBlock { Text = $"进行步骤：{r.StepsText}", TextWrapping = TextWrapping.Wrap, FontSize = 13 });
+        panel.Children.Add(new TextBlock { Text = $"总耗时：{FormatElapsed(r.Elapsed)}", FontSize = 13 });
+        panel.Children.Add(new TextBlock { Text = "是否清理冗余文件?", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 13 });
+
+        var dlg = new ContentDialog
+        {
+            Title = "完成",
+            Content = panel,
+            PrimaryButtonText = "是",
+            SecondaryButtonText = "否",
+            CloseButtonText = "取消",
+            XamlRoot = XamlRoot,
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        var result = await dlg.ShowAsync();
+        if (result == ContentDialogResult.Primary)
+        {
+            Vm.CleanTemp();
+        }
+    }
+
+    private static string FormatElapsed(TimeSpan t)
+        => t.TotalHours >= 1 ? $"{(int)t.TotalHours}小时{t.Minutes}分{t.Seconds}秒"
+           : t.TotalMinutes >= 1 ? $"{t.Minutes}分{t.Seconds}秒"
+           : $"{t.Seconds}秒";
+
+    private void OnStop(object sender, RoutedEventArgs e) => Vm.Stop();
+    private void OnCopyLog(object sender, RoutedEventArgs e) => Vm.CopyLog();
+    private void OnClearLog(object sender, RoutedEventArgs e) { Vm.ClearLog(); CommandLogBox.Text = ""; }
+}

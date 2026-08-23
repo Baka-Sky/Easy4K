@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Easy4K (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "Easy4K (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
