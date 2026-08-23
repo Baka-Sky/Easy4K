@@ -12,18 +12,25 @@ namespace Easy4K.Services.CommandBuilders;
 ///   -s 4 → realesr-animevideov3-x4 / realesrgan-x4plus / realesrgan-x4plus-anime</summary>
 public static class RealEsrganCommandBuilder
 {
-    /// <summary>构建超分命令。model 已是完整文件名（如 realesr-animevideov3-x2）。</summary>
+    /// <summary>构建超分命令。model 已是完整文件名（如 realesr-animevideov3-x2）。
+    /// srThreads=0 表示超级多线程模式：自动检测 CPU 物理核心数，最大化 GPU 并行。</summary>
     public static string Build(string inputFramesDir, string outputFramesDir, string model,
         int scale, GpuInfo gpu, int srThreads, bool lowVram)
     {
         Directory.CreateDirectory(outputFramesDir);
-        // -g 0 GPU0；-t 200 tile=200；-s scale 显式指定倍率（不依赖模型名推断）；-n model
+        // -g 0 GPU0；-t 200 tile=200；-s scale 显式指定倍率；-n model
         var args = $"-i \"{inputFramesDir}\" -o \"{outputFramesDir}\" -n {model} -s {scale} -g 0 -t 200";
 
-        // BUG-06：显存不足时降线程（-u 不被此版本 Real-ESRGAN 支持，已移除）
         if (lowVram || scale >= 3)
         {
+            // 低显存或高倍率：降线程保稳定
             args += " -j 1:1:1";
+        }
+        else if (srThreads == 0)
+        {
+            // 超级多线程：检测 CPU 物理核心数，最大化 load/proc/save 线程
+            var cores = Environment.ProcessorCount;
+            args += $" -j {cores}:{Math.Max(4, cores / 4)}:{Math.Max(2, cores / 8)}";
         }
         else
         {

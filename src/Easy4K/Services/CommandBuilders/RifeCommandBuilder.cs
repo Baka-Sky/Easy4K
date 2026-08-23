@@ -10,22 +10,27 @@ namespace Easy4K.Services.CommandBuilders;
 /// 模型查找：rife-v4.6 对应 rife\rife-v4.6\flownet.bin/.param（exe 工作目录就是 rife 根目录）。</summary>
 public static class RifeCommandBuilder
 {
-    /// <summary>构建补帧命令。targetFrames = 原帧数 × 倍率。</summary>
+    /// <summary>构建补帧命令。targetFrames = 原帧数 × 倍率。
+    /// ifThreads=0 表示超级多线程模式：自动检测 CPU 物理核心数，最大化 GPU 并行。</summary>
     public static string Build(string inputFramesDir, string outputFramesDir, string model,
         long targetFrames, int ifThreads, bool lowVram)
     {
         Directory.CreateDirectory(outputFramesDir);
         // -m 模型名（不含路径，工作目录=exe 目录）  -g 0  -n 目标帧数  -u UHD  -j 线程
-        var args = $"-i \"{inputFramesDir}\" -o \"{outputFramesDir}\" -m {model} -g 0 -n {targetFrames}";
+        var args = $"-i \"{inputFramesDir}\" -o \"{outputFramesDir}\" -m {model} -g 0 -n {targetFrames} -u";
 
-        // 4K 帧建议 -u；显存不足强制 -u + 降线程 (BUG-06)
         if (lowVram)
         {
-            args += " -u -j 1:1:1";
+            args += " -j 1:1:1";
+        }
+        else if (ifThreads == 0)
+        {
+            // 超级多线程：检测 CPU 物理核心数，最大化 load/proc/save 线程
+            var cores = Environment.ProcessorCount;
+            args += $" -j {cores}:{Math.Max(4, cores / 4)}:{Math.Max(2, cores / 8)}";
         }
         else
         {
-            args += " -u";
             var t = Math.Max(1, Math.Min(4, ifThreads));
             args += $" -j 1:{t}:{t}";
         }
