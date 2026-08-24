@@ -6,6 +6,8 @@ using Easy4K.Models;
 using Easy4K.Services;
 using Easy4K.Services.CommandBuilders;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
+using Windows.UI;
 using Windows.ApplicationModel.DataTransfer;
 
 namespace Easy4K.ViewModels;
@@ -37,6 +39,8 @@ public partial class MainViewModel : ObservableObject
     public event Action? ProcessingStarted;
     /// <summary>处理结束（含结果，用于弹完成窗体）</summary>
     public event Action<ProcessingResult>? ProcessingCompleted;
+    /// <summary>临时目录缓存与当前视频不符（UI 弹窗引导重新选择/清理）</summary>
+    public event Action? TempCacheMismatchDetected;
 
     /// <summary>自测/自动化模式下抑制完成弹窗（true 时不弹）</summary>
     public bool SuppressCompletionDialog { get; set; }
@@ -72,6 +76,10 @@ public partial class MainViewModel : ObservableObject
         _srModel = app.DefaultSrModel;
         _ifModel = app.DefaultIfModel;
         _useSafeFrameRate = app.UseSafeFrameRate;
+        _threadCount = Math.Clamp(app.ThreadCount, 1, 32);
+        _hdrSaturation = Math.Clamp(app.HdrSaturation, 0, 200);
+        _hdrContrast = Math.Clamp(app.HdrContrast, 0, 200);
+        _suppressRedWarning = app.SuppressRedWarning;
 
         RefreshSrModels();
         RefreshIfModels();
@@ -101,7 +109,36 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(OutputResolutionText))]
     [NotifyPropertyChangedFor(nameof(TargetFpsText))]
     [NotifyPropertyChangedFor(nameof(FinalOutputName))]
+    [NotifyPropertyChangedFor(nameof(HasInputVideo))]
+    [NotifyPropertyChangedFor(nameof(ImportFramesEnabled))]
+    [NotifyPropertyChangedFor(nameof(CanStart))]
     private string _inputVideo = "";
+
+    /// <summary>是否已选择输入视频（用于互斥与清除按钮可用性）</summary>
+    public bool HasInputVideo => !string.IsNullOrEmpty(InputVideo);
+
+    /// <summary>手动导入的外部帧文件夹（非空时跳过拆帧，直接用它作为输入帧）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasExternalFrames))]
+    [NotifyPropertyChangedFor(nameof(BrowseInputEnabled))]
+    [NotifyPropertyChangedFor(nameof(SplitFramesLocked))]
+    [NotifyPropertyChangedFor(nameof(MergeAudioEnabled))]
+    [NotifyPropertyChangedFor(nameof(CanStart))]
+    private string _externalFramesDir = "";
+
+    public bool HasExternalFrames => !string.IsNullOrEmpty(ExternalFramesDir);
+
+    /// <summary>已选帧文件夹时输入视频不可再浏览（二选一）</summary>
+    public bool BrowseInputEnabled => !HasExternalFrames;
+
+    /// <summary>已选输入视频时帧文件夹不可再导入（二选一）</summary>
+    public bool ImportFramesEnabled => !HasInputVideo;
+
+    /// <summary>帧文件夹模式下拆分帧环节由外部帧替代，拆帧开关禁用（仅置灰，保持勾选表示沿用外部帧）</summary>
+    public bool SplitFramesLocked => !HasExternalFrames;
+
+    /// <summary>帧文件夹模式下合并原音频无意义，开关禁用（仅置灰，不改变勾选状态）</summary>
+    public bool MergeAudioEnabled => !HasExternalFrames;
 
     [ObservableProperty] private string _tempRoot = "";
     [ObservableProperty] private string _outputRoot = "";
@@ -110,6 +147,8 @@ public partial class MainViewModel : ObservableObject
     // 拆分帧：可独立勾选，但其他选项勾选时自动强制勾选它
     [ObservableProperty]
     private bool _splitFrames = true;
+    /// <summary>导入帧文件夹前的拆分帧勾选状态（清除帧文件夹时恢复）</summary>
+    private bool _splitFramesBeforeFrames = true;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(OutputResolutionText))]
@@ -153,6 +192,8 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(FinalOutputName))]
     private bool _mergeAudio = true;
+    /// <summary>导入帧文件夹前的合并音频勾选状态（清除帧文件夹时恢复，避免"禁用但仍打勾"）</summary>
+    private bool _mergeAudioBeforeFrames = true;
     // 拆分后音频文件的临时路径
     public string ExtractedAudioPath => System.IO.Path.Combine(TempRoot, "audio.flac").Replace('\\', '/');
 
@@ -173,8 +214,28 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanStop))]
     private bool _isProcessing;
 
+    /// <summary>当前处理是否处于暂停状态（工具进程已挂起）</summary>
+    [ObservableProperty]
+    private bool _isPaused;
+
     [ObservableProperty]
     private bool _useSafeFrameRate;
+
+    /// <summary>是否显示图片预览（处理中可随时开关）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PreviewHintText))]
+    private bool _showPreview = true;
+
+    public string PreviewHintText => ShowPreview
+        ? "预览区：处理开始后实时显示最新帧"
+        : "图片预览已关闭";
+
+    /// <summary>用户自定义线程数（滑块 1-32），命令 -j 1:{n}:{n}</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ThreadLabel))]
+    [NotifyPropertyChangedFor(nameof(ThreadWarnText))]
+    [NotifyPropertyChangedFor(nameof(ThreadWarnVis))]
+    private int _threadCount = 2;
 
     partial void OnUseSafeFrameRateChanged(bool value)
     {
@@ -182,9 +243,47 @@ public partial class MainViewModel : ObservableObject
         _settings.Save(_app, _pathConfig);
     }
 
+    partial void OnThreadCountChanged(int value)
+    {
+        _app.ThreadCount = Math.Clamp(value, 1, 32);
+        _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnHdrSaturationChanged(int value)
+    {
+        _app.HdrSaturation = Math.Clamp(value, 0, 200);
+        _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnHdrContrastChanged(int value)
+    {
+        _app.HdrContrast = Math.Clamp(value, 0, 200);
+        _settings.Save(_app, _pathConfig);
+    }
+
+    /// <summary>滑块当前值对应的 -j 线程串（如 1:8:8）</summary>
+    public string ThreadLabel => $"1:{ThreadCount}:{ThreadCount}";
+
+    /// <summary>超过 1:8:8 时的警告文案</summary>
+    public string ThreadWarnText => ThreadCount > 8
+        ? "警告：线程超过 1:8:8，高并发提交可能引发 Vulkan 设备丢失或显存溢出，请谨慎使用"
+        : "";
+
+    /// <summary>警告可见性（超过 1:8:8 才显示）</summary>
+    public Microsoft.UI.Xaml.Visibility ThreadWarnVis
+        => ThreadCount > 8 ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+
     /// <summary>安全帧率降级状态（供 ProgressPage 显示降级横幅）</summary>
     [ObservableProperty]
     private bool _isDegraded;
+
+    /// <summary>是否正在清理临时文件（主页进度条显示）</summary>
+    [ObservableProperty]
+    private bool _isCleaning;
+
+    /// <summary>清理临时文件进度 0-100（主页进度条）</summary>
+    [ObservableProperty]
+    private double _cleanProgressPercent;
 
     /// <summary>降级提示文本</summary>
     [ObservableProperty]
@@ -265,29 +364,98 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    // VramWarning 由 source-gen 生成属性，值在 UpdateWarnings() 中赋值
-    public bool CanStart => !IsProcessing && Video is not null && Video.IsValid && File.Exists(InputVideo);
+    public bool CanStart => !IsProcessing && (HasExternalFrames || (Video is not null && Video.IsValid && File.Exists(InputVideo)));
+    /// <summary>拆分音频需基于真实输入视频，帧文件夹模式（无视频文件）时禁用</summary>
+    public bool ExtractAudioEnabled => CanStart && !HasExternalFrames;
     public bool CanStop => IsProcessing;
 
-    /// <summary>根据当前 GPU/模型/倍率重算显存警告</summary>
-    private string ComputeVramWarning()
+    // ===================== 显卡状态（绿=可运行 / 黄=勉强 / 红=不行） =====================
+    public enum GpuStatusGrade { None, Green, Yellow, Red }
+
+    private static readonly SolidColorBrush GreenBrush = new(Color.FromArgb(255, 46, 125, 50));
+    private static readonly SolidColorBrush YellowBrush = new(Color.FromArgb(255, 249, 168, 37));
+    private static readonly SolidColorBrush RedBrush = new(Color.FromArgb(255, 198, 40, 40));
+    private static readonly SolidColorBrush GrayBrush = new(Color.FromArgb(255, 128, 128, 128));
+    private static readonly SolidColorBrush WhiteBrush = new(Color.FromArgb(255, 255, 255, 255));
+    private static readonly SolidColorBrush BlackBrush = new(Color.FromArgb(255, 0, 0, 0));
+    /// <summary>黄色文字（"不再爆红"时替代红色提示，对应 XAML 里原来的 Orange）</summary>
+    private static readonly SolidColorBrush OrangeWarnBrush = new(Color.FromArgb(255, 255, 165, 0));
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(GpuStatusText))]
+    [NotifyPropertyChangedFor(nameof(GpuStatusBrush))]
+    [NotifyPropertyChangedFor(nameof(GpuStatusForeground))]
+    [NotifyPropertyChangedFor(nameof(GpuStatusVis))]
+    [NotifyPropertyChangedFor(nameof(VramWarningBrush))]
+    private GpuStatusGrade _gpuStatusLevel = GpuStatusGrade.None;
+
+    [ObservableProperty] private string _gpuStatusText = "";
+
+    /// <summary>以后不再爆红：勾选后红色级警告以黄色代替显示（未勾选保持红色）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(GpuStatusBrush))]
+    [NotifyPropertyChangedFor(nameof(GpuStatusForeground))]
+    [NotifyPropertyChangedFor(nameof(GpuStatusVis))]
+    [NotifyPropertyChangedFor(nameof(VramWarningBrush))]
+    private bool _suppressRedWarning;
+
+    partial void OnSuppressRedWarningChanged(bool value)
     {
-        if (Gpu.VramMB == 0) return "";
-        if (!Interpolation) return "";
+        _app.SuppressRedWarning = value;
+        _settings.Save(_app, _pathConfig);
+        UpdateWarnings();
+    }
+
+    /// <summary>显卡状态是否以黄色显示（红色级 + "不再爆红" 时变黄）</summary>
+    private bool IsRedSuppressed => GpuStatusLevel == GpuStatusGrade.Red && SuppressRedWarning;
+
+    public SolidColorBrush GpuStatusBrush => IsRedSuppressed ? YellowBrush : GpuStatusLevel switch
+    {
+        GpuStatusGrade.Red => RedBrush,
+        GpuStatusGrade.Yellow => YellowBrush,
+        GpuStatusGrade.Green => GreenBrush,
+        _ => GrayBrush
+    };
+
+    public SolidColorBrush GpuStatusForeground => (GpuStatusLevel == GpuStatusGrade.Yellow || IsRedSuppressed) ? BlackBrush : WhiteBrush;
+
+    public Microsoft.UI.Xaml.Visibility GpuStatusVis
+        => GpuStatusLevel == GpuStatusGrade.None
+            ? Microsoft.UI.Xaml.Visibility.Collapsed
+            : Microsoft.UI.Xaml.Visibility.Visible;
+
+    /// <summary>补帧卡片状态小字颜色：红色级未勾选"不再爆红"时显示红色，勾选后显示黄色，其余保持黄色。</summary>
+    public SolidColorBrush VramWarningBrush => IsRedSuppressed
+        ? OrangeWarnBrush
+        : GpuStatusLevel == GpuStatusGrade.Red ? RedBrush : OrangeWarnBrush;
+
+    /// <summary>计算显卡状态等级与描述文字（绿=可运行 / 黄=勉强 / 红=不行）</summary>
+    private (GpuStatusGrade Level, string Text) ComputeGpuStatus()
+    {
+        if (Gpu.VramMB == 0) return (GpuStatusGrade.None, "");
+        if (!Interpolation) return (GpuStatusGrade.Green, "显卡满足要求，可以运行");
         var needs8 = GpuInfo.Requires8Gb(IfModel);
         if (needs8 && Gpu.VramMB < 6144)
-            return $"[RED] 模型 {IfModel} 需要 6GB+ 显存，当前 {(int)Math.Round(Gpu.VramMB / 1024.0)}GB 不足，建议使用 rife-v4.6，否则可能爆显存导致程序崩溃";
+            return (GpuStatusGrade.Red, $"模型 {IfModel} 需要 6GB+ 显存，当前 {(int)Math.Round(Gpu.VramMB / 1024.0)}GB 不足，可能爆显存导致崩溃");
         if (needs8 && Gpu.VramMB < 8192)
-            return $"[YELLOW] 模型 {IfModel} 推荐 8GB+ 显存，当前 {(int)Math.Round(Gpu.VramMB / 1024.0)}GB 可能运行缓慢";
-        return $"[GREEN] 显卡满足要求，可以运行";
+            return (GpuStatusGrade.Yellow, $"模型 {IfModel} 推荐 8GB+ 显存，当前 {(int)Math.Round(Gpu.VramMB / 1024.0)}GB 可能运行缓慢");
+        return (GpuStatusGrade.Green, "显卡满足要求，可以运行");
     }
 
     // ===================== 命令（由 code-behind 直接调用） =====================
 
-    /// <summary>设置输入视频并触发检测</summary>
+    /// <summary>设置输入视频并触发检测（浏览/菜单/启动恢复用）</summary>
     public async Task SetInputVideoAsync(string path)
     {
-        InputVideo = path;
+        InputVideo = path?.Trim() ?? "";
+        await DetectVideoAsync(InputVideo);
+    }
+
+    /// <summary>手填输入视频路径时，InputVideo 已由输入框 TwoWay 绑定实时更新，这里只做检测、不写回，
+    /// 避免每次输入都被回写覆盖导致输入框无法正常输入。</summary>
+    public async Task DetectVideoAsync(string path)
+    {
+        path = path?.Trim() ?? "";
         Video = null;
         OnPropertyChanged(nameof(VideoInfoText));
         if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
@@ -308,11 +476,84 @@ public partial class MainViewModel : ObservableObject
             {
                 _logger.Error("视频信息检测失败，请确认文件可读且 FFprobe 可用");
             }
+
+            // 换视频后立即检查临时目录缓存是否来自其他视频，是则提醒用户处理
+            // （不等点"开始"才提示，避免"无法启动"的困惑）
+            var (cstatus, csource) = CheckTempCache(TempRoot);
+            if (cstatus == TempCacheStatus.Mismatch)
+            {
+                _logger.Warn($"临时目录缓存来自其他视频（{csource}），处理当前视频前请更换临时目录或清理缓存");
+                TempCacheMismatchDetected?.Invoke();
+            }
         }, TaskScheduler.FromCurrentSynchronizationContext());
     }
 
-    public void SetTempRoot(string path) => TempRoot = path;
+    /// <summary>清除输入视频（输入视频与帧文件夹二选一，清除后可改选帧文件夹）</summary>
+    public void ClearInputVideo()
+    {
+        InputVideo = "";
+        Video = null;
+        _logger.Info("已清除输入视频");
+    }
+
+    /// <summary>使用帧文件夹（无输入视频文件）时手动设置视频参数，替代 FFprobe 检测。</summary>
+    public void SetManualVideoInfo(int width, int height, long totalFrames, double fps)
+    {
+        Video = new VideoInfo
+        {
+            Width = width,
+            Height = height,
+            FrameRate = fps,
+            FrameRateRaw = fps.ToString("0.###"),
+            TotalFrames = totalFrames,
+            Duration = fps > 0 ? TimeSpan.FromSeconds(totalFrames / fps) : TimeSpan.Zero,
+            AudioCodec = "" // 手动参数默认无音频（帧文件夹时合并音频本就禁用）
+        };
+        UpdateWarnings();
+        _logger.Info($"已设置帧文件夹参数: {width} x {height}, {totalFrames} 帧, {fps:0.##} fps");
+    }
+
+    public void SetTempRoot(string path)
+    {
+        TempRoot = path;
+    }
     public void SetOutputRoot(string path) => OutputRoot = path;
+
+    /// <summary>手动导入外部帧文件夹（跳过拆帧）。校验目录存在且有 PNG 帧，否则拒绝。</summary>
+    public void ImportFrameFolder(string dir)
+    {
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+        {
+            _logger.Error("帧文件夹不存在，导入失败");
+            return;
+        }
+        var pngCount = Directory.Exists(dir) ? Directory.GetFiles(dir, "*.png").Length : 0;
+        if (pngCount == 0)
+        {
+            _logger.Error("所选文件夹内没有 PNG 帧文件，导入失败");
+            return;
+        }
+        ExternalFramesDir = dir;
+        // 帧文件夹没有原视频可提取音频：记录原勾选状态并取消勾选（该开关在帧文件夹模式下同时被禁用）
+        _mergeAudioBeforeFrames = MergeAudio;
+        MergeAudio = false;
+        // 帧文件夹已提供帧：拆帧环节被替代，记录原勾选状态并取消勾选，避免"禁用但仍打勾"
+        _splitFramesBeforeFrames = SplitFrames;
+        SplitFrames = false;
+        _logger.Info($"已导入外部帧文件夹: {dir}（{pngCount} 帧），处理时将跳过拆帧");
+    }
+
+    /// <summary>清除外部帧文件夹，恢复默认先拆帧。若仍有依赖项勾选而拆分帧未勾选，强制勾选拆分帧保证流程完整。</summary>
+    public void ClearExternalFrames()
+    {
+        ExternalFramesDir = "";
+        MergeAudio = _mergeAudioBeforeFrames; // 恢复导入帧文件夹前的勾选状态
+        SplitFrames = _splitFramesBeforeFrames; // 恢复导入帧文件夹前的勾选状态
+        // 恢复强捆绑：清除外部帧后，若仍勾选了依赖项但拆分帧未勾选，强制勾选拆分帧
+        if (!SplitFrames && (SuperResolution || Interpolation || MergeVideo || MergeAudio))
+            SplitFrames = true;
+        _logger.Info("已取消外部帧文件夹，将按默认流程先拆帧");
+    }
 
     /// <summary>从输入视频拆分音频到 {TempRoot}/audio.flac（按钮调用）</summary>
     public async Task ExtractAudioAsync()
@@ -341,13 +582,16 @@ public partial class MainViewModel : ObservableObject
     }
 
     // ===================== 勾选联动 =====================
-    // 规则：
+    // 规则（未导入外部帧时）：
     //   勾选 超分/补帧/合并视频/合并原音频 → 自动勾选拆分帧
     //   取消 拆分帧 → 自动取消所有依赖项
     //   SDR→HDR 依赖 合并视频
+    // 导入外部帧后解除与拆分帧的强捆绑：补帧/超分/合并可单独勾选运行，不再强制勾选拆分帧
 
     partial void OnSplitFramesChanged(bool value)
     {
+        // 导入外部帧后解除强捆绑：取消拆分帧不影响其他选项（帧已由外部导入提供）
+        if (HasExternalFrames) return;
         if (!value)
         {
             // 取消拆分帧 → 取消所有依赖项
@@ -362,19 +606,19 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnSuperResolutionChanged(bool value)
     {
-        if (value) SplitFrames = true; // 强制勾选拆分帧（用属性 setter 触发通知，否则 UI 不刷新）
+        if (value && !HasExternalFrames) SplitFrames = true; // 强制勾选拆分帧（用属性 setter 触发通知，否则 UI 不刷新）
         UpdateWarnings();
     }
 
     partial void OnInterpolationChanged(bool value)
     {
-        if (value) SplitFrames = true; // 强制勾选拆分帧（用属性 setter 触发通知，否则 UI 不刷新）
+        if (value && !HasExternalFrames) SplitFrames = true; // 强制勾选拆分帧（用属性 setter 触发通知，否则 UI 不刷新）
         UpdateWarnings();
     }
 
     partial void OnMergeVideoChanged(bool value)
     {
-        if (value) SplitFrames = true; // 强制勾选拆分帧（用属性 setter 触发通知，否则 UI 不刷新）
+        if (value && !HasExternalFrames) SplitFrames = true; // 强制勾选拆分帧（用属性 setter 触发通知，否则 UI 不刷新）
         UpdateWarnings();
     }
 
@@ -392,7 +636,7 @@ public partial class MainViewModel : ObservableObject
     {
         if (value)
         {
-            SplitFrames = true; // 强制勾选拆分帧（用属性 setter 触发通知，否则 UI 不刷新）
+            if (!HasExternalFrames) SplitFrames = true; // 强制勾选拆分帧（用属性 setter 触发通知，否则 UI 不刷新）
             if (Video is null || !Video.HasAudio)
                 _logger.Warn("原视频无音频流，合并原音频将无效");
         }
@@ -413,13 +657,15 @@ public partial class MainViewModel : ObservableObject
 
     private void UpdateWarnings()
     {
-        VramWarning = ComputeVramWarning();
+        var (level, text) = ComputeGpuStatus();
+        GpuStatusLevel = level;
+        GpuStatusText = text;
+        // 补帧卡片里的状态小字：红色提示在"不再爆红"勾选时以黄色代替（颜色由 VramWarningBrush 控制），不勾选保持红色
+        VramWarning = text;
+
         var warns = new System.Text.StringBuilder();
         if (Gpu.VramMB > 0)
             warns.AppendLine($"当前显卡: {Gpu.Name} ({(int)Math.Round(Gpu.VramMB / 1024.0)}GB)");
-
-        if (!string.IsNullOrEmpty(VramWarning))
-            warns.AppendLine(VramWarning);
 
         // 估算临时文件占用：每帧 PNG 约 2MB（1080p）→ 4K 约 8MB
         if (Video is not null && Video.IsValid && Video.TotalFrames > 0)
@@ -474,16 +720,29 @@ public partial class MainViewModel : ObservableObject
     public async Task StartAsync()
     {
         if (IsProcessing) return;
-        if (Video is null || !Video.IsValid) { _logger.Error("请先选择有效的输入视频"); return; }
-        if (!File.Exists(InputVideo)) { _logger.Error("输入视频文件不存在"); return; }
+        if (Video is null || !Video.IsValid) { _logger.Error("请先选择有效的输入视频（或导入帧文件夹并填写参数）"); return; }
+        if (!HasExternalFrames && !File.Exists(InputVideo)) { _logger.Error("输入视频文件不存在"); return; }
         if (!Directory.Exists(TempRoot)) Directory.CreateDirectory(TempRoot);
         if (!Directory.Exists(OutputRoot)) Directory.CreateDirectory(OutputRoot);
 
         Directory.CreateDirectory(TempRoot);
         Directory.CreateDirectory(OutputRoot);
 
+        // 校验临时目录缓存：与当前视频不符则阻止启动并提示（防旧缓存误导跳过步骤/产生错误结果）
+        var (cacheStatus, cacheSource) = CheckTempCache(TempRoot);
+        if (cacheStatus == TempCacheStatus.Mismatch)
+        {
+            _logger.Error($"临时目录缓存与当前视频不符（缓存来源：{cacheSource}），请重新选择临时目录或清理缓存后再启动");
+            TempCacheMismatchDetected?.Invoke();
+            return;
+        }
+
+        // 记录本次任务指纹到 cache.json（供临时目录缓存检测，防旧缓存误导）
+        WriteCacheInfo();
+
         _cts = new CancellationTokenSource();
         IsProcessing = true;
+        IsPaused = false;
         ProgressPercent = 0;
         ProgressDetail = "准备中...";
         Stage = ProcessStage.Idle;
@@ -494,13 +753,14 @@ public partial class MainViewModel : ObservableObject
         _monitor.Start(250); // 250ms 采样，CPU/GPU 更实时
         ProcessingStarted?.Invoke();
 
-        _logger.Info($"开始处理: {Path.GetFileName(InputVideo)}");
+        _logger.Info($"开始处理: {(HasExternalFrames ? $"帧文件夹 {Path.GetFileName(ExternalFramesDir.TrimEnd('\\', '/'))}" : Path.GetFileName(InputVideo))}");
 
         var ctx = new ProcessingContext
         {
             InputVideo = InputVideo,
             TempRoot = TempRoot.Replace('\\', '/'),
             OutputRoot = OutputRoot.Replace('\\', '/'),
+            ExternalFramesDir = ExternalFramesDir.Replace('\\', '/'),
             Video = Video,
             Options = new ProcessingOptions
             {
@@ -515,9 +775,9 @@ public partial class MainViewModel : ObservableObject
             SrScale = SrScale,
             IfModel = IfModel,
             IfMultiplier = IfMultiplier,
-            // HDR 参数固定 200/200（规格书要求，UI 已锁定）
-            HdrSaturation = 200,
-            HdrContrast = 200,
+            // HDR 参数（滑块 0-200，NVEncC 最高 200）
+            HdrSaturation = Math.Clamp(HdrSaturation, 0, 200),
+            HdrContrast = Math.Clamp(HdrContrast, 0, 200),
             Gpu = Gpu,
             Settings = _app,
             Tools = Tools
@@ -546,6 +806,7 @@ public partial class MainViewModel : ObservableObject
             _orchestratorAssigned.ProgressChanged -= OnProgressChanged;
             _monitor.Stop();
             IsProcessing = false;
+            IsPaused = false;
         }
 
         // 成功完成 → 弹完成窗体（自测模式抑制）
@@ -561,7 +822,7 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>根据勾选项生成步骤描述文本</summary>
+    /// <summary>根据勾选项生成步骤描述文本（顺序与流水线一致：拆帧 → 超分 → 补帧 → 合并 → HDR → 音频）</summary>
     private string BuildStepsText()
     {
         var parts = new List<string>();
@@ -569,6 +830,7 @@ public partial class MainViewModel : ObservableObject
         if (SuperResolution) parts.Add($"超分×{SrScale}");
         if (Interpolation) parts.Add($"补帧×{IfMultiplier}");
         if (MergeVideo) parts.Add("合并");
+        if (SdrToHdr) parts.Add("HDR");
         if (MergeAudio) parts.Add("音频");
         return parts.Count > 0 ? string.Join(" → ", parts) : "无";
     }
@@ -635,7 +897,7 @@ public partial class MainViewModel : ObservableObject
         {
             _logger.Info($"=== 自测模式启动: {videoPath} (掩码 {stages}) ===");
             SuppressCompletionDialog = true; // 自测自动化不弹完成窗体
-            CleanTemp(); // 清理上次残留帧，避免断点续传误判导致跳过阶段
+            CleanTemp(); // 清理上次残留帧，避免旧帧干扰本次自测
             await SetInputVideoAsync(videoPath);
             await Task.Delay(300); // 等视频检测完成
 
@@ -688,22 +950,25 @@ public partial class MainViewModel : ObservableObject
         var _ = Task.Delay(800).ContinueWith(_ => Application.Current?.Exit(), TaskScheduler.Default);
     }
 
-    /// <summary>清理临时中间产物。只删除本软件已知的帧目录/中间文件，
+    /// <summary>清理临时中间产物（当前 TempRoot）。只删除本软件已知的帧目录/中间文件，
     /// 绝不删除 TempRoot 下的未知内容（防止误删用户输出）。</summary>
-    public string CleanTemp()
+    public string CleanTemp() => CleanTempIn(TempRoot);
+
+    /// <summary>按目录清理中间产物（含 cache.json 元信息），白名单制。</summary>
+    public string CleanTempIn(string dir)
     {
         // 软件产生的全部中间产物名（不含输出视频）
         string[] tempDirs = { "input_frames", "4k_frames", "output_frames" };
-        string[] tempFiles = { "audio.flac", "temp_video.mkv", "audio_embedded.mkv" };
+        string[] tempFiles = { "audio.flac", "temp_video.mkv", "hdr_video.mkv", "audio_embedded.mkv", "cache.json" };
 
         try
         {
             var count = 0;
-            if (Directory.Exists(TempRoot))
+            if (Directory.Exists(dir))
             {
                 foreach (var d in tempDirs)
                 {
-                    var p = Path.Combine(TempRoot, d);
+                    var p = Path.Combine(dir, d);
                     if (Directory.Exists(p))
                     {
                         try { Directory.Delete(p, recursive: true); count++; } catch { }
@@ -711,7 +976,7 @@ public partial class MainViewModel : ObservableObject
                 }
                 foreach (var f in tempFiles)
                 {
-                    var p = Path.Combine(TempRoot, f);
+                    var p = Path.Combine(dir, f);
                     if (File.Exists(p))
                     {
                         try { File.Delete(p); count++; } catch { }
@@ -719,7 +984,7 @@ public partial class MainViewModel : ObservableObject
                 }
             }
             var msg = count > 0
-                ? $"已清理 {count} 项临时产物: {TempRoot}"
+                ? $"已清理 {count} 项临时产物: {dir}"
                 : "临时目录中没有待清理的中间产物";
             _logger.Success(msg);
             return msg;
@@ -730,6 +995,154 @@ public partial class MainViewModel : ObservableObject
             _logger.Error(msg);
             return msg;
         }
+    }
+
+    /// <summary>后台逐文件清理临时中间产物（白名单制），进度实时推送到主页进度条。
+    /// 大量文件删除放到后台线程，不阻塞 UI；清理中不切换"进行中"页面。</summary>
+    public async Task<string> CleanTempInAsync(string dir)
+    {
+        string[] tempDirs = { "input_frames", "4k_frames", "output_frames" };
+        string[] tempFiles = { "audio.flac", "temp_video.mkv", "hdr_video.mkv", "audio_embedded.mkv", "cache.json" };
+
+        // 后台统计待删文件，避免大目录枚举阻塞 UI
+        var files = await Task.Run(() =>
+        {
+            var list = new List<string>();
+            foreach (var d in tempDirs)
+            {
+                var p = Path.Combine(dir, d);
+                if (Directory.Exists(p))
+                {
+                    try { list.AddRange(Directory.EnumerateFiles(p, "*", SearchOption.AllDirectories)); } catch { }
+                }
+            }
+            foreach (var f in tempFiles)
+            {
+                var p = Path.Combine(dir, f);
+                if (File.Exists(p)) list.Add(p);
+            }
+            return list;
+        });
+
+        if (files.Count == 0)
+        {
+            _logger.Success("临时目录中没有待清理的中间产物");
+            return "临时目录中没有待清理的中间产物";
+        }
+
+        IsCleaning = true;
+        CleanProgressPercent = 0;
+        try
+        {
+            var total = files.Count;
+            var deleted = 0;
+            // 节流：每删约 1% 或最后一个文件上报一次进度
+            var step = Math.Max(1, total / 100);
+            await Task.Run(() =>
+            {
+                foreach (var f in files)
+                {
+                    try { File.Delete(f); } catch { }
+                    deleted++;
+                    if (deleted % step == 0 || deleted == total)
+                    {
+                        var pct = deleted * 100.0 / total;
+                        _dispatcherQueue.TryEnqueue(() => CleanProgressPercent = pct);
+                    }
+                }
+                // 删除遗留的空目录结构
+                foreach (var d in tempDirs)
+                {
+                    var p = Path.Combine(dir, d);
+                    try { if (Directory.Exists(p)) Directory.Delete(p, recursive: true); } catch { }
+                }
+            });
+            _dispatcherQueue.TryEnqueue(() => CleanProgressPercent = 100);
+            var msg = $"已清理 {total} 个中间产物文件: {dir}";
+            _logger.Success(msg);
+            return msg;
+        }
+        finally
+        {
+            _dispatcherQueue.TryEnqueue(() =>
+            {
+                IsCleaning = false;
+                CleanProgressPercent = 0;
+            });
+        }
+    }
+
+    /// <summary>写入缓存元信息 cache.json：只记录输入视频指纹，供"临时目录缓存检测"识别来源视频。
+    /// 不做断点续传；若临时目录里的缓存来自其他视频，选择目录/启动时会提示用户处理。</summary>
+    public void WriteCacheInfo()
+    {
+        try
+        {
+            // 帧文件夹模式下以帧文件夹路径为指纹（无输入视频文件）
+            var fingerprint = HasExternalFrames ? ExternalFramesDir : InputVideo;
+            var fi = !string.IsNullOrEmpty(fingerprint) && File.Exists(fingerprint) ? new FileInfo(fingerprint) : null;
+            var info = new
+            {
+                inputVideo = fingerprint,
+                videoSize = fi?.Length ?? 0,
+                videoModifiedTicks = fi?.LastWriteTimeUtc.Ticks ?? 0L,
+                createdAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+            };
+            File.WriteAllText(Path.Combine(TempRoot, "cache.json"),
+                System.Text.Json.JsonSerializer.Serialize(info,
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch { }
+    }
+
+    /// <summary>暂停当前处理：立即挂起工具进程（可恢复）</summary>
+    public void PauseProcessing()
+    {
+        if (!IsProcessing || IsPaused) return;
+        _runner.SuspendCurrent();
+        IsPaused = true;
+        _logger.Warn("处理已暂停（工具进程已挂起）");
+    }
+
+    /// <summary>继续被暂停的处理</summary>
+    public void ResumeProcessing()
+    {
+        if (!IsProcessing || !IsPaused) return;
+        _runner.ResumeCurrent();
+        IsPaused = false;
+        _logger.Info("处理已继续");
+    }
+
+    /// <summary>临时目录缓存检测结果</summary>
+    public enum TempCacheStatus { None, Match, Mismatch }
+
+    /// <summary>读取目录中的旧缓存来源视频；无 cache.json 返回 null</summary>
+    public (TempCacheStatus Status, string SourceVideo) CheckTempCache(string dir)
+    {
+        var p = Path.Combine(dir, "cache.json");
+        if (!File.Exists(p)) return (TempCacheStatus.None, "");
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(p));
+            if (doc.RootElement.TryGetProperty("inputVideo", out var v))
+            {
+                var cached = v.GetString() ?? "";
+                // 与当前输入（视频文件或帧文件夹）一致 → 匹配（可安全复用该目录），否则 → 不符（需询问）
+                var fingerprint = HasExternalFrames ? ExternalFramesDir : InputVideo;
+                var match = string.Equals(cached, fingerprint, StringComparison.OrdinalIgnoreCase);
+                return (match ? TempCacheStatus.Match : TempCacheStatus.Mismatch, cached);
+            }
+        }
+        catch { }
+        return (TempCacheStatus.Mismatch, "");
+    }
+
+    /// <summary>接受临时目录并覆盖其旧缓存（清空该目录中间产物后设置）</summary>
+    public void AcceptTempRoot(string dir)
+    {
+        CleanTempIn(dir);
+        TempRoot = dir;
+        Directory.CreateDirectory(dir);
     }
 
     /// <summary>从 startDir 向上查找含 Tools 子目录的项目根目录。</summary>
@@ -801,6 +1214,19 @@ public partial class MainViewModel : ObservableObject
         var text = $"显卡: {g.Name}\n显存: {g.VramText}\nNVIDIA: {g.IsNvidia}\nRTX 系列: {(g.IsRtx ? $"RTX {g.Series}0" : "否")}\n驱动: {g.DriverVersion}\n支持 HDR: {g.SupportsHdr}";
         _logger.Info(text);
         return text;
+    }
+
+    /// <summary>本地版本号（config 文件 appsettings.json 里的 Version，标题栏显示 v{Version}）</summary>
+    public string Version => _app.Version;
+
+    /// <summary>配置文件中保存的主题模式（light/dark/system/acrylic）</summary>
+    public string SavedTheme => _app.Theme;
+
+    /// <summary>设置主题模式并立即写入配置文件（下次启动恢复）</summary>
+    public void SetThemeMode(string theme)
+    {
+        _app.Theme = theme;
+        _settings.Save(_app, _pathConfig);
     }
 
     public void SaveSettings()

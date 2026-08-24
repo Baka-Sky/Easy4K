@@ -9,7 +9,7 @@ public sealed class Logger
     private readonly object _lock = new();
     private readonly List<LogEntry> _all = new();   // 线程安全完整日志（供快照/导出，不受 UI 调度时序影响）
 
-    /// <summary>UI 绑定源（最大保留 5000 条，超过自动裁剪头部避免无限增长）</summary>
+    /// <summary>UI 绑定源（最大保留 200 条，超过自动裁剪最早行，避免长日志拖垮 UI 渲染）</summary>
     public ObservableCollection<LogEntry> LogEntries { get; } = new();
 
     public event Action<LogEntry>? EntryAdded;
@@ -40,9 +40,10 @@ public sealed class Logger
             lock (_lock)
             {
                 LogEntries.Add(entry);
-                if (LogEntries.Count > 5000)
+                // 超过上限批量裁剪，维持 ~200 行，减少频繁 RemoveAt(0) 的 O(n) 开销
+                if (LogEntries.Count > 200)
                 {
-                    for (int i = 0; i < 100; i++) LogEntries.RemoveAt(0);
+                    for (int i = 0; i < 40; i++) LogEntries.RemoveAt(0);
                 }
             }
             EntryAdded?.Invoke(entry);

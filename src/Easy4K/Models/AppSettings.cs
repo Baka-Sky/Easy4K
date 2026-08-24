@@ -12,11 +12,26 @@ public sealed class AppSettings
     public int DefaultSrScale { get; set; } = 2;
     public int DefaultIfMultiplier { get; set; } = 2;
 
-    public bool UseSafeFrameRate { get; set; } = false;
+    /// <summary>用户自定义线程数（proc/save），命令 -j 1:{n}:{n}，范围 1-32</summary>
+    public int ThreadCount { get; set; } = 2;
+    /// <summary>安全帧率：遇到 Vulkan 设备丢失/显存溢出时自动停止处理（不降级重试）</summary>
+    public bool UseSafeFrameRate { get; set; } = true;
+
+    /// <summary>HDR 转换饱和度（NVEncC --vpp-ngx-truehdr saturation，最高 200）</summary>
+    public int HdrSaturation { get; set; } = 200;
+    /// <summary>HDR 转换对比度（NVEncC --vpp-ngx-truehdr contrast，最高 200）</summary>
+    public int HdrContrast { get; set; } = 200;
+
+    /// <summary>以后不再爆红：勾选后不再显示红色级警告（如显卡显存不足）</summary>
+    public bool SuppressRedWarning { get; set; }
+
     public string EncodePreset { get; set; } = "medium";
 
     public string Language { get; set; } = "zh-CN";
     public string Theme { get; set; } = "system";
+
+    /// <summary>本地版本号（启动时与 update.baka233.top/Easy/Version.txt 对比，低于服务器版本则提示更新）</summary>
+    public string Version { get; set; } = "1.0.2";
 }
 
 /// <summary>工具子目录相对 ToolsRoot 的路径</summary>

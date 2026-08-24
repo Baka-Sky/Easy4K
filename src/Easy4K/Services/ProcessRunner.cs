@@ -1,15 +1,56 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Easy4K.Services;
 
-/// <summary>通用进程执行器：实时逐行读取 stdout/stderr，支持取消，UTF-8 编码避免中文乱码。
+/// <summary>通用进程执行器：实时逐行读取 stdout/stderr，支持取消、暂停/恢复，UTF-8 编码避免中文乱码。
 /// 所有外部工具（FFmpeg/RealESRGAN/RIFE/NVEncC）都通过它调用。</summary>
 public sealed class ProcessRunner
 {
     private readonly Logger _logger;
+    private readonly object _procLock = new();
+    private Process? _current; // 当前正在运行的进程（单例 runner，同一时刻只有一个）
 
     public ProcessRunner(Logger logger) => _logger = logger;
+
+    /// <summary>挂起当前正在运行的工具进程（暂停处理，进程状态保留，可恢复）</summary>
+    public void SuspendCurrent()
+    {
+        lock (_procLock)
+        {
+            var p = _current;
+            if (p is null || p.HasExited) return;
+            try { NtSuspendProcess(p.Handle); } catch { }
+        }
+    }
+
+    /// <summary>恢复被挂起的工具进程</summary>
+    public void ResumeCurrent()
+    {
+        lock (_procLock)
+        {
+            var p = _current;
+            if (p is null || p.HasExited) return;
+            try { NtResumeProcess(p.Handle); } catch { }
+        }
+    }
+
+    /// <summary>强制终止当前工具进程（Vulkan 设备丢失等致命错误时快速失败，让降级逻辑接管）</summary>
+    public void KillCurrent()
+    {
+        lock (_procLock)
+        {
+            var p = _current;
+            if (p is null || p.HasExited) return;
+            try { p.Kill(entireProcessTree: true); } catch { }
+        }
+    }
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtSuspendProcess(IntPtr hProcess);
+    [DllImport("ntdll.dll")]
+    private static extern int NtResumeProcess(IntPtr hProcess);
 
     /// <summary>运行一个进程，逐行回调。返回 exit code。</summary>
     public async Task<int> RunAsync(
@@ -66,6 +107,9 @@ public sealed class ProcessRunner
             return -1;
         }
 
+        // 记录当前进程，供暂停/恢复/停止使用
+        lock (_procLock) _current = p;
+
         // 必须先 Start() 再访问 StandardOutput/StandardError（否则抛 "hasn't started yet"，
         // 读取线程崩溃 → stderr 管道无人消费 → 进程写满管道缓冲后永久卡死，表现为"卡在第 N 帧"）
         // FFmpeg 等工具用 \r 覆盖写进度（frame=123 fps=...），ReadLineAsync 只认 \n 会全部缓冲到结束，
@@ -114,6 +158,7 @@ public sealed class ProcessRunner
         try { await p.WaitForExitAsync(ct); } catch (OperationCanceledException) { }
 
         var exit = p.HasExited ? p.ExitCode : -1;
+        lock (_procLock) _current = null;
         var stderrText = stderrBuf.ToString().Trim();
         var stdoutText = stdoutBuf.ToString().Trim();
         if (exit != 0)

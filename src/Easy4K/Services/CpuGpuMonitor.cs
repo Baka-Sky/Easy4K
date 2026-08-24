@@ -8,7 +8,7 @@ namespace Easy4K.Services;
 /// 但因在独立线程，绝不拖累 CPU 采样、UI 线程或处理流程。</summary>
 public sealed class CpuGpuMonitor : IDisposable
 {
-    private PerformanceCounter? _cpuCounter;
+    private volatile PerformanceCounter? _cpuCounter; // 后台线程初始化，volatile 保证采样线程可见
     private PerformanceCounter[] _gpuCounters = Array.Empty<PerformanceCounter>();
     private readonly object _lock = new();
     private readonly object _valueLock = new();
@@ -26,12 +26,19 @@ public sealed class CpuGpuMonitor : IDisposable
     {
         Stop();
 
-        try
+        // CPU 计数器首次创建会触发 Windows 性能库（PDH）初始化，可能耗时数秒，
+        // 放后台线程初始化，避免阻塞调用方（UI 线程点"开始处理"卡顿）
+        _cpuCounter = null;
+        _ = Task.Run(() =>
         {
-            _cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total", true);
-            _cpuCounter.NextValue(); // 预热
-        }
-        catch { _cpuCounter = null; }
+            try
+            {
+                var c = new PerformanceCounter("Processor", "% Processor Time", "_Total", true);
+                c.NextValue(); // 预热
+                _cpuCounter = c;
+            }
+            catch { _cpuCounter = null; }
+        });
 
         // 初始 GPU 枚举放线程池（快速返回），后续重枚举在 GPU 线程内做
         _ = Task.Run(() => RefreshGpuCounters());

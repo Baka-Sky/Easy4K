@@ -26,6 +26,8 @@ public sealed partial class ProgressPage : Page
         Vm.ProgressChanged += OnProgress;
         Vm.ProcessingCompleted += OnProcessingCompleted;
         Vm.Logger.EntryAdded += OnLogEntryAdded;
+        Vm.PropertyChanged += OnVmPropertyChanged;
+        UpdatePauseButton();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -33,6 +35,35 @@ public sealed partial class ProgressPage : Page
         Vm.ProgressChanged -= OnProgress;
         Vm.ProcessingCompleted -= OnProcessingCompleted;
         Vm.Logger.EntryAdded -= OnLogEntryAdded;
+        Vm.PropertyChanged -= OnVmPropertyChanged;
+    }
+
+    /// <summary>暂停状态变化（确认挂起/恢复）→ 更新按钮文案。</summary>
+    private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(Vm.IsPaused) || e.PropertyName == nameof(Vm.IsProcessing))
+            UpdatePauseButton();
+        if (e.PropertyName == nameof(Vm.ShowPreview))
+            UpdatePreviewVisibility();
+    }
+
+    /// <summary>预览开关变化时更新提示文字可见性（PreviewImage 的可见性由 x:Bind 控制）。</summary>
+    private void UpdatePreviewVisibility()
+    {
+        if (!Vm.ShowPreview)
+        {
+            PreviewHint.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            PreviewHint.Visibility = string.IsNullOrEmpty(_lastPreviewPath) ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
+    private void UpdatePauseButton()
+    {
+        PauseBtn.Content = Vm.IsPaused ? "继续" : "暂停";
+        PauseBtn.IsEnabled = Vm.IsProcessing;
     }
 
     /// <summary>新日志直接追加到 TextBox 文本（不闪烁），自动滚底，超上限裁剪最早行</summary>
@@ -87,6 +118,8 @@ public sealed partial class ProgressPage : Page
     {
         DispatcherQueue.TryEnqueue(() =>
         {
+            // 关闭图片预览时不再加载帧
+            if (!Vm.ShowPreview) return;
             if (!string.IsNullOrEmpty(p.LatestFramePath) && p.LatestFramePath != _lastPreviewPath)
             {
                 _lastPreviewPath = p.LatestFramePath;
@@ -110,6 +143,8 @@ public sealed partial class ProgressPage : Page
             await bmp.SetSourceAsync(fs.AsRandomAccessStream());
             // 期间已有更新的帧 → 丢弃本次，防止旧解码覆盖新帧
             if (seq != _previewSeq) return;
+            // 关闭预览后丢弃已解码帧
+            if (!Vm.ShowPreview) return;
             PreviewImage.Source = bmp;
             PreviewHint.Visibility = Visibility.Collapsed;
         }
@@ -121,7 +156,8 @@ public sealed partial class ProgressPage : Page
         DispatcherQueue.TryEnqueue(() => _ = ShowCompleteDialogAsync(r));
     }
 
-    /// <summary>弹"当前任务已完成"窗体：绿勾 + 产出路径 + 步骤 + 耗时 + 是否清理冗余文件。</summary>
+    /// <summary>弹"当前任务已完成"窗体：绿勾 + 产出路径 + 步骤 + 耗时 + 是否清理冗余文件。
+    /// 清理在后台线程执行（大量中间文件递归删除会冻结 UI，之前点"是"卡死就是这原因）。</summary>
     private async Task ShowCompleteDialogAsync(ProcessingResult r)
     {
         var check = new FontIcon
@@ -160,7 +196,8 @@ public sealed partial class ProgressPage : Page
         var result = await dlg.ShowAsync();
         if (result == ContentDialogResult.Primary)
         {
-            Vm.CleanTemp();
+            // 后台清理，主页顶部进度条显示进度（不阻塞 UI）
+            await Vm.CleanTempInAsync(Vm.TempRoot);
         }
     }
 
@@ -172,4 +209,10 @@ public sealed partial class ProgressPage : Page
     private void OnStop(object sender, RoutedEventArgs e) => Vm.Stop();
     private void OnCopyLog(object sender, RoutedEventArgs e) => Vm.CopyLog();
     private void OnClearLog(object sender, RoutedEventArgs e) { Vm.ClearLog(); CommandLogBox.Text = ""; }
+
+    /// <summary>暂停/继续切换（立即挂起或恢复当前工具进程）</summary>
+    private void OnPauseToggle(object sender, RoutedEventArgs e)
+    {
+        if (Vm.IsPaused) Vm.ResumeProcessing(); else Vm.PauseProcessing();
+    }
 }

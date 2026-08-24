@@ -21,7 +21,7 @@
         <Grid x:Name="AppTitleBar" Grid.Row="0" Height="40" Padding="12,0,8,0">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">
                 <Image Source="Assets/AppIcon.ico" Width="18" Height="18"/>
-                <TextBlock Text="Easy4K" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center"/>
+                <TextBlock x:Name="TitleTextBlock" Text="Easy4K" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center"/>
             </StackPanel>
         </Grid>
 
@@ -50,6 +50,7 @@
                     <MenuFlyoutItem Text="浅色主题" Click="OnThemeLight"/>
                     <MenuFlyoutItem Text="深色主题" Click="OnThemeDark"/>
                     <MenuFlyoutItem Text="跟随系统" Click="OnThemeSystem"/>
+                    <MenuFlyoutItem Text="亚克力" Click="OnThemeAcrylic"/>
                     <MenuFlyoutSeparator/>
                     <MenuFlyoutItem Text="保存当前设置为默认" Click="OnSaveSettingsMenu"/>
                 </MenuBarItem>
@@ -62,13 +63,13 @@
             </MenuBar>
 
             <StackPanel x:Name="NavButtons" Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="Collapsed">
-                <Button x:Name="HomeNavBtn" Content="主页" Click="OnNavHome" FontSize="12" Padding="12,4"/>
-                <Button x:Name="ProgressNavBtn" Content="进行中" Click="OnNavProgress" FontSize="12" Padding="12,4"/>
+                <Button x:Name="HomeNavBtn" Content="主页" Click="OnNavHome" FontSize="12" Padding="12,4" Style="{StaticResource GlassButton}"/>
+                <Button x:Name="ProgressNavBtn" Content="进行中" Click="OnNavProgress" FontSize="12" Padding="12,4" Style="{StaticResource GlassButton}"/>
             </StackPanel>
         </Grid>
 
-        <!-- 纯进度条（贴缝，进行页自动隐藏） -->
-        <ProgressBar x:Name="ThinProgressBar" Grid.Row="2" Height="3" Minimum="0" Maximum="100" Value="0"/>
+        <!-- 纯进度条（贴缝，未启动时隐藏，进行页自动隐藏） -->
+        <ProgressBar x:Name="ThinProgressBar" Grid.Row="2" Height="3" Minimum="0" Maximum="100" Value="0" Visibility="Collapsed"/>
 
         <Frame x:Name="RootFrame" Grid.Row="3"/>
     </Grid>

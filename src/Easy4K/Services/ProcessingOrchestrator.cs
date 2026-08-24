@@ -11,6 +11,8 @@ public sealed class ProcessingContext
     public string InputVideo { get; set; } = "";
     public string TempRoot { get; set; } = "";
     public string OutputRoot { get; set; } = "";
+    /// <summary>手动导入的外部帧文件夹（非空时复制到 Temp/input_frames 并跳过拆帧）</summary>
+    public string ExternalFramesDir { get; set; } = "";
     public VideoInfo Video { get; set; } = new();
     public ProcessingOptions Options { get; set; } = new();
     public string SrModel { get; set; } = "";
@@ -25,7 +27,7 @@ public sealed class ProcessingContext
 }
 
 /// <summary>处理流水线编排：拆帧 → 超分 → 补帧 → 合并 → 嵌入音频 → HDR 转换。
-/// 实现 BUG-03/04/06/07/08 等运行时修复，进度解析，阶段级断点续传。</summary>
+/// 实现 BUG-03/04/06/07/08 等运行时修复，进度解析。</summary>
 public sealed class ProcessingOrchestrator
 {
     private readonly ProcessRunner _runner;
@@ -62,26 +64,65 @@ public sealed class ProcessingOrchestrator
         var outHeight = ctx.Video.Height * (ctx.Options.SuperResolution ? ctx.SrScale : 1);
         var useNvenc = ctx.Gpu.IsNvidia && ctx.Gpu.IsRtx;
 
+        // 高负载稳定性：预估磁盘占用，剩余空间过少时提前警告（几万帧 PNG 可能占用数十 GB）
+        try
+        {
+            var drive = new DriveInfo(Path.GetPathRoot(tempRoot)!);
+            if (drive.IsReady)
+            {
+                var peakMB = totalFrames * (ctx.Options.SuperResolution || ctx.Options.Interpolation ? 6 : 2);
+                var freeGB = drive.AvailableFreeSpace / 1024.0 / 1024.0 / 1024.0;
+                var needGB = peakMB / 1024.0;
+                if (freeGB < needGB * 0.5)
+                {
+                    _logger.Warn($"磁盘剩余空间可能不足：当前 {freeGB:0.0} GB，此任务峰值预估约需 {needGB:0.0} GB，处理中可能因空间不足崩溃");
+                }
+            }
+        }
+        catch { }
+
+        // 手动导入外部帧文件夹时，复制到 Temp/input_frames，后续统一用 Temp 目录
+        var useExternalFrames = !string.IsNullOrEmpty(ctx.ExternalFramesDir) && Directory.Exists(ctx.ExternalFramesDir);
+
         // 输入帧目录
         var inputDirForSr = ctx.Options.SuperResolution ? srFrames : inputFrames;
         var inputDirForIf = srFrames; // 补帧基于超分结果，无超分则基于原帧
         if (!ctx.Options.SuperResolution) inputDirForIf = inputFrames;
 
         // ============ 阶段1：拆帧 ============
-        if (ctx.Options.SplitFrames)
+        // 手动导入外部帧时始终复制到临时目录（与拆分帧勾选解耦），补帧/超分/合并可单独运行
+        if (useExternalFrames)
         {
-            if (IsStageDone(inputFrames, totalFrames))
+            // 复制外部帧到临时目录（统一中间产物都在 Temp，清理更干净）
+            _logger.Info($"复制外部帧到临时目录: {ctx.ExternalFramesDir} → {inputFrames}");
+            await CopyFramesAsync(ctx.ExternalFramesDir, inputFrames, ct);
+            _logger.Success($"外部帧已复制到临时目录（{CountFrames(inputFrames)} 帧）");
+        }
+        else if (ctx.Options.SplitFrames)
+        {
+            var existing = CountFrames(inputFrames);
+            if (existing >= totalFrames)
             {
-                _logger.Info($"[跳过] 拆帧已存在 {CountFrames(inputFrames)} 帧: {inputFrames}");
+                // 上次已拆好帧，跳过拆帧（崩溃重跑不从头）
+                _logger.Info($"当前[拆帧]已完成 自动跳过此步骤");
             }
             else
             {
                 _logger.Info($"开始拆帧: {Path.GetFileName(ctx.InputVideo)}");
+                // 拆帧不受安全帧率限制（安全帧率只负责 Vulkan 设备丢失/显存溢出自动停止），始终多线程全速
                 var (args, _) = FFmpegCommandBuilder.SplitFrames(ctx.InputVideo, inputFrames);
                 _logger.Command($"ffmpeg {args}");
                 var exit = await RunStageWithProgress(ProcessStage.Splitting, "拆帧中", totalFrames,
                     ctx.Tools.FFmpegExe, args, ParseFfmpegFrame, inputFrames, ct);
-                if (exit != 0) return Fail("拆帧失败");
+                if (exit != 0)
+                {
+                    // 拆帧意外退出：清理残留帧后重试一次（与超分/补帧一致）
+                    _logger.Warn("此次拆帧遇到了因意外导致关闭，已自动清理并重新启动");
+                    CleanPartialOutput(inputFrames);
+                    exit = await RunStageWithProgress(ProcessStage.Splitting, "拆帧中(重试)", totalFrames,
+                        ctx.Tools.FFmpegExe, args, ParseFfmpegFrame, inputFrames, ct);
+                    if (exit != 0) return Fail("拆帧失败");
+                }
                 _logger.Success($"拆帧完成: {CountFrames(inputFrames)} 帧");
             }
         }
@@ -89,29 +130,44 @@ public sealed class ProcessingOrchestrator
         // ============ 阶段2：超分 ============
         if (ctx.Options.SuperResolution)
         {
-            if (IsStageDone(srFrames, totalFrames))
+            var existingSr = CountFrames(srFrames);
+            if (existingSr >= totalFrames)
             {
-                _logger.Info($"[跳过] 超分已存在 {CountFrames(srFrames)} 帧: {srFrames}");
+                // 上次已超分完成，跳过（崩溃重跑不从头）
+                _logger.Info($"当前[超分]已完成 自动跳过此步骤");
             }
             else
             {
-                _logger.Info($"超分开始: 模型 {ctx.SrModel} ×{ctx.SrScale}");
-                var args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, lowVram: false);
+                var safe = ctx.Settings.UseSafeFrameRate;
+                // 线程由滑块控制（1:1:1 ~ 1:32:32）；安全帧率只负责"致命 GPU 错误自动停止"，不再强制单线程
+                var jThreads = $"1:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}";
+                _fatalGpuError = false;
+                _logger.Info($"超分开始: 模型 {ctx.SrModel} ×{ctx.SrScale}（线程 {jThreads}）");
+                var args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, jThreads);
                 _logger.Command($"realesrgan-ncnn-vulkan {args}");
                 var exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中", totalFrames,
                     ctx.Tools.RealEsrganExe, args, srFrames, ct);
                 if (exit != 0)
                 {
-                    // BUG-06：显存不足重试一次（仅实际崩溃后才降级）
-                    if (await IsOomRetryable())
+                    // 安全帧率：检测到 Vulkan 设备丢失/显存溢出时自动停止，不降级重试
+                    if (safe && _fatalGpuError)
                     {
-                        _logger.Warn("检测到显存不足，降级为 -j 1:1:1 重试");
-                        args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, lowVram: true);
-                        _logger.Command($"realesrgan-ncnn-vulkan {args}");
-                        exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中(低显存)", totalFrames,
-                            ctx.Tools.RealEsrganExe, args, srFrames, ct);
+                        return Fail("已按安全帧率自动停止：检测到 Vulkan 设备丢失或显存溢出");
                     }
+                    // BUG-06 + 高负载稳定性：工具崩溃/失败一律清理残留后降级 -j 1:1:1 重试一次。
+                    // （AMD ncnn-vulkan 崩溃的 stderr 不一定含 OOM 关键词，不能只按 OOM 判断）
+                    _logger.Warn("此次超分遇到了因意外导致关闭，已自动清理并重新启动");
+                    srFrames = CleanPartialOutput(srFrames);
+                    args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, "1:1:1");
+                    _logger.Command($"realesrgan-ncnn-vulkan {args}");
+                    exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中(低显存)", totalFrames,
+                        ctx.Tools.RealEsrganExe, args, srFrames, ct);
                     if (exit != 0) return Fail("超分失败");
+                    // 仅在非安全帧率（原本不是单线程）下提示降级；安全帧率本来就是单线程，无需提示
+                    if (!safe)
+                    {
+                        ProgressChanged?.Invoke(new ProcessProgress { DegradeNotice = "已降级运行：超分异常后已切换单线程低显存" });
+                    }
                 }
                 _logger.Success($"超分完成: {CountFrames(srFrames)} 帧");
             }
@@ -120,14 +176,20 @@ public sealed class ProcessingOrchestrator
         // ============ 阶段3：补帧 ============
         if (ctx.Options.Interpolation)
         {
-            if (IsStageDone(ifFrames, targetFrames))
+            var existingIf = CountFrames(ifFrames);
+            if (existingIf >= targetFrames)
             {
-                _logger.Info($"[跳过] 补帧已存在 {CountFrames(ifFrames)} 帧: {ifFrames}");
+                // 上次已补帧完成，跳过（崩溃重跑不从头）
+                _logger.Info($"当前[补帧]已完成 自动跳过此步骤");
             }
             else
             {
-                _logger.Info($"补帧开始: 模型 {ctx.IfModel} ×{ctx.IfMultiplier} ({ctx.Video.FrameRate:0.##}→{outFps:0.##}fps)");
-                var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, targetFrames, lowVram: false);
+                var safe = ctx.Settings.UseSafeFrameRate;
+                // 线程由滑块控制（1:1:1 ~ 1:32:32）；安全帧率只负责"致命 GPU 错误自动停止"，不再强制单线程
+                var jThreads = $"1:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}";
+                _fatalGpuError = false;
+                _logger.Info($"补帧开始: 模型 {ctx.IfModel} ×{ctx.IfMultiplier} ({ctx.Video.FrameRate:0.##}→{outFps:0.##}fps)（线程 {jThreads}）");
+                var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, targetFrames, jThreads);
                 _logger.Command($"rife-ncnn-vulkan {args}");
                 var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中", targetFrames,
                     ctx.Tools.RifeExe, args, ifFrames, ct);
@@ -137,25 +199,29 @@ public sealed class ProcessingOrchestrator
                 {
                     _logger.Warn($"模型 {ctx.IfModel} 不被命令行版支持（BUG-04），自动切换为 rife-v4.6");
                     ifFrames = CleanPartialOutput(ifFrames);
-                    var args2 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, "rife-v4.6", targetFrames, lowVram: false);
+                    var args2 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, "rife-v4.6", ctx.IfMultiplier, targetFrames, jThreads);
                     _logger.Command($"rife-ncnn-vulkan {args2}");
                     exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(回退v4.6)", targetFrames,
                         ctx.Tools.RifeExe, args2, ifFrames, ct);
                 }
-                if (exit != 0 && await IsOomRetryable())
+                if (exit != 0)
                 {
-                    // 仅实际崩溃后才降级重试（安全帧率开启时额外提示降级横幅）
-                    var safe = ctx.Settings.UseSafeFrameRate;
-                    _logger.Warn("检测到显存不足，降级为 -j 1:1:1 重试");
-                    ifFrames = CleanPartialOutput(ifFrames);
-                    var args3 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, targetFrames, lowVram: true);
-                    _logger.Command($"rife-ncnn-vulkan {args3}");
-                    exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, safe ? "补帧中(安全降级)" : "补帧中(低显存)", targetFrames,
-                        ctx.Tools.RifeExe, args3, ifFrames, ct);
-                    // 安全帧率降级后通知 UI 显示横幅
-                    if (safe && exit == 0)
+                    // 安全帧率：检测到 Vulkan 设备丢失/显存溢出时自动停止，不降级重试
+                    if (safe && _fatalGpuError)
                     {
-                        ProgressChanged?.Invoke(new ProcessProgress { DegradeNotice = "已降级运行：安全帧率模式（单线程低显存）" });
+                        return Fail("已按安全帧率自动停止：检测到 Vulkan 设备丢失或显存溢出");
+                    }
+                    // 工具崩溃/失败一律清理残留后降级 -j 1:1:1 重试一次（不限 OOM 关键词，高负载稳定性）
+                    _logger.Warn("此次补帧遇到了因意外导致关闭，已自动清理并重新启动");
+                    ifFrames = CleanPartialOutput(ifFrames);
+                    var args3 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, targetFrames, "1:1:1");
+                    _logger.Command($"rife-ncnn-vulkan {args3}");
+                    exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(低显存)", targetFrames,
+                        ctx.Tools.RifeExe, args3, ifFrames, ct);
+                    // 仅在非安全帧率（原本不是单线程）下提示降级；安全帧率本来就是单线程，无需提示
+                    if (!safe && exit == 0)
+                    {
+                        ProgressChanged?.Invoke(new ProcessProgress { DegradeNotice = "已降级运行：补帧异常后已切换单线程低显存" });
                     }
                 }
                 if (exit != 0) return Fail("补帧失败");
@@ -185,7 +251,36 @@ public sealed class ProcessingOrchestrator
             currentVideo = tempVideo;
         }
 
-        // ============ 阶段5：合并原音频 ============
+        // ============ 阶段5：SDR→HDR 转换（仅开启 HDR 时，先渲染 HDR 再合并音频） ============
+        // hdrDone：是否实际完成 HDR 转换（fallback SDR 时文件名不带 HDR 标记）
+        var hdrDone = false;
+        if (ctx.Options.SdrToHdr)
+        {
+            if (!ctx.Gpu.SupportsHdr)
+            {
+                _logger.Error("SDR→HDR 转换需要 NVIDIA RTX 显卡，当前显卡不支持，跳过 HDR 步骤（输出 SDR）");
+            }
+            else if (!ctx.Tools.NvEncExists)
+            {
+                _logger.Error("NVEncC64 未安装，跳过 HDR 转换（输出 SDR）");
+            }
+            else
+            {
+                // HDR 先于音频合并：NVEncC 只处理视频流，输出中间文件，音频随后嵌入
+                var hdrVideo = Path.Combine(tempRoot, "hdr_video.mkv").Replace('\\', '/');
+                _logger.Info($"HDR 转换开始: saturation={ctx.HdrSaturation}, contrast={ctx.HdrContrast}");
+                var args = NvEncCommandBuilder.Build(currentVideo, hdrVideo, ctx.HdrSaturation, ctx.HdrContrast);
+                _logger.Command($"NVEncC64 {args}");
+                var exit = await RunStageWithProgress(ProcessStage.HdrConverting, "HDR转换中", 100,
+                    ctx.Tools.NvEncExe, args, ParseNvencProgress, null, ct, percentDisplay: true);
+                if (exit != 0) return Fail("HDR 转换失败");
+                _logger.Success("HDR 转换完成");
+                currentVideo = hdrVideo; // 后续合并音频基于 HDR 视频流
+                hdrDone = true;
+            }
+        }
+
+        // ============ 阶段6：合并原音频 ============
         // 流程：从原视频提取音频 → 合并到当前视频（PCM 2.0 24bit 96kHz）
         if (ctx.Options.MergeAudio && ctx.Video.HasAudio)
         {
@@ -222,7 +317,6 @@ public sealed class ProcessingOrchestrator
             _logger.Warn("原视频无音频流，跳过合并原音频");
         }
 
-        // ============ 阶段6：SDR→HDR 转换 ============
         // 未勾选合并视频时无最终视频，跳过输出步骤（中间帧保留在 Temp）
         if (!ctx.Options.MergeVideo)
         {
@@ -231,45 +325,14 @@ public sealed class ProcessingOrchestrator
             return tempVideo;
         }
 
-        var finalName = OutputNamer.Build(ctx.InputVideo, ctx.Options.SuperResolution, ctx.Options.Interpolation,
-            ctx.Options.SdrToHdr, outWidth, outHeight, outFps, ctx.Options.MergeAudio);
+        // ============ 阶段7：输出到最终路径 ============
+        // 帧文件夹模式无输入视频文件，用帧文件夹名作为输出文件基础名
+        var nameBase = string.IsNullOrEmpty(ctx.InputVideo) ? ctx.ExternalFramesDir : ctx.InputVideo;
+        var finalName = OutputNamer.Build(nameBase, ctx.Options.SuperResolution, ctx.Options.Interpolation,
+            hdrDone, outWidth, outHeight, outFps, ctx.Options.MergeAudio);
         var finalPath = Path.Combine(ctx.OutputRoot, finalName).Replace('\\', '/');
-
-        if (ctx.Options.SdrToHdr)
-        {
-            if (!ctx.Gpu.SupportsHdr)
-            {
-                _logger.Error("SDR→HDR 转换需要 NVIDIA RTX 显卡，当前显卡不支持，跳过 HDR 步骤");
-                // 落地为 SDR：重新命名
-                finalName = OutputNamer.Build(ctx.InputVideo, ctx.Options.SuperResolution, ctx.Options.Interpolation,
-                    false, outWidth, outHeight, outFps, ctx.Options.MergeAudio);
-                finalPath = Path.Combine(ctx.OutputRoot, finalName).Replace('\\', '/');
-                File.Copy(currentVideo, finalPath, overwrite: true);
-            }
-            else if (!ctx.Tools.NvEncExists)
-            {
-                _logger.Error("NVEncC64 未安装，跳过 HDR 转换（输出 SDR）");
-                finalName = OutputNamer.Build(ctx.InputVideo, ctx.Options.SuperResolution, ctx.Options.Interpolation,
-                    false, outWidth, outHeight, outFps, ctx.Options.MergeAudio);
-                finalPath = Path.Combine(ctx.OutputRoot, finalName).Replace('\\', '/');
-                File.Copy(currentVideo, finalPath, overwrite: true);
-            }
-            else
-            {
-                _logger.Info($"HDR 转换开始: saturation={ctx.HdrSaturation}, contrast={ctx.HdrContrast}");
-                var args = NvEncCommandBuilder.Build(currentVideo, finalPath, ctx.HdrSaturation, ctx.HdrContrast);
-                _logger.Command($"NVEncC64 {args}");
-                var exit = await RunStageWithProgress(ProcessStage.HdrConverting, "HDR转换中", 100,
-                    ctx.Tools.NvEncExe, args, ParseNvencProgress, null, ct);
-                if (exit != 0) return Fail("HDR 转换失败");
-                _logger.Success("HDR 转换完成");
-            }
-        }
-        else
-        {
-            Directory.CreateDirectory(ctx.OutputRoot);
-            File.Copy(currentVideo, finalPath, overwrite: true);
-        }
+        Directory.CreateDirectory(ctx.OutputRoot);
+        File.Copy(currentVideo, finalPath, overwrite: true);
 
         ProgressChanged?.Invoke(new ProcessProgress { Stage = ProcessStage.Done, StageText = "完成" });
         _logger.Success($"全部完成！输出: {finalPath}");
@@ -289,20 +352,36 @@ public sealed class ProcessingOrchestrator
 
     private static long? ParseNvencProgress(string line)
     {
-        // NVEncC 输出形如 "Frames: 2450/3929" 或 "23.45%"
+        // NVEncC 输出形如 "Frames: 2450/3929" 或 "23.45%"。
+        // HDR 进度 Total=100 且按百分比显示，此处统一换算为百分比(0-100)返回，
+        // 避免把帧数 2450 直接当百分比显示成 "2450%"
         var m = Regex.Match(line, @"(\d+)/(\d+)");
-        if (m.Success && long.TryParse(m.Groups[1].Value, out var c) && long.TryParse(m.Groups[2].Value, out var t))
-            return c;
+        if (m.Success && long.TryParse(m.Groups[1].Value, out var c) && long.TryParse(m.Groups[2].Value, out var t) && t > 0)
+            return (long)(c * 100.0 / t);
         var p = NvencPercentRe.Match(line);
-        return p.Success && double.TryParse(p.Groups[1].Value, out var pct) ? (long)pct : null;
+        return p.Success && double.TryParse(p.Groups[1].Value, out var pct) ? (long)Math.Round(pct) : null;
     }
 
     // ---- 工具方法 ----
 
     private string _lastStderr = "";
+    /// <summary>当前阶段是否发生 Vulkan 设备丢失/显存溢出（安全帧率开启时据此自动停止）</summary>
+    private bool _fatalGpuError;
+
+    /// <summary>判断 stderr 行是否为致命 GPU 错误（设备丢失 / 显存溢出）</summary>
+    private static bool IsFatalGpuLine(string line)
+    {
+        return line.Contains("vkQueueSubmit failed", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("VK_ERROR_DEVICE_LOST", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("vkAllocateMemory failed", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("VK_ERROR_OUT_OF_DEVICE_MEMORY", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("out of device memory", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("out of memory", StringComparison.OrdinalIgnoreCase);
+    }
 
     private async Task<int> RunStageWithProgress(ProcessStage stage, string stageText, long total,
-        string exe, string args, Func<string, long?> frameParser, string? previewDir, CancellationToken ct)
+        string exe, string args, Func<string, long?> frameParser, string? previewDir, CancellationToken ct,
+        bool percentDisplay = false)
     {
         var lastLog = DateTime.MinValue;
         return await RunStageWithProgressEx(stage, stageText, total, exe, args, line =>
@@ -315,7 +394,8 @@ public sealed class ProcessingOrchestrator
                     Stage = stage,
                     StageText = stageText,
                     Current = v.Value,
-                    Total = total
+                    Total = total,
+                    PercentDisplay = percentDisplay
                 });
                 // 节流：每秒记一条实时进度，让命令输出区有内容
                 var now = DateTime.Now;
@@ -380,6 +460,8 @@ public sealed class ProcessingOrchestrator
         // 当前帧内的 tile 进度（0-100），由 stderr 百分比更新
         double innerPercent = 0;
         var innerLock = new object();
+        // Vulkan 设备丢失/显存溢出后只快速失败一次（避免多次触发反复 Kill）
+        var fatalKilled = false;
 
         var pollTask = Task.Run(async () =>
         {
@@ -420,6 +502,19 @@ public sealed class ProcessingOrchestrator
         var exit = await _runner.RunAsync(exe, args,
             onLine: line =>
             {
+                // 检测 Vulkan 设备丢失/显存溢出（线程过高压垮 GPU 或显存不足）。
+                // 一旦出现立即终止进程快速失败，避免工具反复刷错浪费时间
+                if (IsFatalGpuLine(line))
+                {
+                    if (!fatalKilled)
+                    {
+                        fatalKilled = true;
+                        _fatalGpuError = true;
+                        _logger.Warn($"检测到 Vulkan 设备丢失/显存溢出：{line.Trim()}，终止当前进程");
+                        _runner.KillCurrent();
+                    }
+                    return;
+                }
                 // 解析 stderr 的百分比（Real-ESRGAN: 0.00% ~ 98.33%）
                 var m = NvencPercentRe.Match(line);
                 if (m.Success && double.TryParse(m.Groups[1].Value, out var pct))
@@ -448,23 +543,38 @@ public sealed class ProcessingOrchestrator
         return exit;
     }
 
-    private Task<bool> IsOomRetryable()
-    {
-        var s = _lastStderr;
-        return Task.FromResult(s.Contains("vkAllocateMemory failed", StringComparison.OrdinalIgnoreCase) ||
-                               s.Contains("out of memory", StringComparison.OrdinalIgnoreCase) ||
-                               s.Contains("CUDA out of memory", StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static bool IsStageDone(string framesDir, long expected)
-    {
-        if (!Directory.Exists(framesDir)) return false;
-        var count = CountFrames(framesDir);
-        return count >= expected && expected > 0;
-    }
-
     private static int CountFrames(string dir)
         => Directory.Exists(dir) ? Directory.GetFiles(dir, "*.png").Length : 0;
+
+    /// <summary>把外部帧文件夹复制到临时目录（增量：目标已存在同名帧则跳过），带进度推送。
+    /// 放在后台线程执行，避免大量文件复制阻塞 UI。</summary>
+    private async Task CopyFramesAsync(string srcDir, string dstDir, CancellationToken ct)
+    {
+        Directory.CreateDirectory(dstDir);
+        var files = Directory.GetFiles(srcDir, "*.png");
+        var total = files.Length;
+        var copied = 0;
+        await Task.Run(() =>
+        {
+            foreach (var f in files)
+            {
+                ct.ThrowIfCancellationRequested();
+                var dst = Path.Combine(dstDir, Path.GetFileName(f));
+                if (!File.Exists(dst)) File.Copy(f, dst, overwrite: false);
+                copied++;
+                if (copied % 100 == 0 || copied == total)
+                {
+                    ProgressChanged?.Invoke(new ProcessProgress
+                    {
+                        Stage = ProcessStage.Splitting,
+                        StageText = "复制外部帧",
+                        Current = copied,
+                        Total = total
+                    });
+                }
+            }
+        }, ct);
+    }
 
     /// <summary>返回目录下最后写入的 PNG 帧路径（预览用，按最后写入时间判断，无则 null）</summary>
     private static string? FindLatestFrame(string dir)

@@ -9,7 +9,8 @@ namespace Easy4K.Services.CommandBuilders;
 public static class FFmpegCommandBuilder
 {
     /// <summary>拆分视频为 PNG 序列。输出帧编号从 1 开始，纯数字命名（%08d）。
-    /// 纯数字命名是 RIFE 目录模式的硬性要求（RIFE 只识别 %08d.png，不认 frame_ 前缀）。</summary>
+    /// 纯数字命名是 RIFE 目录模式的硬性要求（RIFE 只识别 %08d.png，不认 frame_ 前缀）。
+    /// -y 覆盖旧帧：从头完整拆一遍，不做断点续传。始终多线程全速。</summary>
     public static (string args, string framePattern) SplitFrames(string videoPath, string framesDir)
     {
         Directory.CreateDirectory(framesDir);

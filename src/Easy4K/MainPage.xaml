@@ -12,23 +12,7 @@
 
     <Page.Resources>
         <ResourceDictionary>
-            <ResourceDictionary.ThemeDictionaries>
-                <ResourceDictionary x:Key="Light">
-                    <SolidColorBrush x:Key="CardBgBrush" Color="#FFF5F5F5"/>
-                    <SolidColorBrush x:Key="CardBorderBrush" Color="#FFC8C8C8"/>
-                    <SolidColorBrush x:Key="WarnBgBrush" Color="#20FFB300"/>
-                </ResourceDictionary>
-                <ResourceDictionary x:Key="Dark">
-                    <SolidColorBrush x:Key="CardBgBrush" Color="#FF2A2A2A"/>
-                    <SolidColorBrush x:Key="CardBorderBrush" Color="#FF444444"/>
-                    <SolidColorBrush x:Key="WarnBgBrush" Color="#30FFB300"/>
-                </ResourceDictionary>
-                <ResourceDictionary x:Key="HighContrast">
-                    <SolidColorBrush x:Key="CardBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
-                    <SolidColorBrush x:Key="CardBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
-                    <SolidColorBrush x:Key="WarnBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
-                </ResourceDictionary>
-            </ResourceDictionary.ThemeDictionaries>
+            <!-- 主题画笔（CardBgBrush/CardBorderBrush/WarnBgBrush）与玻璃样式已上移至 App.xaml -->
 
             <Style x:Key="CardBorder" TargetType="Border">
                 <Setter Property="Background" Value="{ThemeResource CardBgBrush}"/>
@@ -45,6 +29,8 @@
             <Style x:Key="FieldLabel" TargetType="TextBlock">
                 <Setter Property="VerticalAlignment" Value="Center"/>
                 <Setter Property="MinWidth" Value="80"/>
+                <!-- Win11 Segoe UI 行高差异：指定具体字体变体保证跨版本对齐（替代 Margin hack） -->
+                <Setter Property="FontFamily" Value="Segoe UI Medium"/>
                 <Setter Property="Margin" Value="0,0,8,0"/>
             </Style>
             <!-- 转换器已移除：进度用 x:Bind 格式化，颜色用 LogEntry.LevelColorHex，可见性用 x:Bind 条件 -->
@@ -74,11 +60,26 @@
                                 <ColumnDefinition Width="80"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="输入视频" Style="{StaticResource FieldLabel}"/>
-                            <TextBox  Grid.Column="1" Text="{x:Bind Vm.InputVideo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsReadOnly="True" PlaceholderText="选择 .mp4/.mkv/.avi/.mov 文件"/>
-                            <Button   Grid.Column="2" Content="浏览" Click="OnBrowseInput"/>
+                            <TextBox  Grid.Column="1" Text="{x:Bind Vm.InputVideo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{x:Bind Vm.BrowseInputEnabled, Mode=OneWay}" PlaceholderText="选择或输入 .mp4/.mkv/.avi/.mov 路径" TextChanged="OnInputVideoTextChanged" Style="{StaticResource GlassTextBox}"/>
+                            <Button   Grid.Column="2" Content="浏览" Click="OnBrowseInput" IsEnabled="{x:Bind Vm.BrowseInputEnabled, Mode=OneWay}" Margin="0,0,8,0" Style="{StaticResource GlassButton}"/>
+                            <Button   Grid.Column="3" Content="清除" Click="OnClearInputVideo" IsEnabled="{x:Bind Vm.HasInputVideo, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                         </Grid>
+                        <Grid ColumnSpacing="8" Margin="0,4,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="80"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="帧文件夹" Style="{StaticResource FieldLabel}"/>
+                            <TextBox  Grid.Column="1" Text="{x:Bind Vm.ExternalFramesDir, Mode=OneWay}" IsEnabled="{x:Bind Vm.ImportFramesEnabled, Mode=OneWay}" PlaceholderText="未导入（默认先拆帧）" TextChanged="OnFrameFolderTextChanged" Style="{StaticResource GlassTextBox}"/>
+                            <Button   Grid.Column="2" Content="导入" Click="OnImportFrameFolder" IsEnabled="{x:Bind Vm.ImportFramesEnabled, Mode=OneWay}" Margin="0,0,8,0" Style="{StaticResource GlassButton}"/>
+                            <Button   Grid.Column="3" Content="清除" Click="OnClearFrameFolder" IsEnabled="{x:Bind Vm.HasExternalFrames, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
+                        </Grid>
+                        <TextBlock Text="可选：导入已有 PNG 帧文件夹可跳过拆帧（与输入视频二选一）" FontSize="10" Opacity="0.6"/>
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="80"/>
@@ -86,8 +87,8 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="临时目录" Style="{StaticResource FieldLabel}"/>
-                            <TextBox  Grid.Column="1" Text="{x:Bind Vm.TempRoot, Mode=TwoWay}" IsReadOnly="True"/>
-                            <Button   Grid.Column="2" Content="浏览" Click="OnBrowseTemp"/>
+                            <TextBox  Grid.Column="1" Text="{x:Bind Vm.TempRoot, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="中间帧输出目录" Style="{StaticResource GlassTextBox}"/>
+                            <Button   Grid.Column="2" Content="浏览" Click="OnBrowseTemp" Style="{StaticResource GlassButton}"/>
                         </Grid>
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
@@ -96,8 +97,8 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="输出目录" Style="{StaticResource FieldLabel}"/>
-                            <TextBox  Grid.Column="1" Text="{x:Bind Vm.OutputRoot, Mode=TwoWay}" IsReadOnly="True"/>
-                            <Button   Grid.Column="2" Content="浏览" Click="OnBrowseOutput"/>
+                            <TextBox  Grid.Column="1" Text="{x:Bind Vm.OutputRoot, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="成品视频输出目录" Style="{StaticResource GlassTextBox}"/>
+                            <Button   Grid.Column="2" Content="浏览" Click="OnBrowseOutput" Style="{StaticResource GlassButton}"/>
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -123,7 +124,7 @@
                     <Border Grid.Column="1" Style="{StaticResource CardBorder}">
                         <StackPanel Spacing="4">
                             <TextBlock Text="处理选项" Style="{StaticResource SectionTitle}"/>
-                            <CheckBox Content="拆分帧" IsChecked="{x:Bind Vm.SplitFrames, Mode=TwoWay}" FontSize="12"/>
+                            <CheckBox Content="拆分帧" IsChecked="{x:Bind Vm.SplitFrames, Mode=TwoWay}" IsEnabled="{x:Bind Vm.SplitFramesLocked, Mode=OneWay}" FontSize="12"/>
                             <CheckBox Content="超分" IsChecked="{x:Bind Vm.SuperResolution, Mode=TwoWay}" FontSize="12"/>
                             <CheckBox Content="补帧" IsChecked="{x:Bind Vm.Interpolation, Mode=TwoWay}" FontSize="12"/>
                             <CheckBox Content="合并视频 (依赖拆分帧)" IsChecked="{x:Bind Vm.MergeVideo, Mode=TwoWay}" FontSize="12"/>
@@ -147,15 +148,15 @@
                                     <ColumnDefinition Width="50"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="模型" VerticalAlignment="Center" FontSize="12"/>
-                                <ComboBox Grid.Column="1" ItemsSource="{x:Bind Vm.SrModels}" SelectedItem="{x:Bind Vm.SrModel, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择模型"/>
+                                <TextBlock Grid.Column="0" Text="模型" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <ComboBox Grid.Column="1" ItemsSource="{x:Bind Vm.SrModels}" SelectedItem="{x:Bind Vm.SrModel, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择模型" Style="{StaticResource GlassComboBox}"/>
                             </Grid>
                             <Grid ColumnSpacing="8">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="50"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="倍率" VerticalAlignment="Center" FontSize="12"/>
+                                <TextBlock Grid.Column="0" Text="倍率" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
                                 <ComboBox Grid.Column="1" SelectedItem="{x:Bind Vm.SrScale, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch">
                                     <x:Int32>2</x:Int32>
                                     <x:Int32>3</x:Int32>
@@ -174,16 +175,16 @@
                                     <ColumnDefinition Width="50"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="模型" VerticalAlignment="Center" FontSize="12"/>
-                                <ComboBox Grid.Column="1" ItemsSource="{x:Bind Vm.IfModels}" SelectedItem="{x:Bind Vm.IfModel, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择模型"/>
+                                <TextBlock Grid.Column="0" Text="模型" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <ComboBox Grid.Column="1" ItemsSource="{x:Bind Vm.IfModels}" SelectedItem="{x:Bind Vm.IfModel, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择模型" Style="{StaticResource GlassComboBox}"/>
                             </Grid>
                             <Grid ColumnSpacing="8">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="50"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="倍率" VerticalAlignment="Center" FontSize="12"/>
-                                <ComboBox Grid.Column="1" SelectedItem="{x:Bind Vm.IfMultiplier, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch">
+                                <TextBlock Grid.Column="0" Text="倍率" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <ComboBox Grid.Column="1" SelectedItem="{x:Bind Vm.IfMultiplier, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" Style="{StaticResource GlassComboBox}">
                                     <x:Int32>2</x:Int32>
                                     <x:Int32>3</x:Int32>
                                     <x:Int32>4</x:Int32>
@@ -191,7 +192,7 @@
                                 </ComboBox>
                             </Grid>
                             <TextBlock Text="{x:Bind Vm.TargetFpsText, Mode=OneWay}" Opacity="0.6" FontSize="11"/>
-                            <TextBlock Text="{x:Bind Vm.VramWarning, Mode=OneWay}" TextWrapping="Wrap" Foreground="Orange" FontSize="11"/>
+                            <TextBlock Text="{x:Bind Vm.VramWarning, Mode=OneWay}" TextWrapping="Wrap" Foreground="{x:Bind Vm.VramWarningBrush, Mode=OneWay}" FontSize="11"/>
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -206,11 +207,11 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <Button   Grid.Column="0" Content="拆分音频" Click="OnExtractAudio" IsEnabled="{x:Bind Vm.CanStart, Mode=OneWay}"/>
-                            <TextBlock Grid.Column="1" Text="{x:Bind Vm.ExtractedAudioPath, Mode=OneWay}" VerticalAlignment="Center" IsTextSelectionEnabled="True" Opacity="0.6" TextTrimming="CharacterEllipsis" FontSize="11"/>
-                            <TextBlock Grid.Column="2" Text="FLAC -> PCM 24bit 96kHz" VerticalAlignment="Center" Opacity="0.6" FontSize="11"/>
+                            <Button   Grid.Column="0" Content="拆分音频" Click="OnExtractAudio" IsEnabled="{x:Bind Vm.ExtractAudioEnabled, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
+                            <TextBlock Grid.Column="1" Text="{x:Bind Vm.ExtractedAudioPath, Mode=OneWay}" VerticalAlignment="Center" IsTextSelectionEnabled="True" Opacity="0.6" TextTrimming="CharacterEllipsis" FontSize="11" FontFamily="Segoe UI Medium"/>
+                            <TextBlock Grid.Column="2" Text="FLAC -> PCM 24bit 96kHz" VerticalAlignment="Center" Opacity="0.6" FontSize="11" FontFamily="Segoe UI Medium"/>
                         </Grid>
-                        <CheckBox Content="将原音频合并进新视频 (处理结束时自动提取并合并)" IsChecked="{x:Bind Vm.MergeAudio, Mode=TwoWay}" FontSize="12"/>
+                        <CheckBox Content="将原音频合并进新视频 (处理结束时自动提取并合并)" IsChecked="{x:Bind Vm.MergeAudio, Mode=TwoWay}" IsEnabled="{x:Bind Vm.MergeAudioEnabled, Mode=OneWay}" FontSize="12"/>
                     </StackPanel>
                 </Border>
 
@@ -225,11 +226,16 @@
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="饱和度" VerticalAlignment="Center" FontSize="12"/>
-                            <TextBlock Grid.Column="1" Text="200 (固定)" VerticalAlignment="Center" FontSize="12" Opacity="0.7"/>
-                            <TextBlock Grid.Column="2" Text="对比度" VerticalAlignment="Center" FontSize="12"/>
-                            <TextBlock Grid.Column="3" Text="200 (固定)" VerticalAlignment="Center" FontSize="12" Opacity="0.7"/>
+                            <TextBlock Grid.Column="0" Text="饱和度" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                            <NumberBox Grid.Column="1" Value="{x:Bind Vm.HdrSaturation, Mode=TwoWay}"
+                                       Minimum="0" Maximum="200" SpinButtonPlacementMode="Compact"
+                                       SmallChange="1" LargeChange="10" FontSize="12" Style="{StaticResource GlassNumberBox}"/>
+                            <TextBlock Grid.Column="2" Text="对比度" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                            <NumberBox Grid.Column="3" Value="{x:Bind Vm.HdrContrast, Mode=TwoWay}"
+                                       Minimum="0" Maximum="200" SpinButtonPlacementMode="Compact"
+                                       SmallChange="1" LargeChange="10" FontSize="12" Style="{StaticResource GlassNumberBox}"/>
                         </Grid>
+                        <TextBlock Text="范围 0 ~ 200（NVEncC 最高 200，默认 200）" FontSize="10" Opacity="0.6"/>
                     </StackPanel>
                 </Border>
 
@@ -237,14 +243,39 @@
                 <Border Style="{StaticResource CardBorder}" BorderBrush="Orange" Background="{ThemeResource WarnBgBrush}">
                     <StackPanel Spacing="2">
                         <TextBlock Text="高级性能选项" Style="{StaticResource SectionTitle}"/>
-                        <CheckBox Content="开启安全帧率 (自动降级)" IsChecked="{x:Bind Vm.UseSafeFrameRate, Mode=TwoWay}" FontSize="12"/>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Slider Grid.Column="0" Minimum="1" Maximum="32" StepFrequency="1" TickFrequency="1"
+                                    Value="{x:Bind Vm.ThreadCount, Mode=TwoWay}"
+                                    ValueChanged="OnThreadSliderValueChanged"
+                                    HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="1" Text="{x:Bind Vm.ThreadLabel, Mode=OneWay}"
+                                       VerticalAlignment="Center" FontSize="12" MinWidth="70" TextAlignment="Right"/>
+                        </Grid>
+                        <TextBlock Text="处理线程（-j 1:x:x），范围 1:1:1 ~ 1:32:32，默认 1:2:2"
+                                   FontSize="10" Opacity="0.6"/>
+                        <TextBlock Text="{x:Bind Vm.ThreadWarnText, Mode=OneWay}" Foreground="Orange"
+                                   FontSize="11" TextWrapping="Wrap" Visibility="{x:Bind Vm.ThreadWarnVis, Mode=OneWay}"/>
+                        <CheckBox Content="开启安全帧率 (Vulkan 设备丢失/显存溢出时自动停止)" IsChecked="{x:Bind Vm.UseSafeFrameRate, Mode=TwoWay}" FontSize="12"/>
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource CardBorder}" BorderBrush="Orange" Background="{ThemeResource WarnBgBrush}">
-                    <StackPanel Spacing="2">
-                        <TextBlock Text="警告 / 提示" Style="{StaticResource SectionTitle}"/>
-                        <TextBlock Text="{x:Bind Vm.Warnings, Mode=OneWay}" TextWrapping="Wrap" FontFamily="Consolas" FontSize="11"/>
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="提示" Style="{StaticResource SectionTitle}"/>
+                        <!-- 显卡状态（绿=可运行 / 黄=勉强 / 红=不行） -->
+                        <Border Background="{x:Bind Vm.GpuStatusBrush, Mode=OneWay}" CornerRadius="4" Padding="10,6"
+                                Visibility="{x:Bind Vm.GpuStatusVis, Mode=OneWay}">
+                            <TextBlock Text="{x:Bind Vm.GpuStatusText, Mode=OneWay}"
+                                       Foreground="{x:Bind Vm.GpuStatusForeground, Mode=OneWay}"
+                                       FontSize="12" TextWrapping="Wrap"/>
+                        </Border>
+                        <TextBlock Text="{x:Bind Vm.Warnings, Mode=OneWay}" TextWrapping="Wrap" FontSize="11"/>
+                        <CheckBox Content="以后不再爆红" IsChecked="{x:Bind Vm.SuppressRedWarning, Mode=TwoWay}" FontSize="12"/>
+                        <TextBlock Text="免责声明：本软件按现状提供，处理结果与设备风险（高负载/发热/崩溃等）由使用者自行承担，开发者不承担任何责任。详见菜单栏「帮助 → 关于」。" TextWrapping="Wrap" FontSize="10" Opacity="0.6" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Border>
 
@@ -258,9 +289,9 @@
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <Button Grid.Column="0" Content="开始处理 (Ctrl+S)" Click="OnStart" IsEnabled="{x:Bind Vm.CanStart, Mode=OneWay}" Style="{StaticResource AccentButtonStyle}"/>
-                            <Button Grid.Column="1" Content="停止 (Ctrl+Shift+S)" Click="OnStop" IsEnabled="{x:Bind Vm.CanStop, Mode=OneWay}"/>
-                            <Button Grid.Column="2" Content="清理临时文件" Click="OnCleanTemp"/>
+                            <Button Grid.Column="0" Content="开始处理 (Ctrl+S)" Click="OnStart" IsEnabled="{x:Bind Vm.CanStart, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
+                            <Button Grid.Column="1" Content="停止 (Ctrl+Shift+S)" Click="OnStop" IsEnabled="{x:Bind Vm.CanStop, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
+                            <Button Grid.Column="2" Content="清理临时文件" Click="OnCleanTemp" Style="{StaticResource GlassButton}"/>
                         </Grid>
                         <TextBlock Text="{x:Bind Vm.FinalOutputName, Mode=OneWay}" Opacity="0.6" FontSize="11" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
@@ -270,5 +301,3 @@
         </ScrollViewer>
     </Grid>
 </Page>
-
-

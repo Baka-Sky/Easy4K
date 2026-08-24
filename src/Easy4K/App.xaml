@@ -10,7 +10,50 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
                 <!-- Other merged dictionaries here -->
             </ResourceDictionary.MergedDictionaries>
-            <!-- Other app resources here -->
+
+            <!-- 全局主题画笔：卡片/控件用半透明纯色，任何环境都能稳定透出背景 -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="CardBgBrush" Color="#66F5F5F5"/>
+                    <SolidColorBrush x:Key="ButtonBgBrush" Color="#8CF5F5F5"/>
+                    <SolidColorBrush x:Key="CardBorderBrush" Color="#FFC8C8C8"/>
+                    <SolidColorBrush x:Key="WarnBgBrush" Color="#20FFB300"/>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="CardBgBrush" Color="#662A2A2A"/>
+                    <SolidColorBrush x:Key="ButtonBgBrush" Color="#8C2A2A2A"/>
+                    <SolidColorBrush x:Key="CardBorderBrush" Color="#FF444444"/>
+                    <SolidColorBrush x:Key="WarnBgBrush" Color="#30FFB300"/>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="HighContrast">
+                    <SolidColorBrush x:Key="CardBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
+                    <SolidColorBrush x:Key="ButtonBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
+                    <SolidColorBrush x:Key="CardBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
+                    <SolidColorBrush x:Key="WarnBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+
+            <!-- 全局控件亚克力样式：ALL IN，按钮/输入框全部玻璃化 -->
+            <Style x:Key="GlassButton" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+                <Setter Property="Background" Value="{ThemeResource ButtonBgBrush}"/>
+                <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+            </Style>
+            <Style x:Key="GlassTextBox" TargetType="TextBox">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
+                <Setter Property="CornerRadius" Value="4"/>
+            </Style>
+            <Style x:Key="GlassComboBox" TargetType="ComboBox">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
+                <Setter Property="CornerRadius" Value="4"/>
+            </Style>
+            <Style x:Key="GlassNumberBox" TargetType="NumberBox">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
+                <Setter Property="CornerRadius" Value="4"/>
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

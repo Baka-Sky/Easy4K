@@ -11,6 +11,10 @@ public sealed class ProcessProgress
     public string LatestFramePath { get; set; } = "";
     /// <summary>降级提示文本（安全帧率触发时设置，空则无降级）</summary>
     public string DegradeNotice { get; set; } = "";
+    /// <summary>进度以百分比显示（如 HDR 转换），false 时按帧数显示</summary>
+    public bool PercentDisplay { get; set; }
     public double Percent => Total > 0 ? Math.Clamp(Current * 100.0 / Total, 0, 100) : 0;
-    public string DetailText => Total > 0 ? $"{StageText} 第{Current}帧/共{Total}帧" : StageText;
+    public string DetailText => Total > 0
+        ? (PercentDisplay ? $"{StageText} {Current}%" : $"{StageText} 第{Current}帧/共{Total}帧")
+        : StageText;
 }

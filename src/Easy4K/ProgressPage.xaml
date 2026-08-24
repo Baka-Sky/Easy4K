@@ -10,20 +10,7 @@
 
     <Page.Resources>
         <ResourceDictionary>
-            <ResourceDictionary.ThemeDictionaries>
-                <ResourceDictionary x:Key="Light">
-                    <SolidColorBrush x:Key="CardBgBrush" Color="#FFF5F5F5"/>
-                    <SolidColorBrush x:Key="CardBorderBrush" Color="#FFC8C8C8"/>
-                </ResourceDictionary>
-                <ResourceDictionary x:Key="Dark">
-                    <SolidColorBrush x:Key="CardBgBrush" Color="#FF2A2A2A"/>
-                    <SolidColorBrush x:Key="CardBorderBrush" Color="#FF444444"/>
-                </ResourceDictionary>
-                <ResourceDictionary x:Key="HighContrast">
-                    <SolidColorBrush x:Key="CardBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
-                    <SolidColorBrush x:Key="CardBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
-                </ResourceDictionary>
-            </ResourceDictionary.ThemeDictionaries>
+            <!-- 主题画笔（CardBgBrush/CardBorderBrush）与玻璃样式已上移至 App.xaml -->
 
             <Style x:Key="CardBorder" TargetType="Border">
                 <Setter Property="Background" Value="{ThemeResource CardBgBrush}"/>
@@ -65,9 +52,16 @@
 
         <!-- 预览图（占满剩余空间） -->
         <Border Grid.Row="2" Style="{StaticResource CardBorder}">
-            <Grid>
-                <TextBlock x:Name="PreviewHint" Text="预览区：处理开始后实时显示最新帧" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.4" FontSize="14"/>
-                <Image x:Name="PreviewImage" Stretch="Uniform"/>
+            <Grid RowSpacing="4">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <ToggleSwitch Grid.Row="0" Header="图片预览" IsOn="{x:Bind Vm.ShowPreview, Mode=TwoWay}" FontSize="12"/>
+                <Grid Grid.Row="1">
+                    <TextBlock x:Name="PreviewHint" Text="{x:Bind Vm.PreviewHintText, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.4" FontSize="14"/>
+                    <Image x:Name="PreviewImage" Stretch="Uniform" Visibility="{x:Bind Vm.ShowPreview, Mode=OneWay}"/>
+                </Grid>
             </Grid>
         </Border>
 
@@ -92,8 +86,8 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="命令输出" FontWeight="SemiBold" FontSize="13"/>
-                        <Button Grid.Column="1" Content="复制日志" Click="OnCopyLog" FontSize="11" Margin="0,0,8,0"/>
-                        <Button Grid.Column="2" Content="清空" Click="OnClearLog" FontSize="11"/>
+                        <Button Grid.Column="1" Content="复制日志" Click="OnCopyLog" FontSize="11" Margin="0,0,8,0" Style="{StaticResource GlassButton}"/>
+                        <Button Grid.Column="2" Content="清空" Click="OnClearLog" FontSize="11" Style="{StaticResource GlassButton}"/>
                     </Grid>
                     <TextBox x:Name="CommandLogBox" Grid.Row="1" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
                              FontFamily="Consolas" FontSize="11" Background="Transparent" BorderThickness="0"
@@ -118,7 +112,9 @@
                             <TextBlock Text="{x:Bind Vm.GpuUsageText, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold" FontSize="14"/>
                         </Grid>
                     </StackPanel>
-                    <Button Content="停止" Click="OnStop" IsEnabled="{x:Bind Vm.CanStop, Mode=OneWay}" HorizontalAlignment="Stretch"/>
+                    <Button Content="停止" Click="OnStop" IsEnabled="{x:Bind Vm.CanStop, Mode=OneWay}" HorizontalAlignment="Stretch" Style="{StaticResource GlassButton}"/>
+                    <Button x:Name="PauseBtn" Content="暂停" Click="OnPauseToggle" FontSize="12"
+                            IsEnabled="{x:Bind Vm.IsProcessing, Mode=OneWay}" HorizontalAlignment="Stretch" Style="{StaticResource GlassButton}"/>
                 </StackPanel>
             </Border>
         </Grid>
