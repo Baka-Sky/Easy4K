@@ -38,7 +38,18 @@ public partial class App : Application
 
         // InitializeComponent 之后再订阅 WinUI XAML 层的未处理异常
         Microsoft.UI.Xaml.Application.Current.UnhandledException += (_, e) =>
-        { File.AppendAllText(CrashLogPath, $"[Xaml Unhandled @ {DateTime.Now}]\n{e.Exception}\n\n"); e.Handled = true; };
+        {
+            try { File.AppendAllText(CrashLogPath, $"[Xaml Unhandled @ {DateTime.Now}]\n{e.Exception}\n\n"); } catch { }
+            e.Handled = true;
+        };
+
+        // x:Bind 绑定失败追踪（Debug 构建下提供精确绑定信息，用于定位"找不到元素"类崩溃）
+        var dbg = Microsoft.UI.Xaml.Application.Current.DebugSettings;
+        dbg.IsBindingTracingEnabled = true;
+        dbg.BindingFailed += (_, e) =>
+        {
+            try { File.AppendAllText(CrashLogPath, $"[BindingFailed @ {DateTime.Now}] {e.Message}\n\n"); } catch { }
+        };
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)

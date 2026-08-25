@@ -16,6 +16,8 @@ public sealed class AppSettings
     public int ThreadCount { get; set; } = 2;
     /// <summary>安全帧率：遇到 Vulkan 设备丢失/显存溢出时自动停止处理（不降级重试）</summary>
     public bool UseSafeFrameRate { get; set; } = true;
+    /// <summary>降低部分画质以降低显存占用（-u UHD 模式），可与安全帧率共存</summary>
+    public bool LowerQualityForVram { get; set; }
 
     /// <summary>HDR 转换饱和度（NVEncC --vpp-ngx-truehdr saturation，最高 200）</summary>
     public int HdrSaturation { get; set; } = 200;

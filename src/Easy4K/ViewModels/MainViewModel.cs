@@ -78,6 +78,7 @@ public partial class MainViewModel : ObservableObject
         _srModel = app.DefaultSrModel;
         _ifModel = app.DefaultIfModel;
         _useSafeFrameRate = app.UseSafeFrameRate;
+        _lowerQualityForVram = app.LowerQualityForVram;
         _threadCount = Math.Clamp(app.ThreadCount, 1, 32);
         _hdrSaturation = Math.Clamp(app.HdrSaturation, 0, 200);
         _hdrContrast = Math.Clamp(app.HdrContrast, 0, 200);
@@ -240,6 +241,10 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _useSafeFrameRate;
 
+    /// <summary>降低部分画质以降低显存占用（-u UHD 模式，realesrgan/rife 均生效，可与安全帧率共存）</summary>
+    [ObservableProperty]
+    private bool _lowerQualityForVram;
+
     /// <summary>是否显示图片预览（处理中可随时开关）</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PreviewHintText))]
@@ -267,6 +272,12 @@ public partial class MainViewModel : ObservableObject
     partial void OnUseSafeFrameRateChanged(bool value)
     {
         _app.UseSafeFrameRate = value;
+        _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnLowerQualityForVramChanged(bool value)
+    {
+        _app.LowerQualityForVram = value;
         _settings.Save(_app, _pathConfig);
     }
 
@@ -760,33 +771,52 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnIfEngineChanged(string value)
     {
-        RefreshIfModels();
+        // 简单防御：刷新失败绝不向上抛（用户曾因 Offical 切换后点模型下拉框 0x80070490 闪退）
+        try
+        {
+            RefreshIfModels();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"刷新模型列表异常: {ex.Message}");
+            try { IfModels.Clear(); } catch { }
+            IfModel = "";
+        }
         UpdateWarnings();
     }
 
     private void RefreshIfModels()
     {
+        // 先解除 ComboBox 选中关联再重建列表：旧选中项一旦脱离新列表，
+        // 展开下拉框时会触发 WinUI 0x80070490「找不到元素」闪退（must 保持选中值 ∈ 列表）
+        IfModel = "";
         IfModels.Clear();
-        // Offical 引擎：列出 Tools\officalrife\models\official_*（pkl 模型）
-        if (IfEngine == "Offical")
-        {
-            foreach (var m in OfficalRifeCommandBuilder.ListModels(Tools.OfficalRifeModelsRoot))
-                IfModels.Add(m);
-            if (IfModels.Contains(IfModel)) { /* keep */ }
-            else if (IfModels.Count > 0) IfModel = IfModels[0];
-            else IfModel = "";
-            return;
-        }
-        // NCNN 引擎：rife-ncnn-vulkan 模型，优先规格书常用模型
-        var all = RifeCommandBuilder.ListModels(Tools.RifeModelsRoot);
-        var preferred = RifeCommandBuilder.PreferredModels.Intersect(all).ToList();
-        var rest = all.Except(preferred).ToList();
-        foreach (var m in preferred.Concat(rest))
-            IfModels.Add(m);
 
-        if (IfModels.Contains(IfModel)) { /* keep */ }
-        else if (IfModels.Contains(_app.DefaultIfModel)) IfModel = _app.DefaultIfModel;
-        else if (IfModels.Count > 0) IfModel = IfModels[0];
+        switch (IfEngine)
+        {
+            case "Offical":
+                // Offical 引擎：列出 Tools\officalrife\models\official_*（pkl 模型）
+                foreach (var m in OfficalRifeCommandBuilder.ListModels(Tools.OfficalRifeModelsRoot))
+                    IfModels.Add(m);
+                // Offical 无"默认模型"概念，取第一个即可（列表为空则保持 IfModel=""）
+                if (IfModels.Count > 0) IfModel = IfModels[0];
+                break;
+
+            case "NCNN":
+                // NCNN 引擎：rife-ncnn-vulkan 模型，优先规格书常用模型
+                var all = RifeCommandBuilder.ListModels(Tools.RifeModelsRoot);
+                var preferred = RifeCommandBuilder.PreferredModels.Intersect(all).ToList();
+                var rest = all.Except(preferred).ToList();
+                foreach (var m in preferred.Concat(rest))
+                    IfModels.Add(m);
+                // 优先配置里的默认模型，其次取列表第一个（列表为空则保持 IfModel=""）
+                if (IfModels.Count > 0)
+                    IfModel = IfModels.Contains(_app.DefaultIfModel) ? _app.DefaultIfModel : IfModels[0];
+                break;
+
+            default:
+                break;
+        }
     }
 
     // ===================== 处理流程 =====================

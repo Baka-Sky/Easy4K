@@ -14,17 +14,19 @@ public static class RifeCommandBuilder
 {
     /// <summary>构建补帧命令。multiplier = 补帧倍率，targetFrames = 原帧数 × 倍率。
     /// rife-v4+ 用 -n {targetFrames}；rife-v2/v3 用 -n {multiplier}。
-    /// jThreads 控制线程（load:proc:save）："1:1:1" 安全帧率单线程；空串不加 -j 用工具默认。</summary>
+    /// jThreads 控制线程（load:proc:save）："1:1:1" 安全帧率单线程；空串不加 -j 用工具默认。
+    /// useUhdMode：勾选「降低部分画质以降低显存占用」时加 -u（UHD 模式，降画质省显存）。</summary>
     public static string Build(string inputFramesDir, string outputFramesDir, string model,
-        int multiplier, long targetFrames, string jThreads)
+        int multiplier, long targetFrames, string jThreads, bool useUhdMode = false)
     {
         Directory.CreateDirectory(outputFramesDir);
         // BUG-09：v4 系列 -n 是目标帧数；v2/v3 的 -n 是插值倍数（不支持自定义帧数）
         var isV4 = model.StartsWith("rife-v4", StringComparison.OrdinalIgnoreCase);
         var nArg = isV4 ? $"-n {targetFrames}" : $"-n {multiplier}";
-        // -m 模型名（不含路径，工作目录=exe 目录）  -g 0  -u UHD  -j 线程数（空则不加，用默认）
+        // -m 模型名（不含路径，工作目录=exe 目录）  -g 0  -u UHD（勾选才加）  -j 线程数（空则不加，用默认）
         var j = string.IsNullOrEmpty(jThreads) ? "" : $" -j {jThreads}";
-        var args = $"-i \"{inputFramesDir}\" -o \"{outputFramesDir}\" -m {model} -g 0 {nArg} -u{j}";
+        var u = useUhdMode ? " -u" : "";
+        var args = $"-i \"{inputFramesDir}\" -o \"{outputFramesDir}\" -m {model} -g 0 {nArg}{u}{j}";
         return args;
     }
 

@@ -264,7 +264,7 @@ public sealed class ProcessingOrchestrator
                         {
                             _logger.Warn("检测到显卡错误（Vulkan 设备丢失/显存溢出），自动降级为单线程重试本次补帧");
                             CleanPartialOutput(ifFrames);
-                            var retryArgs = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, targetFrames, "1:1:1");
+                            var retryArgs = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, targetFrames, "1:1:1", ctx.Settings.LowerQualityForVram);
                             _logger.Command($"rife-ncnn-vulkan {retryArgs}（降级单线程重试）");
                             exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(降级)", targetFrames,
                                 ctx.Tools.RifeExe, retryArgs, ifFrames, ct);

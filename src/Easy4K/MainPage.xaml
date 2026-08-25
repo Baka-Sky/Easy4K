@@ -157,7 +157,7 @@
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="倍率" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
-                                <ComboBox Grid.Column="1" SelectedItem="{x:Bind Vm.SrScale, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch">
+                                <ComboBox Grid.Column="1" SelectedItem="{x:Bind Vm.SrScale, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" Style="{StaticResource GlassComboBox}">
                                     <x:Int32>2</x:Int32>
                                     <x:Int32>3</x:Int32>
                                     <x:Int32>4</x:Int32>
@@ -268,6 +268,7 @@
                         <TextBlock Text="{x:Bind Vm.ThreadWarnText, Mode=OneWay}" Foreground="Orange"
                                    FontSize="11" TextWrapping="Wrap" Visibility="{x:Bind Vm.ThreadWarnVis, Mode=OneWay}"/>
                         <CheckBox Content="开启安全帧率 (Vulkan 设备丢失/显存溢出时自动停止)" IsChecked="{x:Bind Vm.UseSafeFrameRate, Mode=TwoWay}" FontSize="12"/>
+                        <CheckBox Content="降低部分画质以降低显存占用 (-u UHD 模式，可与安全帧率共存)" IsChecked="{x:Bind Vm.LowerQualityForVram, Mode=TwoWay}" FontSize="12"/>
                     </StackPanel>
                 </Border>
 

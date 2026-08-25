@@ -12,20 +12,28 @@
             </ResourceDictionary.MergedDictionaries>
 
             <!-- 全局主题画笔：卡片/控件用半透明纯色，任何环境都能稳定透出背景 -->
+            <!-- 显式固定圆角资源：ComboBox 弹出层(Popup)默认用 OverlayCornerRadius，某些 WinUI 版本/主题会解析成直角，
+                 这里强制 8px(弹出层)/4px(控件)，保证所有下拉框弹出都是圆角（OverlayCornerRadius 必须定义在 App 级才生效） -->
             <ResourceDictionary.ThemeDictionaries>
                 <ResourceDictionary x:Key="Light">
+                    <CornerRadius x:Key="OverlayCornerRadius">8,8,8,8</CornerRadius>
+                    <CornerRadius x:Key="ControlCornerRadius">4,4,4,4</CornerRadius>
                     <SolidColorBrush x:Key="CardBgBrush" Color="#66F5F5F5"/>
                     <SolidColorBrush x:Key="ButtonBgBrush" Color="#8CF5F5F5"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FFC8C8C8"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="#20FFB300"/>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Dark">
+                    <CornerRadius x:Key="OverlayCornerRadius">8,8,8,8</CornerRadius>
+                    <CornerRadius x:Key="ControlCornerRadius">4,4,4,4</CornerRadius>
                     <SolidColorBrush x:Key="CardBgBrush" Color="#662A2A2A"/>
                     <SolidColorBrush x:Key="ButtonBgBrush" Color="#8C2A2A2A"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FF444444"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="#30FFB300"/>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="HighContrast">
+                    <CornerRadius x:Key="OverlayCornerRadius">8,8,8,8</CornerRadius>
+                    <CornerRadius x:Key="ControlCornerRadius">4,4,4,4</CornerRadius>
                     <SolidColorBrush x:Key="CardBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
                     <SolidColorBrush x:Key="ButtonBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
