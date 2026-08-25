@@ -112,7 +112,7 @@
 
                     <Border Grid.Column="0" Style="{StaticResource CardBorder}">
                         <StackPanel Spacing="4">
-                            <TextBlock Text="原视频信息 (自动检测)" Style="{StaticResource SectionTitle}"/>
+                            <TextBlock Text="输入视频信息 (自动检测)" Style="{StaticResource SectionTitle}"/>
                             <TextBlock Text="{x:Bind Vm.VideoInfoText, Mode=OneWay}" TextWrapping="Wrap" FontSize="12"/>
                             <TextBlock Text="输出分辨率" FontWeight="SemiBold" FontSize="12" Margin="0,4,0,0"/>
                             <TextBlock Text="{x:Bind Vm.OutputResolutionText, Mode=OneWay}" FontSize="12"/>
@@ -124,10 +124,10 @@
                     <Border Grid.Column="1" Style="{StaticResource CardBorder}">
                         <StackPanel Spacing="4">
                             <TextBlock Text="处理选项" Style="{StaticResource SectionTitle}"/>
-                            <CheckBox Content="拆分帧" IsChecked="{x:Bind Vm.SplitFrames, Mode=TwoWay}" IsEnabled="{x:Bind Vm.SplitFramesLocked, Mode=OneWay}" FontSize="12"/>
+                            <CheckBox Content="拆帧" IsChecked="{x:Bind Vm.SplitFrames, Mode=TwoWay}" IsEnabled="{x:Bind Vm.SplitFramesLocked, Mode=OneWay}" FontSize="12"/>
                             <CheckBox Content="超分" IsChecked="{x:Bind Vm.SuperResolution, Mode=TwoWay}" FontSize="12"/>
                             <CheckBox Content="补帧" IsChecked="{x:Bind Vm.Interpolation, Mode=TwoWay}" FontSize="12"/>
-                            <CheckBox Content="合并视频 (依赖拆分帧)" IsChecked="{x:Bind Vm.MergeVideo, Mode=TwoWay}" FontSize="12"/>
+                            <CheckBox Content="合并视频 (依赖拆帧)" IsChecked="{x:Bind Vm.MergeVideo, Mode=TwoWay}" FontSize="12"/>
                             <CheckBox Content="SDR -> HDR 转换" IsChecked="{x:Bind Vm.SdrToHdr, Mode=TwoWay}" IsEnabled="{x:Bind Vm.IsHdrEnabled, Mode=OneWay}" FontSize="12"/>
                         </StackPanel>
                     </Border>
@@ -223,7 +223,7 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <Button   Grid.Column="0" Content="拆分音频" Click="OnExtractAudio" IsEnabled="{x:Bind Vm.ExtractAudioEnabled, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
+                            <Button   Grid.Column="0" Content="提取音频" Click="OnExtractAudio" IsEnabled="{x:Bind Vm.ExtractAudioEnabled, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                             <TextBlock Grid.Column="1" Text="{x:Bind Vm.ExtractedAudioPath, Mode=OneWay}" VerticalAlignment="Center" IsTextSelectionEnabled="True" Opacity="0.6" TextTrimming="CharacterEllipsis" FontSize="11" FontFamily="Segoe UI Medium"/>
                             <TextBlock Grid.Column="2" Text="FLAC -> PCM 24bit 96kHz" VerticalAlignment="Center" Opacity="0.6" FontSize="11" FontFamily="Segoe UI Medium"/>
                         </Grid>
@@ -277,7 +277,7 @@
                                    FontSize="11" TextWrapping="Wrap" Visibility="{x:Bind Vm.ThreadWarnVis, Mode=OneWay}"/>
                         <CheckBox Content="开启安全帧率 (NCNN/Offical 遇到设备丢失/显存/内存溢出时强制停止)" IsChecked="{x:Bind Vm.UseSafeFrameRate, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox Content="降低部分画质以降低显存/内存占用 (-u：NCNN UHD / Offical FP16，可与安全帧率共存)" IsChecked="{x:Bind Vm.LowerQualityForVram, Mode=TwoWay}" FontSize="12"/>
-                        <CheckBox Content="使FFmpeg尝试使用GPU加速 (拆帧解码 -hwaccel / 合并帧 GPU 编码器优先，失败自动回退 CPU)" IsChecked="{x:Bind Vm.UseGpuAcceleration, Mode=TwoWay}" FontSize="12"/>
+                        <CheckBox Content="使FFmpeg尝试使用GPU 加速 (拆帧解码 -hwaccel / 合并帧 GPU 编码器优先，失败自动回退 CPU)" IsChecked="{x:Bind Vm.UseGpuAcceleration, Mode=TwoWay}" FontSize="12"/>
                     </StackPanel>
                 </Border>
 

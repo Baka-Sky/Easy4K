@@ -401,7 +401,7 @@ public sealed class ProcessingOrchestrator
             // 若未提前拆分音频，则现在提取
             if (!File.Exists(audioPath))
             {
-                _logger.Info("从原视频提取音频...");
+                _logger.Info("从输入视频提取音频...");
                 var exArgs = FFmpegCommandBuilder.ExtractAudio(ctx.InputVideo, audioPath);
                 _logger.Command($"ffmpeg {exArgs}");
                 var exExit = await RunStageAsync(ProcessStage.AddingAudio, "提取音频",
@@ -419,28 +419,28 @@ public sealed class ProcessingOrchestrator
                 var useGpu = ctx.Settings.UseGpuAcceleration;
                 var args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioPath, audioEmbedded, useGpu);
                 _logger.Command($"ffmpeg {args}");
-                var exit = await RunStageAsync(ProcessStage.AddingAudio, "合并音频",
+                var exit = await RunStageAsync(ProcessStage.AddingAudio, "合并原音频",
                     ctx.Tools.FFmpegExe, args, ct);
                 if (exit != 0)
                 {
                     // GPU 尝试失败 → 回退无 -hwaccel 重试一次
                     if (useGpu)
                     {
-                        _logger.Warn("GPU 加速合并音频失败，自动回退重试");
+                        _logger.Warn("GPU 加速合并原音频失败，自动回退重试");
                         args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioPath, audioEmbedded, false);
                         _logger.Command($"ffmpeg {args}");
-                        exit = await RunStageAsync(ProcessStage.AddingAudio, "合并音频(已回退)",
+                        exit = await RunStageAsync(ProcessStage.AddingAudio, "合并原音频(已回退)",
                             ctx.Tools.FFmpegExe, args, ct);
                     }
-                    if (exit != 0) return Fail("音频合并失败");
+                    if (exit != 0) return Fail("合并原音频失败");
                 }
-                _logger.Success("音频合并完成");
+                _logger.Success("合并原音频完成");
                 currentVideo = audioEmbedded;
             }
         }
         else if (ctx.Options.MergeAudio && !ctx.Video.HasAudio)
         {
-            _logger.Warn("原视频无音频流，跳过合并原音频");
+            _logger.Warn("输入视频无音频流，跳过合并原音频");
         }
 
         // 未勾选合并视频时无最终视频，跳过输出步骤（中间帧保留在 Temp）

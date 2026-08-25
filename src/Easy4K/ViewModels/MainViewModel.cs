@@ -643,20 +643,20 @@ public partial class MainViewModel : ObservableObject
         }
         if (Video is null || !Video.HasAudio)
         {
-            _logger.Warn("原视频无音频流，无需拆分");
+            _logger.Warn("输入视频无音频流，无需提取");
             return;
         }
         Directory.CreateDirectory(TempRoot);
         var outPath = ExtractedAudioPath;
-        _logger.Info($"开始拆分音频: {Path.GetFileName(InputVideo)} → {Path.GetFileName(outPath)}");
+        _logger.Info($"开始提取音频: {Path.GetFileName(InputVideo)} → {Path.GetFileName(outPath)}");
         var args = FFmpegCommandBuilder.ExtractAudio(InputVideo, outPath);
         _logger.Command($"ffmpeg {args}");
         using var cts = new CancellationTokenSource();
         var exit = await _runner.RunAsync(Tools.FFmpegExe, args, ct: cts.Token);
         if (exit == 0 && File.Exists(outPath))
-            _logger.Success($"音频拆分完成: {outPath}");
+            _logger.Success($"音频提取完成: {outPath}");
         else
-            _logger.Error("音频拆分失败");
+            _logger.Error("音频提取失败");
     }
 
     // ===================== 勾选联动 =====================
@@ -716,7 +716,7 @@ public partial class MainViewModel : ObservableObject
         {
             if (!HasExternalFrames) SplitFrames = true; // 强制勾选拆分帧（用属性 setter 触发通知，否则 UI 不刷新）
             if (Video is null || !Video.HasAudio)
-                _logger.Warn("原视频无音频流，合并原音频将无效");
+                _logger.Warn("输入视频无音频流，合并原音频将无效");
         }
         UpdateWarnings();
     }
@@ -1100,7 +1100,7 @@ public partial class MainViewModel : ObservableObject
                 }
             }
             var msg = count > 0
-                ? $"已清理 {count} 项临时产物: {dir}"
+                ? $"已清理 {count} 项中间产物: {dir}"
                 : "临时目录中没有待清理的中间产物";
             _logger.Success(msg);
             return msg;
