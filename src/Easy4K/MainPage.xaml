@@ -271,12 +271,12 @@
                             <TextBlock Grid.Column="1" Text="{x:Bind Vm.ThreadLabel, Mode=OneWay}"
                                        VerticalAlignment="Center" FontSize="12" MinWidth="70" TextAlignment="Right"/>
                         </Grid>
-                        <TextBlock Text="处理线程（-j 1:x:x），范围 1:1:1 ~ 1:32:32，默认 1:2:2"
+                        <TextBlock Text="处理线程（NCNN: -j 1:x:x / Offical: torch 线程 x），范围 1 ~ 32，默认 2"
                                    FontSize="10" Opacity="0.6"/>
                         <TextBlock Text="{x:Bind Vm.ThreadWarnText, Mode=OneWay}" Foreground="Orange"
                                    FontSize="11" TextWrapping="Wrap" Visibility="{x:Bind Vm.ThreadWarnVis, Mode=OneWay}"/>
-                        <CheckBox Content="开启安全帧率 (Vulkan 设备丢失/显存溢出时自动停止)" IsChecked="{x:Bind Vm.UseSafeFrameRate, Mode=TwoWay}" FontSize="12"/>
-                        <CheckBox Content="降低部分画质以降低显存占用 (-u UHD 模式，可与安全帧率共存)" IsChecked="{x:Bind Vm.LowerQualityForVram, Mode=TwoWay}" FontSize="12"/>
+                        <CheckBox Content="开启安全帧率 (NCNN/Offical 遇到设备丢失/显存/内存溢出时强制停止)" IsChecked="{x:Bind Vm.UseSafeFrameRate, Mode=TwoWay}" FontSize="12"/>
+                        <CheckBox Content="降低部分画质以降低显存/内存占用 (-u：NCNN UHD / Offical FP16，可与安全帧率共存)" IsChecked="{x:Bind Vm.LowerQualityForVram, Mode=TwoWay}" FontSize="12"/>
                     </StackPanel>
                 </Border>
 

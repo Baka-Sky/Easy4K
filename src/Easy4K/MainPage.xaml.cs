@@ -90,8 +90,8 @@ public sealed partial class MainPage : Page
                        "模型为 ncnn 格式（flownet.param/.bin）。\n\n" +
                        "Offical：官方 RIFE PyTorch 模型（pkl 文件），使用软件随附的 Python + PyTorch 运行，" +
                        "包含官方全部模型（v4.6 / v4.8 / v4.9 / v4.15 / v4.18 / v4.22 / v4.26 / v4.26_heavy / 2.3 / rpr_v7_2.3）。" +
-                       "画质更接近官方实现，但速度取决于 CPU/GPU 与 Python 性能。\n\n" +
-                       "兼容性说明：Offical 模式下，线程滑块、安全帧率、降低画质(-u) 等 NCNN 专属选项不生效，" +
+                       "画质更接近官方实现，但速度取决于 CPU/GPU 与 Python 性能；同样支持线程数调节、安全帧率与降低画质(-u, FP16)。\n\n" +
+                       "兼容性说明：线程滑块、安全帧率、降低画质(-u) 在 NCNN 与 Offical 下均生效，" +
                        "其余流程（拆帧/超分/合并/音频/HDR）不受影响。",
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = 13,
