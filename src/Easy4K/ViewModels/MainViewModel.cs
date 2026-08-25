@@ -967,6 +967,20 @@ public partial class MainViewModel : ObservableObject
             }
             catch { }
         }
+        // Offical RIFE 引擎：仅终止本软件捆绑的便携 Python（按运行目录下的 python.exe 过滤，避免误杀用户其他 python）
+        try
+        {
+            foreach (var p in System.Diagnostics.Process.GetProcessesByName("python"))
+            {
+                try
+                {
+                    if (p.MainModule?.FileName.StartsWith(Tools.OfficalRifeDir, StringComparison.OrdinalIgnoreCase) == true)
+                        p.Kill(entireProcessTree: true);
+                }
+                catch { }
+            }
+        }
+        catch { }
     }
 
     /// <summary>软件内自测：自动选择视频、按掩码勾选功能、跑处理链路，报告写文件后退出。
