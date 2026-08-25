@@ -176,7 +176,7 @@
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="种类" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
-                                <ComboBox Grid.Column="1" ItemsSource="{x:Bind Vm.IfEngines}" SelectedItem="{x:Bind Vm.IfEngine, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" Style="{StaticResource GlassComboBox}"/>
+                                <ComboBox Grid.Column="1" ItemsSource="{x:Bind Vm.IfEngines}" SelectedItem="{x:Bind Vm.IfEngine, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" Style="{StaticResource GlassComboBox}" SelectionChanged="OnIfEngineSelectionChanged"/>
                             </Grid>
                             <Grid ColumnSpacing="8">
                                 <Grid.ColumnDefinitions>
@@ -184,7 +184,7 @@
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="模型" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
-                                <ComboBox Grid.Column="1" ItemsSource="{x:Bind Vm.IfModels, Mode=OneWay}" SelectedItem="{x:Bind Vm.IfModel, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择模型" Style="{StaticResource GlassComboBox}"/>
+                                <ComboBox Grid.Column="1" x:Name="IfModelCombo" MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择模型" Style="{StaticResource GlassComboBox}" SelectionChanged="OnIfModelSelectionChanged"/>
                             </Grid>
                             <Grid ColumnSpacing="8">
                                 <Grid.ColumnDefinitions>

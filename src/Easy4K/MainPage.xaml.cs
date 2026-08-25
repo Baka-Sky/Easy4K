@@ -33,6 +33,47 @@ public sealed partial class MainPage : Page
     {
         InitializeComponent();
         _lastConfirmedThreads = Vm.ThreadCount;
+        // 初始填充模型下拉框（引擎变化后也走 ReloadIfModelCombo，由 OnIfEngineSelectionChanged 触发）
+        ReloadIfModelCombo();
+    }
+
+    // ===================== 补帧模型选择（重写：整体重建下拉框，避开 ComboBox 绑定联动 0x80070490 闪退） =====================
+
+    /// <summary>引擎（种类）切换 → 用新引擎的模型列表整体重建模型下拉框：
+    /// 先解绑事件、清空 ItemsSource/SelectedItem，再赋新列表，最后设合法选中值。
+    /// 每次都是"从零开始"，ComboBox 内部不会残留旧选中状态，展开下拉时不再崩溃。</summary>
+    private void ReloadIfModelCombo()
+    {
+        var models = Vm.GetIfModelsForEngine(Vm.IfEngine);
+
+        IfModelCombo.SelectionChanged -= OnIfModelSelectionChanged;
+        IfModelCombo.ItemsSource = null;
+        IfModelCombo.SelectedItem = null;
+        IfModelCombo.ItemsSource = models.ToList();
+
+        // 选中规则：NCNN 优先配置里的默认模型；Offical 取第一个；列表为空则保持占位符
+        string selected = "";
+        if (models.Count > 0)
+        {
+            selected = Vm.IfEngine == "NCNN" && models.Contains(Vm.DefaultIfModel)
+                ? Vm.DefaultIfModel
+                : models[0];
+        }
+        IfModelCombo.SelectedItem = selected;
+        Vm.IfModel = selected;
+        IfModelCombo.SelectionChanged += OnIfModelSelectionChanged;
+    }
+
+    private void OnIfEngineSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // x:Bind 初始化也会触发一次；控件未就绪或值未变时跳过
+        if (IfModelCombo is null) return;
+        ReloadIfModelCombo();
+    }
+
+    private void OnIfModelSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        Vm.IfModel = IfModelCombo.SelectedItem is string s ? s : "";
     }
 
     /// <summary>线程滑块变化：调到 1:8:8（8）及以上时弹窗确认（会话内只弹一次），
