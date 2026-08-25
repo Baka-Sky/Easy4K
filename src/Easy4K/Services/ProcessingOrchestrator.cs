@@ -616,6 +616,9 @@ public sealed class ProcessingOrchestrator
         var innerLock = new object();
         // Vulkan 设备丢失/显存溢出后只快速失败一次（避免多次触发反复 Kill）
         var fatalKilled = false;
+        // Offical run.py 设备标记：CUDA 不可用时降级 CPU，阶段文本标注（降级）
+        var cpuDegraded = false;
+        var displayText = stageText;
 
         var pollTask = Task.Run(async () =>
         {
@@ -634,7 +637,7 @@ public sealed class ProcessingOrchestrator
                         ProgressChanged?.Invoke(new ProcessProgress
                         {
                             Stage = stage,
-                            StageText = stageText,
+                            StageText = displayText,
                             Current = (long)Math.Floor(current),
                             Total = total,
                             LatestFramePath = FindLatestFrame(outputDir) ?? ""
@@ -644,7 +647,7 @@ public sealed class ProcessingOrchestrator
                         if ((now - lastLog).TotalSeconds >= 1)
                         {
                             lastLog = now;
-                            _logger.Info($"{stageText} 已处理 {count}/{total} 帧");
+                            _logger.Info($"{displayText} 已处理 {count}/{total} 帧");
                         }
                     }
                 }
@@ -656,6 +659,13 @@ public sealed class ProcessingOrchestrator
         var exit = await _runner.RunAsync(exe, args,
             onLine: line =>
             {
+                // Offical run.py 打印 [IF_DEVICE] cpu/cuda：CUDA 不可用时降级 CPU，阶段文本标注（降级）
+                if (!cpuDegraded && line.Contains("[IF_DEVICE] cpu", StringComparison.OrdinalIgnoreCase))
+                {
+                    cpuDegraded = true;
+                    displayText = stageText + "（降级）";
+                    _logger.Warn("Offical 引擎未检测到可用 GPU（CUDA），本次补帧降级为 CPU 推理");
+                }
                 // 检测 Vulkan 设备丢失/显存溢出（线程过高压垮 GPU 或显存不足）。
                 // 一旦出现立即终止进程快速失败，避免工具反复刷错浪费时间
                 if (IsFatalGpuLine(line))
