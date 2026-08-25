@@ -41,6 +41,8 @@ public partial class MainViewModel : ObservableObject
     public event Action<ProcessingResult>? ProcessingCompleted;
     /// <summary>临时目录缓存与当前视频不符（UI 弹窗引导重新选择/清理）</summary>
     public event Action? TempCacheMismatchDetected;
+    /// <summary>清理临时文件时请求 UI 释放预览帧句柄（Image.Source 不清空会锁住帧文件删不掉）</summary>
+    public event Action? CleanRequested;
 
     /// <summary>自测/自动化模式下抑制完成弹窗（true 时不弹）</summary>
     public bool SuppressCompletionDialog { get; set; }
@@ -141,7 +143,16 @@ public partial class MainViewModel : ObservableObject
     public bool MergeAudioEnabled => !HasExternalFrames;
 
     [ObservableProperty] private string _tempRoot = "";
-    [ObservableProperty] private string _outputRoot = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStart))]
+    private string _outputRoot = "";
+
+    /// <summary>临时目录缓存与当前视频不符且用户未处理（点了取消）→ 阻断启动按钮。
+    /// 清理缓存或更换匹配目录后由 RefreshCacheBlock 重新评估解除。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStart))]
+    [NotifyPropertyChangedFor(nameof(ExtractAudioEnabled))]
+    private bool _cacheBlocked;
 
     // ===================== 处理选项 =====================
     // 拆分帧：可独立勾选，但其他选项勾选时自动强制勾选它
@@ -364,7 +375,12 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    public bool CanStart => !IsProcessing && (HasExternalFrames || (Video is not null && Video.IsValid && File.Exists(InputVideo)));
+    /// <summary>输入+输出均配置完整才可启动：输出目录与临时目录非空，且（有外部帧文件夹 或 已检测到有效输入视频文件）。
+    /// 任一条件不满足 → 按钮置灰不可点。</summary>
+    public bool CanStart => !IsProcessing && !CacheBlocked
+        && !string.IsNullOrWhiteSpace(OutputRoot)
+        && !string.IsNullOrWhiteSpace(TempRoot)
+        && (HasExternalFrames || (Video is not null && Video.IsValid && File.Exists(InputVideo)));
     /// <summary>拆分音频需基于真实输入视频，帧文件夹模式（无视频文件）时禁用</summary>
     public bool ExtractAudioEnabled => CanStart && !HasExternalFrames;
     public bool CanStop => IsProcessing;
@@ -480,6 +496,8 @@ public partial class MainViewModel : ObservableObject
             // 换视频后立即检查临时目录缓存是否来自其他视频，是则提醒用户处理
             // （不等点"开始"才提示，避免"无法启动"的困惑）
             var (cstatus, csource) = CheckTempCache(TempRoot);
+            // 缓存匹配/无缓存 → 放行；不匹配 → 阻断（点弹窗取消后启动按钮保持禁用）
+            CacheBlocked = cstatus == TempCacheStatus.Mismatch;
             if (cstatus == TempCacheStatus.Mismatch)
             {
                 _logger.Warn($"临时目录缓存来自其他视频（{csource}），处理当前视频前请更换临时目录或清理缓存");
@@ -517,6 +535,28 @@ public partial class MainViewModel : ObservableObject
     {
         TempRoot = path;
     }
+
+    /// <summary>临时目录文本框改动即持久化到配置文件（否则重启后丢失，清理会错误地指向默认 Temp 目录）。
+    /// 空值不持久化（清空输入框只是临时禁用启动，重启后仍恢复上次有效目录）。</summary>
+    partial void OnTempRootChanged(string value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            _app.TempRoot = value;
+            _settings.Save(_app, _pathConfig);
+        }
+        // 换了新目录后重新评估是否仍阻断启动（新目录无缓存/匹配 → 立即放行）
+        RefreshCacheBlock();
+    }
+
+    /// <summary>重新评估临时目录缓存阻断状态：缓存匹配/无缓存/已清理 → 放行；
+    /// 仍与当前视频不符 → 保持阻断（启动按钮禁用）。</summary>
+    public void RefreshCacheBlock()
+    {
+        var (s, _) = CheckTempCache(TempRoot);
+        CacheBlocked = s == TempCacheStatus.Mismatch;
+    }
+
     public void SetOutputRoot(string path) => OutputRoot = path;
 
     /// <summary>手动导入外部帧文件夹（跳过拆帧）。校验目录存在且有 PNG 帧，否则拒绝。</summary>
@@ -730,6 +770,8 @@ public partial class MainViewModel : ObservableObject
 
         // 校验临时目录缓存：与当前视频不符则阻止启动并提示（防旧缓存误导跳过步骤/产生错误结果）
         var (cacheStatus, cacheSource) = CheckTempCache(TempRoot);
+        // 快捷键等路径触发启动时同样先维护阻断状态：仍不匹配 → 阻断并重新弹窗
+        CacheBlocked = cacheStatus == TempCacheStatus.Mismatch;
         if (cacheStatus == TempCacheStatus.Mismatch)
         {
             _logger.Error($"临时目录缓存与当前视频不符（缓存来源：{cacheSource}），请重新选择临时目录或清理缓存后再启动");
@@ -997,69 +1039,66 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>后台逐文件清理临时中间产物（白名单制），进度实时推送到主页进度条。
-    /// 大量文件删除放到后台线程，不阻塞 UI；清理中不切换"进行中"页面。</summary>
+    /// <summary>强制清理临时中间产物（白名单制）：直接整目录递归删除，带重试与只读属性处理。
+    /// 清理前先停处理、强杀工具进程、清空预览句柄；大量删除放后台线程不阻塞 UI。</summary>
     public async Task<string> CleanTempInAsync(string dir)
     {
+        // 强制删除：先停止处理并强杀可能占用文件的工具进程，再通知 UI 清空预览释放帧文件句柄
+        if (IsProcessing) Stop();
+        KillToolProcesses();
+        CleanRequested?.Invoke();
+        _logger.Info($"开始强制清理临时目录: {dir}");
+        LogDebug($"CLEAN START dir={dir}");
+
         string[] tempDirs = { "input_frames", "4k_frames", "output_frames" };
         string[] tempFiles = { "audio.flac", "temp_video.mkv", "hdr_video.mkv", "audio_embedded.mkv", "cache.json" };
-
-        // 后台统计待删文件，避免大目录枚举阻塞 UI
-        var files = await Task.Run(() =>
-        {
-            var list = new List<string>();
-            foreach (var d in tempDirs)
-            {
-                var p = Path.Combine(dir, d);
-                if (Directory.Exists(p))
-                {
-                    try { list.AddRange(Directory.EnumerateFiles(p, "*", SearchOption.AllDirectories)); } catch { }
-                }
-            }
-            foreach (var f in tempFiles)
-            {
-                var p = Path.Combine(dir, f);
-                if (File.Exists(p)) list.Add(p);
-            }
-            return list;
-        });
-
-        if (files.Count == 0)
-        {
-            _logger.Success("临时目录中没有待清理的中间产物");
-            return "临时目录中没有待清理的中间产物";
-        }
 
         IsCleaning = true;
         CleanProgressPercent = 0;
         try
         {
-            var total = files.Count;
-            var deleted = 0;
-            // 节流：每删约 1% 或最后一个文件上报一次进度
-            var step = Math.Max(1, total / 100);
-            await Task.Run(() =>
+            // 后台整目录一次性递归删除（比逐文件快得多，删除也彻底）
+            var result = await Task.Run(() =>
             {
-                foreach (var f in files)
-                {
-                    try { File.Delete(f); } catch { }
-                    deleted++;
-                    if (deleted % step == 0 || deleted == total)
-                    {
-                        var pct = deleted * 100.0 / total;
-                        _dispatcherQueue.TryEnqueue(() => CleanProgressPercent = pct);
-                    }
-                }
-                // 删除遗留的空目录结构
+                var deletedDirs = 0;
+                var deletedFiles = 0;
+                var failed = new List<string>();
+
                 foreach (var d in tempDirs)
                 {
                     var p = Path.Combine(dir, d);
-                    try { if (Directory.Exists(p)) Directory.Delete(p, recursive: true); } catch { }
+                    if (Directory.Exists(p))
+                    {
+                        var err = TryDeleteDirectory(p);
+                        if (err is null) deletedDirs++;
+                        else failed.Add($"[目录] {d}: {err}");
+                        LogDebug($"  dir {d}: {(err is null ? "OK" : "FAIL " + err)}");
+                    }
                 }
+                foreach (var f in tempFiles)
+                {
+                    var p = Path.Combine(dir, f);
+                    if (File.Exists(p))
+                    {
+                        var err = TryDeleteWithRetry(p);
+                        if (err is null) deletedFiles++;
+                        else failed.Add($"[文件] {f}: {err}");
+                        LogDebug($"  file {f}: {(err is null ? "OK" : "FAIL " + err)}");
+                    }
+                }
+                return (deletedDirs, deletedFiles, failed);
             });
+
             _dispatcherQueue.TryEnqueue(() => CleanProgressPercent = 100);
-            var msg = $"已清理 {total} 个中间产物文件: {dir}";
+            var msg = result.failed.Count == 0
+                ? $"已强制清理 {result.deletedDirs} 个目录、{result.deletedFiles} 个文件: {dir}"
+                : $"已清理 {result.deletedDirs} 个目录、{result.deletedFiles} 个文件，以下项无法删除:";
             _logger.Success(msg);
+            foreach (var f in result.failed)
+            {
+                _logger.Error($"无法删除: {f}");
+            }
+            LogDebug($"CLEAN DONE dirs={result.deletedDirs} files={result.deletedFiles} failed={result.failed.Count}");
             return msg;
         }
         finally
@@ -1070,6 +1109,75 @@ public partial class MainViewModel : ObservableObject
                 CleanProgressPercent = 0;
             });
         }
+    }
+
+    /// <summary>诊断日志：追加写入 exe 目录的 DebugINFO.txt，便于定位清理等后台操作的真实结果。</summary>
+    private static void LogDebug(string msg)
+    {
+        try
+        {
+            File.AppendAllText(Path.Combine(AppContext.BaseDirectory, "DebugINFO.txt"),
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {msg}\r\n");
+        }
+        catch { }
+    }
+
+    /// <summary>递归删除整个目录并重试（先清只读属性，句柄短暂占用时等待重试）。
+    /// 整目录删除失败时退化为逐文件强制删除兜底。成功返回 null，失败返回具体原因。</summary>
+    private static string? TryDeleteDirectory(string dir, int attempts = 5)
+    {
+        Exception? last = null;
+        for (int i = 0; i < attempts; i++)
+        {
+            try { Directory.Delete(dir, recursive: true); return null; }
+            catch (Exception ex)
+            {
+                last = ex;
+                // 清除只读/系统属性后重试（某些工具输出的帧可能带只读属性）
+                try
+                {
+                    foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                    {
+                        try { File.SetAttributes(f, FileAttributes.Normal); } catch { }
+                    }
+                }
+                catch { }
+                if (i < attempts - 1) Thread.Sleep(500);
+            }
+        }
+        // 整目录删除失败 → 逐文件强制删除兜底（哪些能删删哪些，最后再试一次删目录）
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+            {
+                for (int j = 0; j < 5; j++)
+                {
+                    try { File.Delete(f); break; }
+                    catch { if (j < 4) Thread.Sleep(300); }
+                }
+            }
+            try { Directory.Delete(dir, recursive: true); return null; }
+            catch (Exception ex) { last = ex; }
+        }
+        catch { }
+        return last?.Message ?? "未知错误";
+    }
+
+    /// <summary>删除文件并重试几次，应对句柄短暂占用（进程刚被杀/预览解码中）。
+    /// 成功返回 null，失败返回具体原因。</summary>
+    private static string? TryDeleteWithRetry(string f, int attempts = 3)
+    {
+        Exception? last = null;
+        for (int i = 0; i < attempts; i++)
+        {
+            try { File.Delete(f); return null; }
+            catch (Exception ex)
+            {
+                last = ex;
+                if (i < attempts - 1) Thread.Sleep(200);
+            }
+        }
+        return last?.Message ?? "未知错误";
     }
 
     /// <summary>写入缓存元信息 cache.json：只记录输入视频指纹，供"临时目录缓存检测"识别来源视频。

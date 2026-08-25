@@ -16,6 +16,8 @@ public sealed partial class MainWindow : Window
 {
     private MainViewModel Vm => App.Services;
     private bool _allowClose;
+    /// <summary>老缓存弹窗是否已打开（防止重复触发时叠弹多个）</summary>
+    private bool _cacheDialogOpen;
     /// <summary>亚克力主题材质（作为独立主题选项，与普通主题互斥）</summary>
     private DesktopAcrylicBackdrop? _acrylic;
 
@@ -65,9 +67,14 @@ public sealed partial class MainWindow : Window
         };
 
         // 纯进度条实时更新（进行页隐藏，主页可见）
+        // 只接受有总帧数的进度事件；拆帧/超分预览轮询事件(Total=0)只用于刷新预览图，
+        // 若也写入进度条，会被每 200ms 一次的轮询事件归零导致进度条抽搐
         Vm.ProgressChanged += p =>
         {
-            DispatcherQueue.TryEnqueue(() => ThinProgressBar.Value = p.Percent);
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (p.Total > 0) ThinProgressBar.Value = p.Percent;
+            });
         };
 
         // 清理临时文件进度：主页进度条显示清理进度（不切换进行中页）
@@ -86,20 +93,42 @@ public sealed partial class MainWindow : Window
             }
         });
 
-        // 临时目录缓存与当前视频不符 → 弹窗引导（可重新选择临时目录）
+        // 临时目录缓存与当前视频不符 → 弹窗引导（可重新选择临时目录 / 清理缓存 / 取消）
+        // 取消 → 阻断启动（启动按钮禁用），再次用快捷键/按钮启动仍会重新弹窗，直到清理缓存或换目录
         Vm.TempCacheMismatchDetected += () => DispatcherQueue.TryEnqueue(async () =>
         {
-            var dlg = new ContentDialog
+            if (_cacheDialogOpen) return;
+            _cacheDialogOpen = true;
+            try
             {
-                Title = "临时目录缓存不符",
-                Content = "当前临时目录中的缓存来自其他视频，直接处理会被旧缓存误导。\n\n请重新选择临时目录，或先清理缓存。",
-                PrimaryButtonText = "重新选择临时目录",
-                CloseButtonText = "知道了",
-                DefaultButton = ContentDialogButton.Primary,
-                XamlRoot = RootFrame.XamlRoot
-            };
-            if (await dlg.ShowAsync() == ContentDialogResult.Primary)
-                await PickTempFolderAsync();
+                var dlg = new ContentDialog
+                {
+                    Title = "临时目录缓存不符",
+                    Content = "当前临时目录中的缓存来自其他视频，直接处理会被旧缓存误导。\n\n请重新选择临时目录，或先清理缓存。",
+                    PrimaryButtonText = "重新选择临时目录",
+                    SecondaryButtonText = "清理缓存",
+                    CloseButtonText = "取消",
+                    DefaultButton = ContentDialogButton.Primary,
+                    XamlRoot = RootFrame.XamlRoot
+                };
+                var r = await dlg.ShowAsync();
+                if (r == ContentDialogResult.Primary)
+                {
+                    await PickTempFolderAsync();
+                }
+                else if (r == ContentDialogResult.Secondary)
+                {
+                    // 清理缓存（双重警告确认后执行，含 cache.json 一并删除）
+                    await ConfirmCleanTempAsync();
+                }
+                // 任何结果后重新评估阻断状态：
+                // 换了匹配/无缓存的目录或已清理 → 放行；仍不匹配（含用户点取消）→ 保持阻断禁用启动
+                Vm.RefreshCacheBlock();
+            }
+            finally
+            {
+                _cacheDialogOpen = false;
+            }
         });
 
         // 启动时恢复上次保存的主题（light/dark/system/acrylic）
@@ -286,6 +315,8 @@ public sealed partial class MainWindow : Window
         if (await second.ShowAsync() != ContentDialogResult.Primary) return;
 
         await Vm.CleanTempInAsync(Vm.TempRoot); // 后台清理，主页进度条显示进度
+        // 清理后重新评估：cache.json 已删除则解除启动阻断
+        Vm.RefreshCacheBlock();
     }
 
     private void OnThemeLight(object sender, RoutedEventArgs e) => SetTheme(ElementTheme.Light);

@@ -25,6 +25,7 @@ public sealed partial class ProgressPage : Page
     {
         Vm.ProgressChanged += OnProgress;
         Vm.ProcessingCompleted += OnProcessingCompleted;
+        Vm.CleanRequested += OnCleanRequested;
         Vm.Logger.EntryAdded += OnLogEntryAdded;
         Vm.PropertyChanged += OnVmPropertyChanged;
         UpdatePauseButton();
@@ -34,8 +35,21 @@ public sealed partial class ProgressPage : Page
     {
         Vm.ProgressChanged -= OnProgress;
         Vm.ProcessingCompleted -= OnProcessingCompleted;
+        Vm.CleanRequested -= OnCleanRequested;
         Vm.Logger.EntryAdded -= OnLogEntryAdded;
         Vm.PropertyChanged -= OnVmPropertyChanged;
+    }
+
+    /// <summary>清理临时文件时清空预览图，释放帧文件句柄（否则文件被锁删不掉）</summary>
+    private void OnCleanRequested()
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            PreviewImage.Source = null;
+            _lastPreviewPath = "";
+            _previewSeq++;
+            PreviewHint.Visibility = Visibility.Visible;
+        });
     }
 
     /// <summary>暂停状态变化（确认挂起/恢复）→ 更新按钮文案。</summary>

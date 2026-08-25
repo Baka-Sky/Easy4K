@@ -108,6 +108,12 @@ public sealed class ProcessingOrchestrator
             }
             else
             {
+                // 上次拆帧中途结束（意外关闭/被停止）：本次重新开始时提示并清理残留
+                if (existing > 0)
+                {
+                    _logger.Warn("此次拆帧遇到了因意外导致关闭，已自动清理并重新启动");
+                    CleanPartialOutput(inputFrames);
+                }
                 _logger.Info($"开始拆帧: {Path.GetFileName(ctx.InputVideo)}");
                 // 拆帧不受安全帧率限制（安全帧率只负责 Vulkan 设备丢失/显存溢出自动停止），始终多线程全速
                 var (args, _) = FFmpegCommandBuilder.SplitFrames(ctx.InputVideo, inputFrames);
@@ -116,12 +122,9 @@ public sealed class ProcessingOrchestrator
                     ctx.Tools.FFmpegExe, args, ParseFfmpegFrame, inputFrames, ct);
                 if (exit != 0)
                 {
-                    // 拆帧意外退出：清理残留帧后重试一次（与超分/补帧一致）
-                    _logger.Warn("此次拆帧遇到了因意外导致关闭，已自动清理并重新启动");
-                    CleanPartialOutput(inputFrames);
-                    exit = await RunStageWithProgress(ProcessStage.Splitting, "拆帧中(重试)", totalFrames,
-                        ctx.Tools.FFmpegExe, args, ParseFfmpegFrame, inputFrames, ct);
-                    if (exit != 0) return Fail("拆帧失败");
+                    // 用户停止 → 抛取消异常由上层显示"处理已停止"；工具异常 → 本次停止，下次启动清理重跑
+                    ct.ThrowIfCancellationRequested();
+                    return Fail("拆帧失败");
                 }
                 _logger.Success($"拆帧完成: {CountFrames(inputFrames)} 帧");
             }
@@ -138,6 +141,12 @@ public sealed class ProcessingOrchestrator
             }
             else
             {
+                // 上次超分中途结束（意外关闭/被停止）：本次重新开始时提示并清理残留
+                if (existingSr > 0)
+                {
+                    _logger.Warn("此次超分遇到了因意外导致关闭，已自动清理并重新启动");
+                    CleanPartialOutput(srFrames);
+                }
                 var safe = ctx.Settings.UseSafeFrameRate;
                 // 线程由滑块控制（1:1:1 ~ 1:32:32）；安全帧率只负责"致命 GPU 错误自动停止"，不再强制单线程
                 var jThreads = $"1:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}";
@@ -149,25 +158,14 @@ public sealed class ProcessingOrchestrator
                     ctx.Tools.RealEsrganExe, args, srFrames, ct);
                 if (exit != 0)
                 {
-                    // 安全帧率：检测到 Vulkan 设备丢失/显存溢出时自动停止，不降级重试
+                    // 用户停止 → 抛取消异常由上层显示"处理已停止"；工具异常 → 本次停止，下次启动清理重跑
+                    ct.ThrowIfCancellationRequested();
+                    // 安全帧率：检测到 Vulkan 设备丢失/显存溢出时自动停止
                     if (safe && _fatalGpuError)
                     {
                         return Fail("已按安全帧率自动停止：检测到 Vulkan 设备丢失或显存溢出");
                     }
-                    // BUG-06 + 高负载稳定性：工具崩溃/失败一律清理残留后降级 -j 1:1:1 重试一次。
-                    // （AMD ncnn-vulkan 崩溃的 stderr 不一定含 OOM 关键词，不能只按 OOM 判断）
-                    _logger.Warn("此次超分遇到了因意外导致关闭，已自动清理并重新启动");
-                    srFrames = CleanPartialOutput(srFrames);
-                    args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, "1:1:1");
-                    _logger.Command($"realesrgan-ncnn-vulkan {args}");
-                    exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中(低显存)", totalFrames,
-                        ctx.Tools.RealEsrganExe, args, srFrames, ct);
-                    if (exit != 0) return Fail("超分失败");
-                    // 仅在非安全帧率（原本不是单线程）下提示降级；安全帧率本来就是单线程，无需提示
-                    if (!safe)
-                    {
-                        ProgressChanged?.Invoke(new ProcessProgress { DegradeNotice = "已降级运行：超分异常后已切换单线程低显存" });
-                    }
+                    return Fail("超分失败");
                 }
                 _logger.Success($"超分完成: {CountFrames(srFrames)} 帧");
             }
@@ -184,6 +182,12 @@ public sealed class ProcessingOrchestrator
             }
             else
             {
+                // 上次补帧中途结束（意外关闭/被停止）：本次重新开始时提示并清理残留
+                if (existingIf > 0)
+                {
+                    _logger.Warn("此次补帧遇到了因意外导致关闭，已自动清理并重新启动");
+                    CleanPartialOutput(ifFrames);
+                }
                 var safe = ctx.Settings.UseSafeFrameRate;
                 // 线程由滑块控制（1:1:1 ~ 1:32:32）；安全帧率只负责"致命 GPU 错误自动停止"，不再强制单线程
                 var jThreads = $"1:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}";
@@ -198,7 +202,7 @@ public sealed class ProcessingOrchestrator
                 if (exit != 0 && _lastStderr.Contains("MemoryData not exists", StringComparison.OrdinalIgnoreCase))
                 {
                     _logger.Warn($"模型 {ctx.IfModel} 不被命令行版支持（BUG-04），自动切换为 rife-v4.6");
-                    ifFrames = CleanPartialOutput(ifFrames);
+                    CleanPartialOutput(ifFrames);
                     var args2 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, "rife-v4.6", ctx.IfMultiplier, targetFrames, jThreads);
                     _logger.Command($"rife-ncnn-vulkan {args2}");
                     exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(回退v4.6)", targetFrames,
@@ -206,25 +210,15 @@ public sealed class ProcessingOrchestrator
                 }
                 if (exit != 0)
                 {
-                    // 安全帧率：检测到 Vulkan 设备丢失/显存溢出时自动停止，不降级重试
+                    // 用户停止 → 抛取消异常由上层显示"处理已停止"；工具异常 → 本次停止，下次启动清理重跑
+                    ct.ThrowIfCancellationRequested();
+                    // 安全帧率：检测到 Vulkan 设备丢失/显存溢出时自动停止
                     if (safe && _fatalGpuError)
                     {
                         return Fail("已按安全帧率自动停止：检测到 Vulkan 设备丢失或显存溢出");
                     }
-                    // 工具崩溃/失败一律清理残留后降级 -j 1:1:1 重试一次（不限 OOM 关键词，高负载稳定性）
-                    _logger.Warn("此次补帧遇到了因意外导致关闭，已自动清理并重新启动");
-                    ifFrames = CleanPartialOutput(ifFrames);
-                    var args3 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, targetFrames, "1:1:1");
-                    _logger.Command($"rife-ncnn-vulkan {args3}");
-                    exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(低显存)", targetFrames,
-                        ctx.Tools.RifeExe, args3, ifFrames, ct);
-                    // 仅在非安全帧率（原本不是单线程）下提示降级；安全帧率本来就是单线程，无需提示
-                    if (!safe && exit == 0)
-                    {
-                        ProgressChanged?.Invoke(new ProcessProgress { DegradeNotice = "已降级运行：补帧异常后已切换单线程低显存" });
-                    }
+                    return Fail("补帧失败");
                 }
-                if (exit != 0) return Fail("补帧失败");
                 _logger.Success($"补帧完成: {CountFrames(ifFrames)} 帧");
             }
         }

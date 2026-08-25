@@ -90,7 +90,35 @@ public partial class App : Application
                 _ = RunSelfTestDelayedAsync(video, report, stages);
                 break;
             }
+
+            // 清理自测模式: Easy4K.exe --selftest-clean <tempDir> <reportPath>
+            // 由命令行触发清理逻辑，把结果写报告文件后退出（验证"强制清理"是否真正删掉残留）
+            if (cmdLine[i].Equals("--selftest-clean", StringComparison.OrdinalIgnoreCase) && i + 2 < cmdLine.Length)
+            {
+                var dir = cmdLine[i + 1];
+                var report = cmdLine[i + 2];
+                _ = RunSelfCleanAsync(dir, report);
+                break;
+            }
         }
+    }
+
+    /// <summary>自测清理：延迟执行清理逻辑，把结果写报告文件后退出。</summary>
+    private static async Task RunSelfCleanAsync(string dir, string report)
+    {
+        try
+        {
+            await Task.Delay(1500);
+            var result = await Services.CleanTempInAsync(dir);
+            var gone = !Directory.Exists(dir) || !Directory.EnumerateFileSystemEntries(dir).Any();
+            await File.WriteAllTextAsync(report,
+                $"RESULT: {result}\r\nDIR_EMPTY_OR_GONE: {gone}\r\nDONE");
+        }
+        catch (Exception ex)
+        {
+            await File.WriteAllTextAsync(report, $"EXCEPTION: {ex}");
+        }
+        Application.Current.Exit();
     }
 
     /// <summary>延迟启动自测，等窗口/页面加载完成，确保 UI 线程就绪。</summary>

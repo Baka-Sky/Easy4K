@@ -30,8 +30,8 @@ public sealed class AppSettings
     public string Language { get; set; } = "zh-CN";
     public string Theme { get; set; } = "system";
 
-    /// <summary>本地版本号（启动时与 update.baka233.top/Easy/Version.txt 对比，低于服务器版本则提示更新）</summary>
-    public string Version { get; set; } = "1.0.2";
+    /// <summary>本地版本号（从 appsettings.json 读取，仅用于显示与更新对比，不写死默认值）</summary>
+    public string Version { get; set; } = "";
 }
 
 /// <summary>工具子目录相对 ToolsRoot 的路径</summary>
