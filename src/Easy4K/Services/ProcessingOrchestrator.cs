@@ -121,6 +121,10 @@ public sealed class ProcessingOrchestrator
                 _logger.Command($"ffmpeg {args}");
                 var exit = await RunStageWithProgress(ProcessStage.Splitting, "拆帧中", totalFrames,
                     ctx.Tools.FFmpegExe, args, ParseFfmpegFrame, inputFrames, ct);
+                // -hwaccel auto 在硬件解码器不可用时会静默回退软件解码（进程仍正常退出），
+                // 通过 stderr 检测硬件加速失败标志，明确告知用户实际在用 CPU
+                if (exit == 0 && useGpu && ContainsHwAccelFailure(_lastStderr))
+                    _logger.Warn("GPU 解码未生效（未检测到可用硬件解码器），本次拆帧实际使用 CPU");
                 if (exit != 0)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -130,7 +134,7 @@ public sealed class ProcessingOrchestrator
                         _logger.Warn("GPU 加速拆帧失败，自动回退 CPU 拆帧");
                         (args, _) = FFmpegCommandBuilder.SplitFrames(ctx.InputVideo, inputFrames, false);
                         _logger.Command($"ffmpeg {args}");
-                        exit = await RunStageWithProgress(ProcessStage.Splitting, "拆帧中(CPU)", totalFrames,
+                        exit = await RunStageWithProgress(ProcessStage.Splitting, "拆帧中(已回退)", totalFrames,
                             ctx.Tools.FFmpegExe, args, ParseFfmpegFrame, inputFrames, ct);
                     }
                     if (exit != 0)
@@ -336,9 +340,12 @@ public sealed class ProcessingOrchestrator
             var total = ctx.Options.Interpolation ? targetFrames : totalFrames;
             // 勾选「使FFmpeg尝试使用GPU加速」→ GPU 编码优先（NVIDIA NVENC → AMD AMF → Intel QSV），失败自动回退 CPU libx265
             var hwEnc = ctx.Settings.UseGpuAcceleration ? DetectHardwareEncoder(ctx.Tools.FFmpegExe) : null;
-            _logger.Info(hwEnc is null
-                ? "开始合并视频（编码：CPU libx265）"
-                : $"开始合并视频（编码：GPU {hwEnc.Split(' ')[0]}）");
+            if (ctx.Settings.UseGpuAcceleration && hwEnc is null)
+                _logger.Warn("未检测到可用的 GPU 编码器（NVENC/AMF/QSV），本次合并视频使用 CPU 编码（libx265）");
+            else
+                _logger.Info(hwEnc is null
+                    ? "开始合并视频（编码：CPU libx265）"
+                    : $"开始合并视频（编码：GPU {hwEnc.Split(' ')[0]}）");
             var args = FFmpegCommandBuilder.MergeFrames(framesForMerge, tempVideo, fpsForMerge,
                 hwEnc ?? CpuEncodeArgs(ctx.Settings.EncodePreset));
             _logger.Command($"ffmpeg {args}");
@@ -421,6 +428,9 @@ public sealed class ProcessingOrchestrator
                 _logger.Command($"ffmpeg {args}");
                 var exit = await RunStageAsync(ProcessStage.AddingAudio, "合并原音频",
                     ctx.Tools.FFmpegExe, args, ct);
+                // -hwaccel auto 静默回退：硬件加速未生效时明确提示
+                if (exit == 0 && useGpu && ContainsHwAccelFailure(_lastStderr))
+                    _logger.Warn("GPU 加速未生效，本次合并原音频实际使用 CPU 处理");
                 if (exit != 0)
                 {
                     // GPU 尝试失败 → 回退无 -hwaccel 重试一次
@@ -496,6 +506,18 @@ public sealed class ProcessingOrchestrator
     private string _lastStderr = "";
     /// <summary>当前阶段是否发生 Vulkan 设备丢失/显存溢出（安全帧率开启时据此自动停止）</summary>
     private bool _fatalGpuError;
+
+    /// <summary>ffmpeg -hwaccel 硬件加速失败的常见 stderr 标志（此时 ffmpeg 会静默回退软件解码/编码，进程仍正常退出）</summary>
+    private static readonly string[] HwAccelFailMarkers =
+    {
+        "hwaccel initialisation returned error",
+        "Failed setup for format",
+        "Hardware acceleration failed",
+        "Could not initialise hardware"
+    };
+
+    private static bool ContainsHwAccelFailure(string stderr)
+        => Array.Exists(HwAccelFailMarkers, m => stderr.Contains(m, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>判断 stderr 行是否为致命 GPU 错误（设备丢失 / 显存溢出 / Offical 的 FATAL_GPU_ERROR 标记）</summary>
     private static bool IsFatalGpuLine(string line)
