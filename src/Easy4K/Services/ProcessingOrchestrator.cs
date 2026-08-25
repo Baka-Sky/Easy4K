@@ -351,7 +351,7 @@ public sealed class ProcessingOrchestrator
                 args = FFmpegCommandBuilder.MergeFrames(framesForMerge, tempVideo, fpsForMerge,
                     CpuEncodeArgs(ctx.Settings.EncodePreset));
                 _logger.Command($"ffmpeg {args}");
-                exit = await RunStageWithProgress(ProcessStage.Merging, "合并中(CPU)", total,
+                exit = await RunStageWithProgress(ProcessStage.Merging, "合并中(已回退)", total,
                     ctx.Tools.FFmpegExe, args, ParseFfmpegFrame, null, ct);
             }
             if (exit != 0) return Fail("合并视频失败");
@@ -416,11 +416,24 @@ public sealed class ProcessingOrchestrator
             {
                 var audioEmbedded = Path.Combine(tempRoot, "audio_embedded.mkv").Replace('\\', '/');
                 _logger.Info("合并原音频到新视频 (PCM 2.0 24bit 96kHz)");
-                var args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioPath, audioEmbedded, ctx.Settings.UseGpuAcceleration);
+                var useGpu = ctx.Settings.UseGpuAcceleration;
+                var args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioPath, audioEmbedded, useGpu);
                 _logger.Command($"ffmpeg {args}");
                 var exit = await RunStageAsync(ProcessStage.AddingAudio, "合并音频",
                     ctx.Tools.FFmpegExe, args, ct);
-                if (exit != 0) return Fail("音频合并失败");
+                if (exit != 0)
+                {
+                    // GPU 尝试失败 → 回退无 -hwaccel 重试一次
+                    if (useGpu)
+                    {
+                        _logger.Warn("GPU 加速合并音频失败，自动回退重试");
+                        args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioPath, audioEmbedded, false);
+                        _logger.Command($"ffmpeg {args}");
+                        exit = await RunStageAsync(ProcessStage.AddingAudio, "合并音频(已回退)",
+                            ctx.Tools.FFmpegExe, args, ct);
+                    }
+                    if (exit != 0) return Fail("音频合并失败");
+                }
                 _logger.Success("音频合并完成");
                 currentVideo = audioEmbedded;
             }
