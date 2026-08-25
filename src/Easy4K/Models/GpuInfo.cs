@@ -16,6 +16,7 @@ public sealed class GpuInfo
 
     /// <summary>RIFE 模型是否需要 8GB+ 显存。规格书：v4.25/v4.26 需要 8GB+；其他 ≥6GB 即可</summary>
     public static bool Requires8Gb(string rifeModel) =>
-        rifeModel.Contains("v4.25", StringComparison.OrdinalIgnoreCase) ||
-        rifeModel.Contains("v4.26", StringComparison.OrdinalIgnoreCase);
+        rifeModel is not null &&
+        (rifeModel.Contains("v4.25", StringComparison.OrdinalIgnoreCase) ||
+         rifeModel.Contains("v4.26", StringComparison.OrdinalIgnoreCase));
 }
