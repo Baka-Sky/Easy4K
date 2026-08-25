@@ -339,9 +339,10 @@ public sealed partial class MainWindow : Window
         "Ctrl+O       打开视频\nCtrl+S        开始处理\nCtrl+Shift+S  停止处理\n" +
         "Ctrl+L        清空日志\nF1            帮助\nAlt+F4        退出");
 
-    private void OnAboutMenu(object sender, RoutedEventArgs e) => ShowDialog("关于 Easy4K",
-        "Easy4K - 一键视频超分补帧工具\n\n基于 WinUI 3 / Windows App SDK 2.4\n" +
-        "Real-ESRGAN-ncnn-Vulkan / RIFE-ncnn-Vulkan / NVEncC / FFmpeg\n\n" +
+    private void OnAboutMenu(object sender, RoutedEventArgs e) => ShowDialog($"关于 Easy4K v{Vm.Version}",
+        $"Easy4K v{Vm.Version} - 一键视频超分补帧工具\n\n基于 WinUI 3 / Windows App SDK\n" +
+        "Real-ESRGAN-ncnn-Vulkan / RIFE-ncnn-Vulkan / Offical RIFE (PyTorch) / NVEncC / FFmpeg\n\n" +
+        "补帧引擎：NCNN（Vulkan 全 GPU）/ Offical（官方 PyTorch pkl 模型，NVIDIA CUDA 自动加速）\n\n" +
         "========== 免责声明 ==========\n\n" +
         "1. 本软件以\"现状\"（AS-IS）提供，开发者不对其正确性、可靠性、完整性及适用性作任何明示或暗示保证。\n\n" +
         "2. 使用本软件及所调用第三方工具（FFmpeg/Real-ESRGAN/RIFE/NVEncC）产生的一切后果，包括但不限于：\n" +
