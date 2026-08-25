@@ -51,12 +51,13 @@ public sealed partial class MainPage : Page
         IfModelCombo.SelectedItem = null;
         IfModelCombo.ItemsSource = models.ToList();
 
-        // 选中规则：NCNN 优先配置里的默认模型；Offical 取第一个；列表为空则保持占位符
+        // 选中规则：优先保留当前已选模型（切页重建时用户的选择不丢）；
+        // 其次 NCNN 优先配置里的默认模型；列表为空则保持占位符
         string selected = "";
         if (models.Count > 0)
         {
-            selected = Vm.IfEngine == "NCNN" && models.Contains(Vm.DefaultIfModel)
-                ? Vm.DefaultIfModel
+            selected = models.Contains(Vm.IfModel) ? Vm.IfModel
+                : Vm.IfEngine == "NCNN" && models.Contains(Vm.DefaultIfModel) ? Vm.DefaultIfModel
                 : models[0];
         }
         IfModelCombo.SelectedItem = selected;
@@ -66,8 +67,12 @@ public sealed partial class MainPage : Page
 
     private void OnIfEngineSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        // x:Bind 初始化也会触发一次；控件未就绪或值未变时跳过
+        // x:Bind 初始化也会触发一次；控件未就绪时跳过
         if (IfModelCombo is null) return;
+        // 时序兜底：x:Bind TwoWay 回写可能晚于 SelectionChanged，
+        // 先手动同步引擎，确保 ReloadIfModelCombo 用新引擎的模型列表重建
+        if (IfEngineCombo.SelectedItem is string eng && eng != Vm.IfEngine)
+            Vm.IfEngine = eng;
         ReloadIfModelCombo();
     }
 

@@ -77,6 +77,7 @@ public partial class MainViewModel : ObservableObject
         _ifMultiplier = app.DefaultIfMultiplier;
         _srModel = app.DefaultSrModel;
         _ifModel = app.DefaultIfModel;
+        _ifEngine = app.DefaultIfEngine == "Offical" ? "Offical" : "NCNN";
         _useSafeFrameRate = app.UseSafeFrameRate;
         _lowerQualityForVram = app.LowerQualityForVram;
         _useGpuAcceleration = app.UseGpuAcceleration;
@@ -782,6 +783,9 @@ public partial class MainViewModel : ObservableObject
     {
         // 模型选择框由 MainPage code-behind 统一重建（切换引擎时整体重新加载下拉框，
         // 彻底避开 ComboBox 绑定联动导致的 0x80070490 闪退），这里只刷新警告
+        // 引擎即时持久化：下次启动继续用上次的引擎，避免"选了 Offical 重启后回退 NCNN"
+        _app.DefaultIfEngine = value;
+        _settings.Save(_app, _pathConfig);
         UpdateWarnings();
     }
 
@@ -1415,6 +1419,7 @@ public partial class MainViewModel : ObservableObject
     {
         _app.DefaultSrModel = SrModel;
         _app.DefaultIfModel = IfModel;
+        _app.DefaultIfEngine = IfEngine;
         _app.DefaultSrScale = SrScale;
         _app.DefaultIfMultiplier = IfMultiplier;
         _settings.Save(_app, _pathConfig);
