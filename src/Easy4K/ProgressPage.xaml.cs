@@ -52,13 +52,22 @@ public sealed partial class ProgressPage : Page
         });
     }
 
-    /// <summary>暂停状态变化（确认挂起/恢复）→ 更新按钮文案。</summary>
+    /// <summary>暂停状态变化（确认挂起/恢复）→ 更新按钮文案。
+    /// 预览阻断（合并/HDR/音频阶段）→ 清空当前预览图并释放帧文件句柄。</summary>
     private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(Vm.IsPaused) || e.PropertyName == nameof(Vm.IsProcessing))
             UpdatePauseButton();
         if (e.PropertyName == nameof(Vm.ShowPreview))
             UpdatePreviewVisibility();
+        if (e.PropertyName == nameof(Vm.PreviewBlocked) && Vm.PreviewBlocked)
+        {
+            // 进入不产帧的阶段：清空旧画面，避免误导（同时释放 Image 对帧文件的句柄）
+            PreviewImage.Source = null;
+            _lastPreviewPath = "";
+            _previewSeq++;
+            PreviewHint.Visibility = Visibility.Visible;
+        }
     }
 
     /// <summary>预览开关变化时更新提示文字可见性（PreviewImage 的可见性由 x:Bind 控制）。</summary>

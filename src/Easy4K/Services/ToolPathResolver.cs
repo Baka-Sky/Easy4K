@@ -26,6 +26,7 @@ public static class ToolPathResolver
         var reDir = Path.Combine(toolsRoot, pathConfig.RealEsrganDir);
         var rifeDir = Path.Combine(toolsRoot, pathConfig.RifeDir);
         var nvDir = Path.Combine(toolsRoot, pathConfig.NvEncDir);
+        var officalDir = Path.Combine(toolsRoot, "officalrife");
 
         return new ToolPaths
         {
@@ -37,7 +38,11 @@ public static class ToolPathResolver
             RifeExe = Path.Combine(rifeDir, "rife-ncnn-vulkan.exe"),
             // RIFE 模型在 I:\NEWSVFI\rife\rife-v4.6\ 等子目录下，工具 exe 在 rife\ 根下
             RifeModelsRoot = rifeDir,
-            NvEncExe = Path.Combine(nvDir, "NVEncC64.exe")
+            NvEncExe = Path.Combine(nvDir, "NVEncC64.exe"),
+            OfficalRifeDir = officalDir,
+            OfficalRifeRunPy = Path.Combine(officalDir, "run.py"),
+            OfficalRifeModelsRoot = Path.Combine(officalDir, "models"),
+            OfficalPythonExe = Path.Combine(officalDir, "python", "python.exe")
         };
     }
 }

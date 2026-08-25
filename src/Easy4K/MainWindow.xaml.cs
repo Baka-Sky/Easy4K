@@ -77,19 +77,15 @@ public sealed partial class MainWindow : Window
             });
         };
 
-        // 清理临时文件进度：主页进度条显示清理进度（不切换进行中页）
+        // 清理临时文件：主页进度条显示清理进度（不定进度转圈，避免 0→100→0 跳变抽搐；不切换进行中页）
         Vm.PropertyChanged += (s, e) => DispatcherQueue.TryEnqueue(() =>
         {
             if (e.PropertyName == nameof(Vm.IsCleaning))
             {
+                ThinProgressBar.IsIndeterminate = Vm.IsCleaning; // 清理用不定进度
                 ThinProgressBar.Visibility = (Vm.IsCleaning || Vm.IsProcessing) ? Visibility.Visible : Visibility.Collapsed;
-            }
-            else if (e.PropertyName == nameof(Vm.CleanProgressPercent))
-            {
-                ThinProgressBar.Value = Vm.CleanProgressPercent;
-                // 清理结束（进度归零）且无处理任务时隐藏
-                if (Vm.CleanProgressPercent <= 0 && !Vm.IsCleaning && !Vm.IsProcessing)
-                    ThinProgressBar.Visibility = Visibility.Collapsed;
+                if (!Vm.IsCleaning && !Vm.IsProcessing)
+                    ThinProgressBar.IsIndeterminate = false; // 恢复定值进度供处理使用
             }
         });
 
@@ -289,9 +285,16 @@ public sealed partial class MainWindow : Window
     private void OnCheckGpuMenu(object sender, RoutedEventArgs e) => ShowDialog("显卡检测", Vm.CheckGpu());
     private async void OnCleanTempMenu(object sender, RoutedEventArgs e) => await ConfirmCleanTempAsync();
 
-    /// <summary>清理临时文件：双重警告确认，全部确认才执行，结果走日志</summary>
+    /// <summary>清理临时文件：双重警告确认，全部确认才执行，结果走日志。
+    /// 处理进行中禁止清理（主页按钮已禁用，此处兜底拦截菜单等入口）。</summary>
     private async Task ConfirmCleanTempAsync()
     {
+        if (Vm.IsProcessing)
+        {
+            Vm.Logger.Warn("处理进行中，无法清理临时文件");
+            return;
+        }
+
         var first = new ContentDialog
         {
             Title = "清理临时文件",

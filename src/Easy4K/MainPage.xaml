@@ -175,6 +175,14 @@
                                     <ColumnDefinition Width="50"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="种类" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <ComboBox Grid.Column="1" ItemsSource="{x:Bind Vm.IfEngines}" SelectedItem="{x:Bind Vm.IfEngine, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" Style="{StaticResource GlassComboBox}"/>
+                            </Grid>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="50"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="模型" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
                                 <ComboBox Grid.Column="1" ItemsSource="{x:Bind Vm.IfModels}" SelectedItem="{x:Bind Vm.IfModel, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择模型" Style="{StaticResource GlassComboBox}"/>
                             </Grid>
@@ -291,7 +299,7 @@
                             </Grid.ColumnDefinitions>
                             <Button Grid.Column="0" Content="开始处理 (Ctrl+S)" Click="OnStart" IsEnabled="{x:Bind Vm.CanStart, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                             <Button Grid.Column="1" Content="停止 (Ctrl+Shift+S)" Click="OnStop" IsEnabled="{x:Bind Vm.CanStop, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
-                            <Button Grid.Column="2" Content="清理临时文件" Click="OnCleanTemp" Style="{StaticResource GlassButton}"/>
+                            <Button Grid.Column="2" Content="清理临时文件" Click="OnCleanTemp" IsEnabled="{x:Bind Vm.CanClean, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                         </Grid>
                         <TextBlock Text="{x:Bind Vm.FinalOutputName, Mode=OneWay}" Opacity="0.6" FontSize="11" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>

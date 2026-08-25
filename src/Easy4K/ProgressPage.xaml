@@ -57,7 +57,7 @@
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
-                <ToggleSwitch Grid.Row="0" Header="图片预览" IsOn="{x:Bind Vm.ShowPreview, Mode=TwoWay}" FontSize="12"/>
+                <ToggleSwitch Grid.Row="0" Header="图片预览" IsOn="{x:Bind Vm.ShowPreview, Mode=TwoWay}" IsEnabled="{x:Bind Vm.IsPreviewToggleEnabled, Mode=OneWay}" FontSize="12"/>
                 <Grid Grid.Row="1">
                     <TextBlock x:Name="PreviewHint" Text="{x:Bind Vm.PreviewHintText, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.4" FontSize="14"/>
                     <Image x:Name="PreviewImage" Stretch="Uniform" Visibility="{x:Bind Vm.ShowPreview, Mode=OneWay}"/>

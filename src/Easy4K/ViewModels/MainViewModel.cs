@@ -198,6 +198,13 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _ifModel = "";
     public ObservableCollection<string> IfModels { get; } = new();
 
+    /// <summary>补帧模型种类："NCNN"（rife-ncnn-vulkan）或 "Offical"（PyTorch pkl 模型）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IfModel))]
+    private string _ifEngine = "NCNN";
+    /// <summary>可选模型种类列表</summary>
+    public ObservableCollection<string> IfEngines { get; } = new() { "NCNN", "Offical" };
+
     // ===================== 音频设置 =====================
     // 不再选外部音频文件：改为从原视频提取音频（拆分音频按钮）+ 合并原音频进新视频（勾选）
     [ObservableProperty]
@@ -223,6 +230,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStart))]
     [NotifyPropertyChangedFor(nameof(CanStop))]
+    [NotifyPropertyChangedFor(nameof(CanClean))]
     private bool _isProcessing;
 
     /// <summary>当前处理是否处于暂停状态（工具进程已挂起）</summary>
@@ -236,6 +244,14 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PreviewHintText))]
     private bool _showPreview = true;
+
+    /// <summary>合并/HDR/音频阶段不产生新帧，自动关闭预览并禁用预览开关（避免预览停在旧画面）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsPreviewToggleEnabled))]
+    private bool _previewBlocked;
+
+    /// <summary>预览开关是否可操作（阻断阶段禁用）</summary>
+    public bool IsPreviewToggleEnabled => !PreviewBlocked;
 
     public string PreviewHintText => ShowPreview
         ? "预览区：处理开始后实时显示最新帧"
@@ -384,6 +400,8 @@ public partial class MainViewModel : ObservableObject
     /// <summary>拆分音频需基于真实输入视频，帧文件夹模式（无视频文件）时禁用</summary>
     public bool ExtractAudioEnabled => CanStart && !HasExternalFrames;
     public bool CanStop => IsProcessing;
+    /// <summary>处理进行中禁止清理临时文件（避免清理与工具进程抢文件/误删中间产物）</summary>
+    public bool CanClean => !IsProcessing;
 
     // ===================== 显卡状态（绿=可运行 / 黄=勉强 / 红=不行） =====================
     public enum GpuStatusGrade { None, Green, Yellow, Red }
@@ -740,11 +758,27 @@ public partial class MainViewModel : ObservableObject
         else SrModel = "";
     }
 
+    partial void OnIfEngineChanged(string value)
+    {
+        RefreshIfModels();
+        UpdateWarnings();
+    }
+
     private void RefreshIfModels()
     {
         IfModels.Clear();
+        // Offical 引擎：列出 Tools\officalrife\models\official_*（pkl 模型）
+        if (IfEngine == "Offical")
+        {
+            foreach (var m in OfficalRifeCommandBuilder.ListModels(Tools.OfficalRifeModelsRoot))
+                IfModels.Add(m);
+            if (IfModels.Contains(IfModel)) { /* keep */ }
+            else if (IfModels.Count > 0) IfModel = IfModels[0];
+            else IfModel = "";
+            return;
+        }
+        // NCNN 引擎：rife-ncnn-vulkan 模型，优先规格书常用模型
         var all = RifeCommandBuilder.ListModels(Tools.RifeModelsRoot);
-        // 优先显示规格书要求的常用模型；其他作为可选
         var preferred = RifeCommandBuilder.PreferredModels.Intersect(all).ToList();
         var rest = all.Except(preferred).ToList();
         foreach (var m in preferred.Concat(rest))
@@ -811,7 +845,8 @@ public partial class MainViewModel : ObservableObject
                 Interpolation = Interpolation,
                 MergeVideo = MergeVideo,
                 MergeAudio = MergeAudio,
-                SdrToHdr = SdrToHdr && IsHdrEnabled
+                SdrToHdr = SdrToHdr && IsHdrEnabled,
+                IfEngine = IfEngine
             },
             SrModel = SrModel,
             SrScale = SrScale,
@@ -901,6 +936,10 @@ public partial class MainViewModel : ObservableObject
             ProgressPercent = p.Percent;
             ProgressDetail = p.DetailText;
             Stage = p.Stage;
+            // 合并/HDR/音频阶段不产生新帧：自动关闭预览并禁用预览开关，避免预览停在旧画面
+            var blockPreview = p.Stage is ProcessStage.Merging or ProcessStage.HdrConverting or ProcessStage.AddingAudio;
+            PreviewBlocked = blockPreview;
+            if (blockPreview && ShowPreview) ShowPreview = false;
             if (!string.IsNullOrEmpty(p.LatestFramePath))
                 LatestFramePath = p.LatestFramePath;
         });

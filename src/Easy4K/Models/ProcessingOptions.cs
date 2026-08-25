@@ -9,4 +9,6 @@ public sealed class ProcessingOptions
     public bool MergeVideo { get; set; } = true;
     public bool MergeAudio { get; set; } = true;       // 合并原视频音频到最终视频（从原视频提取）
     public bool SdrToHdr { get; set; } = false;
+    /// <summary>补帧引擎："NCNN"（rife-ncnn-vulkan）或 "Offical"（PyTorch pkl 模型）</summary>
+    public string IfEngine { get; set; } = "NCNN";
 }

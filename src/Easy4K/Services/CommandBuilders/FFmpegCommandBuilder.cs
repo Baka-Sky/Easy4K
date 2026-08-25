@@ -20,16 +20,14 @@ public static class FFmpegCommandBuilder
         return (args, pattern);
     }
 
-    /// <summary>把 PNG 序列合成视频。BUG-08：自动探测起始帧编号。</summary>
-    public static string MergeFrames(string framesDir, string outputVideo, double fps, string preset, bool useNvenc)
+    /// <summary>把 PNG 序列合成视频。BUG-08：自动探测起始帧编号。
+    /// encArgs 由上层决定（GPU 硬件编码或 CPU libx265）；-threads 0 = 使用全部 CPU 核心，不限制。</summary>
+    public static string MergeFrames(string framesDir, string outputVideo, double fps, string encArgs)
     {
         var pattern = Path.Combine(framesDir, "%08d.png").Replace('\\', '/');
         var startNum = DetectStartNumber(framesDir);
-
-        // hevc_nvenc 要求 NVIDIA；fallback libx265（CPU，慢但通用）。预设 p7=high quality
-        var enc = useNvenc ? "hevc_nvenc -preset p7 -tune hq -rc vbr -cq 18" : $"libx265 -preset {preset} -crf 18";
         var args = $"-y -framerate {fps:0.##} -start_number {startNum} -i \"{pattern}\" " +
-                   $"-c:v {enc} -pix_fmt yuv420p -an \"{outputVideo}\"";
+                   $"-c:v {encArgs} -threads 0 -pix_fmt yuv420p -an \"{outputVideo}\"";
         return args;
     }
 
