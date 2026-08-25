@@ -3,42 +3,18 @@ using Easy4K.Models;
 
 namespace Easy4K.Services;
 
-/// <summary>把 appsettings 里的相对工具路径解析为绝对路径。
-/// 策略：配置项绝对且存在 → 直接用；否则从 exe 目录向上查找名为 ToolsRoot 的子目录；
-/// 最后回退到开发期硬编码路径 I:\Easy4K\Tools。BUG-01 路径问题的前置条件。</summary>
+/// <summary>把 appsettings 里的工具路径解析为运行目录下的绝对路径。
+/// 自包含分发策略：Tools 必须位于软件运行目录（exe 旁），禁止回退到开发机外部路径（如 I:\Easy4K\Tools），
+/// 否则软件分发给他人后会因找不到工具无法运行。</summary>
 public static class ToolPathResolver
 {
-    /// <summary>开发期硬编码兜底（用户当前布局）</summary>
-    private const string DevFallback = @"I:\Easy4K\Tools";
-
     public static string ResolveToolsRoot(string configured)
     {
-        if (Path.IsPathRooted(configured) && Directory.Exists(configured))
-            return Path.GetFullPath(configured);
-
-        // 1. exe 目录旁的 Tools 子目录（打包布局）
         var baseDir = AppContext.BaseDirectory;
-        var localTools = Path.Combine(baseDir, configured);
-        if (Directory.Exists(localTools)) return Path.GetFullPath(localTools);
-
-        // 2. 工具直接放 exe 目录根下（打包布局）
-        if (Directory.Exists(Path.Combine(baseDir, "realesrgan-ncnn")) &&
-            Directory.Exists(Path.Combine(baseDir, "rife")))
-            return baseDir;
-
-        // 3. 向上查找（开发布局：I:\Easy4K\Tools）
-        var dir = Directory.GetParent(baseDir)?.FullName ?? "";
-        for (int i = 0; i < 12 && !string.IsNullOrEmpty(dir); i++)
-        {
-            var candidate = Path.Combine(dir, configured);
-            if (Directory.Exists(candidate)) return Path.GetFullPath(candidate);
-            candidate = Path.Combine(dir, configured.ToLowerInvariant());
-            if (Directory.Exists(candidate)) return Path.GetFullPath(candidate);
-            dir = Directory.GetParent(dir)?.FullName ?? "";
-        }
-
-        // 兜底
-        return Directory.Exists(DevFallback) ? DevFallback : Path.Combine(baseDir, configured);
+        // 一律定位到运行目录（exe 旁）下名为 ToolsRoot（默认 Tools）的文件夹；
+        // 配置里写绝对路径时也强制用运行目录的 Tools，保证分发后路径不跑偏
+        var name = Path.IsPathRooted(configured) ? "Tools" : configured;
+        return Path.GetFullPath(Path.Combine(baseDir, name));
     }
 
     /// <summary>根据 settings + pathConfig 解析所有工具绝对路径</summary>
