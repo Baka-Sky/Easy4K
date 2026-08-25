@@ -26,10 +26,14 @@ public static class OfficalRifeCommandBuilder
         return result;
     }
 
-    /// <summary>构建命令参数（含 run.py 全路径与参数，python 可执行文件由调用方作为 exe 传入）</summary>
-    public static string Build(string runPy, string inputDir, string outputDir, string modelDir, int multiplier)
+    /// <summary>构建命令参数（含 run.py 全路径与参数，python 可执行文件由调用方作为 exe 传入）。
+    /// threads 对应软件线程滑块（torch 推理线程）；useUhdMode 勾选「降低画质」时加 -u（FP16 省内存）。</summary>
+    public static string Build(string runPy, string inputDir, string outputDir, string modelDir,
+        int multiplier, int threads, bool useUhdMode)
     {
         Directory.CreateDirectory(outputDir);
-        return $"\"{runPy}\" -i \"{inputDir}\" -o \"{outputDir}\" -m \"{modelDir}\" -mult {multiplier}";
+        var u = useUhdMode ? " -u" : "";
+        var t = threads > 0 ? $" -threads {threads}" : "";
+        return $"\"{runPy}\" -i \"{inputDir}\" -o \"{outputDir}\" -m \"{modelDir}\" -mult {multiplier}{u}{t}";
     }
 }

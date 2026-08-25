@@ -214,16 +214,45 @@ public sealed class ProcessingOrchestrator
                         return Fail($"Offical 模型不存在: {ctx.IfModel}");
                     // Python 优先用便携版（Tools\officalrife\python\python.exe），否则回退系统 python
                     var py = File.Exists(ctx.Tools.OfficalPythonExe) ? ctx.Tools.OfficalPythonExe : "python";
-                    _logger.Info($"补帧开始(Offical): 模型 {ctx.IfModel} ×{ctx.IfMultiplier} ({ctx.Video.FrameRate:0.##}→{outFps:0.##}fps)");
-                    var oArgs = OfficalRifeCommandBuilder.Build(ctx.Tools.OfficalRifeRunPy, inputDirForIf, ifFrames, modelDir, ctx.IfMultiplier);
+                    var safe = ctx.Settings.UseSafeFrameRate;
+                    // 线程滑块对 Offical 同样生效（torch 推理线程）；安全帧率负责致命设备/内存错误自动停止
+                    var threads = Math.Clamp(ctx.Settings.ThreadCount, 1, 32);
+                    _fatalGpuError = false;
+                    _logger.Info($"补帧开始(Offical): 模型 {ctx.IfModel} ×{ctx.IfMultiplier} ({ctx.Video.FrameRate:0.##}→{outFps:0.##}fps)（线程 {threads}）");
+                    var oArgs = OfficalRifeCommandBuilder.Build(ctx.Tools.OfficalRifeRunPy, inputDirForIf, ifFrames, modelDir,
+                        ctx.IfMultiplier, threads, ctx.Settings.LowerQualityForVram);
                     _logger.Command($"python {oArgs}");
                     var oExit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(Offical)", targetFrames,
                         py, oArgs, ifFrames, ct);
                     if (oExit != 0)
                     {
-                        // 用户停止 → 抛取消异常由上层显示"处理已停止"；工具异常 → 失败提示
+                        // 用户停止 → 抛取消异常由上层显示"处理已停止"；工具异常 → 本次停止，下次启动清理重跑
                         ct.ThrowIfCancellationRequested();
-                        return Fail("Offical 补帧失败（请确认已安装 Python 与 PyTorch，模型为官方 pkl 格式）");
+                        // 安全帧率开启：检测到设备/内存错误 → 自动停止
+                        if (safe && _fatalGpuError)
+                        {
+                            return Fail("已按安全帧率自动停止：检测到设备错误或内存溢出");
+                        }
+                        // 安全帧率未开启：设备/内存错误不停止，自动降级为单线程重试一次
+                        if (_fatalGpuError)
+                        {
+                            _logger.Warn("检测到设备错误/内存溢出，自动降级为单线程重试本次补帧(Offical)");
+                            CleanPartialOutput(ifFrames);
+                            var retryArgs = OfficalRifeCommandBuilder.Build(ctx.Tools.OfficalRifeRunPy, inputDirForIf, ifFrames, modelDir,
+                                ctx.IfMultiplier, 1, ctx.Settings.LowerQualityForVram);
+                            _logger.Command($"python {retryArgs}（降级单线程重试）");
+                            oExit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(Offical降级)", targetFrames,
+                                py, retryArgs, ifFrames, ct);
+                            if (oExit != 0)
+                            {
+                                ct.ThrowIfCancellationRequested();
+                                return Fail("Offical 补帧失败");
+                            }
+                        }
+                        else
+                        {
+                            return Fail("Offical 补帧失败（请确认已安装 Python 与 PyTorch，模型为官方 pkl 格式）");
+                        }
                     }
                     _logger.Success($"补帧完成(Offical): {CountFrames(ifFrames)} 帧");
                 }
@@ -441,7 +470,7 @@ public sealed class ProcessingOrchestrator
     /// <summary>当前阶段是否发生 Vulkan 设备丢失/显存溢出（安全帧率开启时据此自动停止）</summary>
     private bool _fatalGpuError;
 
-    /// <summary>判断 stderr 行是否为致命 GPU 错误（设备丢失 / 显存溢出）</summary>
+    /// <summary>判断 stderr 行是否为致命 GPU 错误（设备丢失 / 显存溢出 / Offical 的 FATAL_GPU_ERROR 标记）</summary>
     private static bool IsFatalGpuLine(string line)
     {
         return line.Contains("vkQueueSubmit failed", StringComparison.OrdinalIgnoreCase)
@@ -449,7 +478,8 @@ public sealed class ProcessingOrchestrator
             || line.Contains("vkAllocateMemory failed", StringComparison.OrdinalIgnoreCase)
             || line.Contains("VK_ERROR_OUT_OF_DEVICE_MEMORY", StringComparison.OrdinalIgnoreCase)
             || line.Contains("out of device memory", StringComparison.OrdinalIgnoreCase)
-            || line.Contains("out of memory", StringComparison.OrdinalIgnoreCase);
+            || line.Contains("out of memory", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("FATAL_GPU_ERROR", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<int> RunStageWithProgress(ProcessStage stage, string stageText, long total,
