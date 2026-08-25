@@ -76,6 +76,33 @@ public sealed partial class MainPage : Page
         Vm.IfModel = IfModelCombo.SelectedItem is string s ? s : "";
     }
 
+    /// <summary>种类旁的 Info 图标点击 → 详细讲解 NCNN / Offical 及兼容性</summary>
+    private async void OnIfEngineInfoClick(object sender, RoutedEventArgs e)
+    {
+        var dlg = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "模型种类：NCNN 与 Offical",
+            Content = new TextBlock
+            {
+                Text = "NCNN：基于 ncnn 框架 + Vulkan 的 rife-ncnn-vulkan 补帧。" +
+                       "GPU 加速、速度快，支持线程调节（-j）、安全帧率、GPU 错误自动降级重试等选项。" +
+                       "模型为 ncnn 格式（flownet.param/.bin）。\n\n" +
+                       "Offical：官方 RIFE PyTorch 模型（pkl 文件），使用软件随附的 Python + PyTorch 运行，" +
+                       "包含官方全部模型（v4.6 / v4.8 / v4.9 / v4.15 / v4.18 / v4.22 / v4.26 / v4.26_heavy / 2.3 / rpr_v7_2.3）。" +
+                       "画质更接近官方实现，但速度取决于 CPU/GPU 与 Python 性能。\n\n" +
+                       "兼容性说明：Offical 模式下，线程滑块、安全帧率、降低画质(-u) 等 NCNN 专属选项不生效，" +
+                       "其余流程（拆帧/超分/合并/音频/HDR）不受影响。",
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 13,
+                MaxWidth = 480,
+            },
+            CloseButtonText = "知道了",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        await dlg.ShowAsync();
+    }
+
     /// <summary>线程滑块变化：调到 1:8:8（8）及以上时弹窗确认（会话内只弹一次），
     /// 弹窗前释放滑块指针捕获（相当于自动松开鼠标左键，避免弹窗期间滑块继续被拖动），拒绝则回退到上次确认值。</summary>
     private async void OnThreadSliderValueChanged(object sender, RangeBaseValueChangedEventArgs e)

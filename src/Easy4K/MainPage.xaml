@@ -172,15 +172,23 @@
                             <TextBlock Text="补帧设置" Style="{StaticResource SectionTitle}"/>
                             <Grid ColumnSpacing="8">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="50"/>
+                                    <ColumnDefinition Width="64"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="种类" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center">
+                                    <TextBlock Text="种类" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                    <Button Padding="3" Background="Transparent" BorderThickness="0"
+                                            VerticalAlignment="Center" Click="OnIfEngineInfoClick"
+                                            ToolTipService.ToolTip="NCNN：ncnn + Vulkan 的 rife-ncnn-vulkan 补帧&#x0a;Offical：官方 PyTorch pkl 模型（随附 Python 运行）&#x0a;&#x0a;点击图标查看详细讲解"
+                                            AutomationProperties.Name="模型种类说明">
+                                        <FontIcon Glyph="&#xE946;" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    </Button>
+                                </StackPanel>
                                 <ComboBox Grid.Column="1" ItemsSource="{x:Bind Vm.IfEngines}" SelectedItem="{x:Bind Vm.IfEngine, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" Style="{StaticResource GlassComboBox}" SelectionChanged="OnIfEngineSelectionChanged"/>
                             </Grid>
                             <Grid ColumnSpacing="8">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="50"/>
+                                    <ColumnDefinition Width="64"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="模型" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
@@ -188,7 +196,7 @@
                             </Grid>
                             <Grid ColumnSpacing="8">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="50"/>
+                                    <ColumnDefinition Width="64"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="倍率" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
