@@ -45,4 +45,10 @@
     <None Include="Assets\**" />
   </ItemGroup>
 
+  <!-- 构建后自动把项目根 Tools（FFmpeg/NVEncC/realesrgan/rife/officalrife+便携python）增量同步到输出目录，
+       保证 Debug/Release/publish 产物自包含可运行。robocopy 退出码 0-7 均为成功，>=8 才报错。 -->
+  <Target Name="CopyToolsToOutput" AfterTargets="Build">
+    <Exec IgnoreExitCode="true" Command="robocopy &quot;$(MSBuildThisFileDirectory)..\..\Tools&quot; &quot;$(OutDir)Tools&quot; /E /NFL /NDL /NJH /NJS /NP /XD .git bin obj __pycache__ &amp; if %25ERRORLEVEL% GEQ 8 exit /b 1" />
+  </Target>
+
 </Project>
