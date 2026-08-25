@@ -44,7 +44,7 @@
                     <MenuFlyoutItem Text="检查环境" Click="OnCheckEnvMenu"/>
                     <MenuFlyoutItem Text="检查显卡" Click="OnCheckGpuMenu"/>
                     <MenuFlyoutSeparator/>
-                    <MenuFlyoutItem Text="清理临时文件" Click="OnCleanTempMenu"/>
+                    <MenuFlyoutItem x:Name="CleanTempMenuItem" Text="清理临时文件" Click="OnCleanTempMenu"/>
                 </MenuBarItem>
                 <MenuBarItem Title="设置">
                     <MenuFlyoutItem Text="浅色主题" Click="OnThemeLight"/>

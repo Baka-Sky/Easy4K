@@ -52,6 +52,7 @@ public sealed partial class MainWindow : Window
             DispatcherQueue.TryEnqueue(() =>
             {
                 NavButtons.Visibility = Visibility.Visible;
+                CleanTempMenuItem.IsEnabled = false; // 处理中禁止清理（菜单入口同样禁用）
                 NavigateToProgress();
             });
         };
@@ -62,6 +63,7 @@ public sealed partial class MainWindow : Window
             DispatcherQueue.TryEnqueue(() =>
             {
                 NavButtons.Visibility = Visibility.Collapsed;
+                CleanTempMenuItem.IsEnabled = true; // 处理结束恢复清理菜单
                 NavigateToHome();
             });
         };

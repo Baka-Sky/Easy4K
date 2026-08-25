@@ -492,7 +492,7 @@ public sealed class ProcessingOrchestrator
         // 必须优先解析百分比：否则像 "12000/100" 这类帧号/分母行会被误当比例，算出 12000% 的离奇进度。
         var p = NvencPercentRe.Match(line);
         if (p.Success && double.TryParse(p.Groups[1].Value, out var pct))
-            return (long)Math.Round(pct);
+            return (long)Math.Clamp(Math.Round(pct), 0, 100);
         // 帧/帧 格式仅在比例合理时采用（分母 2~100000 且分子不超过分母）
         var m = Regex.Match(line, @"(\d+)/(\d+)");
         if (m.Success && long.TryParse(m.Groups[1].Value, out var c) && long.TryParse(m.Groups[2].Value, out var t)
