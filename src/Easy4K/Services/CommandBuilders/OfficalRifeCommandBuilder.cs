@@ -7,10 +7,7 @@ namespace Easy4K.Services.CommandBuilders;
 /// Python 优先用便携版 Tools\officalrife\python\python.exe，否则回退系统 python。</summary>
 public static class OfficalRifeCommandBuilder
 {
-    /// <summary>旧版 2.3 系列为非 jit 格式（含 RAFT/contextnet/unet），run.py 无法直接加载，不列出</summary>
-    private static readonly string[] ExcludedModels = { "official_2.3", "rpr_v7_2.3" };
-
-    /// <summary>列出 Offical 模型（official_* 且含 flownet.pkl）</summary>
+    /// <summary>列出 Offical 模型（official_* / rpr_* 且含 flownet.pkl）</summary>
     public static IReadOnlyList<string> ListModels(string modelsRoot)
     {
         var result = new List<string>();
@@ -18,9 +15,9 @@ public static class OfficalRifeCommandBuilder
         foreach (var d in Directory.EnumerateDirectories(modelsRoot))
         {
             var name = Path.GetFileName(d);
-            if (name.StartsWith("official_", StringComparison.OrdinalIgnoreCase) &&
-                !ExcludedModels.Contains(name) &&
-                File.Exists(Path.Combine(d, "flownet.pkl")))
+            if (File.Exists(Path.Combine(d, "flownet.pkl")) &&
+                (name.StartsWith("official_", StringComparison.OrdinalIgnoreCase) ||
+                 name.StartsWith("rpr_", StringComparison.OrdinalIgnoreCase)))
             {
                 result.Add(name);
             }
