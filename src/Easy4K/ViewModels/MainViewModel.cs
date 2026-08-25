@@ -197,7 +197,8 @@ public partial class MainViewModel : ObservableObject
     private int _ifMultiplier = 2;
 
     [ObservableProperty] private string _ifModel = "";
-    public ObservableCollection<string> IfModels { get; } = new();
+    /// <summary>补帧模型列表。切换引擎时整体替换为新实例（重新加载模型选择框，避免 WinUI ComboBox 在同一集合 Clear/Add 后展开闪退 0x80070490）</summary>
+    [ObservableProperty] private ObservableCollection<string> _ifModels = new();
 
     /// <summary>补帧模型种类："NCNN"（rife-ncnn-vulkan）或 "Offical"（PyTorch pkl 模型）</summary>
     [ObservableProperty]
@@ -779,7 +780,7 @@ public partial class MainViewModel : ObservableObject
         catch (Exception ex)
         {
             _logger.Error($"刷新模型列表异常: {ex.Message}");
-            try { IfModels.Clear(); } catch { }
+            try { IfModels = new ObservableCollection<string>(); } catch { }
             IfModel = "";
         }
         UpdateWarnings();
@@ -787,19 +788,14 @@ public partial class MainViewModel : ObservableObject
 
     private void RefreshIfModels()
     {
-        // 先解除 ComboBox 选中关联再重建列表：旧选中项一旦脱离新列表，
-        // 展开下拉框时会触发 WinUI 0x80070490「找不到元素」闪退（must 保持选中值 ∈ 列表）
-        IfModel = "";
-        IfModels.Clear();
-
+        // 切换引擎 = 重新加载模型选择框：整体替换为全新列表实例，
+        // 而不是在原集合上 Clear/Add（WinUI ComboBox 对同一集合反复修改后展开下拉会 0x80070490 闪退）
+        var list = new List<string>();
         switch (IfEngine)
         {
             case "Offical":
                 // Offical 引擎：列出 Tools\officalrife\models\official_*（pkl 模型）
-                foreach (var m in OfficalRifeCommandBuilder.ListModels(Tools.OfficalRifeModelsRoot))
-                    IfModels.Add(m);
-                // Offical 无"默认模型"概念，取第一个即可（列表为空则保持 IfModel=""）
-                if (IfModels.Count > 0) IfModel = IfModels[0];
+                list.AddRange(OfficalRifeCommandBuilder.ListModels(Tools.OfficalRifeModelsRoot));
                 break;
 
             case "NCNN":
@@ -807,16 +803,18 @@ public partial class MainViewModel : ObservableObject
                 var all = RifeCommandBuilder.ListModels(Tools.RifeModelsRoot);
                 var preferred = RifeCommandBuilder.PreferredModels.Intersect(all).ToList();
                 var rest = all.Except(preferred).ToList();
-                foreach (var m in preferred.Concat(rest))
-                    IfModels.Add(m);
-                // 优先配置里的默认模型，其次取列表第一个（列表为空则保持 IfModel=""）
-                if (IfModels.Count > 0)
-                    IfModel = IfModels.Contains(_app.DefaultIfModel) ? _app.DefaultIfModel : IfModels[0];
+                list.AddRange(preferred.Concat(rest));
                 break;
 
             default:
                 break;
         }
+
+        IfModel = ""; // 先清空选中，让下拉框回到占位状态
+        IfModels = new ObservableCollection<string>(list);
+        // 再设选中：Offical 取第一个；NCNN 优先配置里的默认模型（列表为空则保持 IfModel=""）
+        if (IfModels.Count > 0)
+            IfModel = IfEngine == "NCNN" && IfModels.Contains(_app.DefaultIfModel) ? _app.DefaultIfModel : IfModels[0];
     }
 
     // ===================== 处理流程 =====================
