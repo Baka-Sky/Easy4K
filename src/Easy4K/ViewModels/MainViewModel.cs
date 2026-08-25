@@ -79,6 +79,7 @@ public partial class MainViewModel : ObservableObject
         _ifModel = app.DefaultIfModel;
         _useSafeFrameRate = app.UseSafeFrameRate;
         _lowerQualityForVram = app.LowerQualityForVram;
+        _useGpuAcceleration = app.UseGpuAcceleration;
         _threadCount = Math.Clamp(app.ThreadCount, 1, 32);
         _hdrSaturation = Math.Clamp(app.HdrSaturation, 0, 200);
         _hdrContrast = Math.Clamp(app.HdrContrast, 0, 200);
@@ -243,6 +244,10 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _lowerQualityForVram;
 
+    /// <summary>使 FFmpeg 尝试使用 GPU 加速（拆帧 -hwaccel / 合并帧 GPU 编码器，失败自动回退 CPU）</summary>
+    [ObservableProperty]
+    private bool _useGpuAcceleration = true;
+
     /// <summary>是否显示图片预览（处理中可随时开关）</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PreviewHintText))]
@@ -276,6 +281,12 @@ public partial class MainViewModel : ObservableObject
     partial void OnLowerQualityForVramChanged(bool value)
     {
         _app.LowerQualityForVram = value;
+        _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnUseGpuAccelerationChanged(bool value)
+    {
+        _app.UseGpuAcceleration = value;
         _settings.Save(_app, _pathConfig);
     }
 

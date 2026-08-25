@@ -10,13 +10,15 @@ public static class FFmpegCommandBuilder
 {
     /// <summary>拆分视频为 PNG 序列。输出帧编号从 1 开始，纯数字命名（%08d）。
     /// 纯数字命名是 RIFE 目录模式的硬性要求（RIFE 只识别 %08d.png，不认 frame_ 前缀）。
-    /// -y 覆盖旧帧：从头完整拆一遍，不做断点续传。始终多线程全速。</summary>
-    public static (string args, string framePattern) SplitFrames(string videoPath, string framesDir)
+    /// -y 覆盖旧帧：从头完整拆一遍，不做断点续传。始终多线程全速。
+    /// useGpu：勾选「使FFmpeg尝试使用GPU加速」时加 -hwaccel auto（GPU 解码，失败由上层回退 CPU）。</summary>
+    public static (string args, string framePattern) SplitFrames(string videoPath, string framesDir, bool useGpu = false)
     {
         Directory.CreateDirectory(framesDir);
         var pattern = Path.Combine(framesDir, "%08d.png").Replace('\\', '/');
+        var hw = useGpu ? " -hwaccel auto" : "";
         // -q:v 2 高质量 PNG；-y 覆盖
-        var args = $"-y -i \"{videoPath}\" -q:v 2 -vsync 0 \"{pattern}\"";
+        var args = $"-y{hw} -i \"{videoPath}\" -q:v 2 -vsync 0 \"{pattern}\"";
         return (args, pattern);
     }
 
@@ -31,10 +33,12 @@ public static class FFmpegCommandBuilder
         return args;
     }
 
-    /// <summary>把音频嵌入到最终视频。BUG-07：-map 0:v:0 -map 1:a:0 顺序正确，PCM 24bit 96kHz。</summary>
-    public static string EmbedAudio(string videoPath, string audioPath, string outputPath)
+    /// <summary>把音频嵌入到最终视频。BUG-07：-map 0:v:0 -map 1:a:0 顺序正确，PCM 24bit 96kHz。
+    /// useGpu：勾选「使FFmpeg尝试使用GPU加速」时加 -hwaccel auto（对 -c:v copy 无实际加速，仅保持"尝试"语义）。</summary>
+    public static string EmbedAudio(string videoPath, string audioPath, string outputPath, bool useGpu = false)
     {
-        return $"-y -i \"{videoPath}\" -i \"{audioPath}\" " +
+        var hw = useGpu ? " -hwaccel auto" : "";
+        return $"-y{hw} -i \"{videoPath}\" -i \"{audioPath}\" " +
                $"-c:v copy -c:a pcm_s24le -ar 96000 -ac 2 -map 0:v:0 -map 1:a:0 \"{outputPath}\"";
     }
 

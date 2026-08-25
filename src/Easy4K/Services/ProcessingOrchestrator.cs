@@ -115,15 +115,29 @@ public sealed class ProcessingOrchestrator
                 }
                 _logger.Info($"开始拆帧: {Path.GetFileName(ctx.InputVideo)}");
                 // 拆帧不受安全帧率限制（安全帧率只负责 Vulkan 设备丢失/显存溢出自动停止），始终多线程全速
-                var (args, _) = FFmpegCommandBuilder.SplitFrames(ctx.InputVideo, inputFrames);
+                // 勾选「使FFmpeg尝试使用GPU加速」时用 -hwaccel auto（GPU 解码），失败自动回退 CPU 拆帧
+                var useGpu = ctx.Settings.UseGpuAcceleration;
+                var (args, _) = FFmpegCommandBuilder.SplitFrames(ctx.InputVideo, inputFrames, useGpu);
                 _logger.Command($"ffmpeg {args}");
                 var exit = await RunStageWithProgress(ProcessStage.Splitting, "拆帧中", totalFrames,
                     ctx.Tools.FFmpegExe, args, ParseFfmpegFrame, inputFrames, ct);
                 if (exit != 0)
                 {
-                    // 用户停止 → 抛取消异常由上层显示"处理已停止"；工具异常 → 本次停止，下次启动清理重跑
                     ct.ThrowIfCancellationRequested();
-                    return Fail("拆帧失败");
+                    // GPU 解码失败 → 回退 CPU 拆帧重试一次
+                    if (useGpu)
+                    {
+                        _logger.Warn("GPU 加速拆帧失败，自动回退 CPU 拆帧");
+                        (args, _) = FFmpegCommandBuilder.SplitFrames(ctx.InputVideo, inputFrames, false);
+                        _logger.Command($"ffmpeg {args}");
+                        exit = await RunStageWithProgress(ProcessStage.Splitting, "拆帧中(CPU)", totalFrames,
+                            ctx.Tools.FFmpegExe, args, ParseFfmpegFrame, inputFrames, ct);
+                    }
+                    if (exit != 0)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        return Fail("拆帧失败");
+                    }
                 }
                 _logger.Success($"拆帧完成: {CountFrames(inputFrames)} 帧");
             }
@@ -320,8 +334,8 @@ public sealed class ProcessingOrchestrator
             var framesForMerge = ctx.Options.Interpolation ? ifFrames : (ctx.Options.SuperResolution ? srFrames : inputFrames);
             var fpsForMerge = ctx.Options.Interpolation ? outFps : ctx.Video.FrameRate;
             var total = ctx.Options.Interpolation ? targetFrames : totalFrames;
-            // GPU 编码优先（NVIDIA NVENC → AMD AMF → Intel QSV 均可），失败自动回退 CPU libx265
-            var hwEnc = DetectHardwareEncoder(ctx.Tools.FFmpegExe);
+            // 勾选「使FFmpeg尝试使用GPU加速」→ GPU 编码优先（NVIDIA NVENC → AMD AMF → Intel QSV），失败自动回退 CPU libx265
+            var hwEnc = ctx.Settings.UseGpuAcceleration ? DetectHardwareEncoder(ctx.Tools.FFmpegExe) : null;
             _logger.Info(hwEnc is null
                 ? "开始合并视频（编码：CPU libx265）"
                 : $"开始合并视频（编码：GPU {hwEnc.Split(' ')[0]}）");
@@ -402,7 +416,7 @@ public sealed class ProcessingOrchestrator
             {
                 var audioEmbedded = Path.Combine(tempRoot, "audio_embedded.mkv").Replace('\\', '/');
                 _logger.Info("合并原音频到新视频 (PCM 2.0 24bit 96kHz)");
-                var args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioPath, audioEmbedded);
+                var args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioPath, audioEmbedded, ctx.Settings.UseGpuAcceleration);
                 _logger.Command($"ffmpeg {args}");
                 var exit = await RunStageAsync(ProcessStage.AddingAudio, "合并音频",
                     ctx.Tools.FFmpegExe, args, ct);

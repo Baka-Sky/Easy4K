@@ -18,6 +18,8 @@ public sealed class AppSettings
     public bool UseSafeFrameRate { get; set; } = true;
     /// <summary>降低部分画质以降低显存占用（-u UHD 模式），可与安全帧率共存</summary>
     public bool LowerQualityForVram { get; set; }
+    /// <summary>使 FFmpeg 尝试使用 GPU 加速（拆帧解码 -hwaccel / 合并帧 GPU 编码器优先，失败自动回退 CPU）</summary>
+    public bool UseGpuAcceleration { get; set; } = true;
 
     /// <summary>HDR 转换饱和度（NVEncC --vpp-ngx-truehdr saturation，最高 200）</summary>
     public int HdrSaturation { get; set; } = 200;
