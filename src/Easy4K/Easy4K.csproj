@@ -51,4 +51,9 @@
     <Exec IgnoreExitCode="true" Command="robocopy &quot;$(MSBuildThisFileDirectory)..\..\Tools&quot; &quot;$(OutDir)Tools&quot; /E /NFL /NDL /NJH /NJS /NP /XD .git bin obj __pycache__ &amp; if %25ERRORLEVEL% GEQ 8 exit /b 1" />
   </Target>
 
+  <!-- 只保留 zh-CN/zh-TW 语言资源，删除 WindowsAppSDK 生成的其他语言目录（xx-XX 命名） -->
+  <Target Name="TrimLanguages" AfterTargets="Build">
+    <Exec IgnoreExitCode="true" Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Get-ChildItem -LiteralPath '$(OutDir)' -Directory | Where-Object { $_.Name -match '^[a-z]{2,3}-' -and $_.Name -notin @('zh-CN','zh-TW') } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }&quot;" />
+  </Target>
+
 </Project>
