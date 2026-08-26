@@ -33,8 +33,20 @@ public sealed partial class MainPage : Page
     {
         InitializeComponent();
         _lastConfirmedThreads = Vm.ThreadCount;
-        // 初始填充模型下拉框（引擎变化后也走 ReloadIfModelCombo，由 OnIfEngineSelectionChanged 触发）
+        // 引擎/模型属性变化兜底：即使下拉框 SelectionChanged 未触发，也重建模型列表/刷新倍率锁定
+        Loaded += (_, _) => Vm.PropertyChanged += OnVmPropertyChanged;
+        Unloaded += (_, _) => Vm.PropertyChanged -= OnVmPropertyChanged;
+        // 初始填充模型下拉框（引擎变化后也走 ReloadIfModelCombo）
         ReloadIfModelCombo();
+    }
+
+    /// <summary>VM 属性兜底：引擎变化 → 重建模型下拉框；模型变化 → 刷新倍率锁定。</summary>
+    private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(Vm.IfEngine))
+            ReloadIfModelCombo();
+        else if (e.PropertyName == nameof(Vm.IfModel))
+            Vm.RefreshIfMultiplierLock(Vm.IfModel);
     }
 
     // ===================== 补帧模型选择（重写：整体重建下拉框，避开 ComboBox 绑定联动 0x80070490 闪退） =====================
