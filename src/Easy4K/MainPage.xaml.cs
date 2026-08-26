@@ -389,6 +389,11 @@ public sealed partial class MainPage : Page
     /// <summary>启动处理：帧文件夹模式下参数未设置时先弹出参数窗口，确认后再启动</summary>
     private async Task StartWithFrameParamsAsync()
     {
+        // 启动前强制把下拉框当前选中值同步到 VM，防御 UI/VM 不同步（"选了 A 实际跑 B"）
+        if (IfEngineCombo.SelectedItem is string eng && eng != Vm.IfEngine)
+            Vm.IfEngine = eng;
+        if (IfModelCombo.SelectedItem is string m && m != Vm.IfModel)
+            Vm.IfModel = m;
         if (Vm.HasExternalFrames && (Vm.Video is null || !Vm.Video.IsValid))
         {
             await ShowFrameParamsDialogAsync();

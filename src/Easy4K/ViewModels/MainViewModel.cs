@@ -853,6 +853,7 @@ public partial class MainViewModel : ObservableObject
         ProcessingStarted?.Invoke();
 
         _logger.Info($"开始处理: {(HasExternalFrames ? $"帧文件夹 {Path.GetFileName(ExternalFramesDir.TrimEnd('\\', '/'))}" : Path.GetFileName(InputVideo))}");
+        _logger.Info($"处理参数: 超分 {SrModel} ×{SrScale} / 补帧引擎 {IfEngine} / 补帧模型 {IfModel} ×{IfMultiplier}");
 
         var ctx = new ProcessingContext
         {
