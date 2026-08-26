@@ -288,7 +288,7 @@ public sealed class ProcessingOrchestrator
                     // 线程由滑块控制（1:1:1 ~ 1:32:32）；安全帧率只负责"致命 GPU 错误自动停止"，不再强制单线程
                     var jThreads = $"1:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}";
                     _fatalGpuError = false;
-                    _logger.Info($"补帧开始: 模型 {ctx.IfModel} ×{ctx.IfMultiplier} ({ctx.Video.FrameRate:0.##}→{outFps:0.##}fps)（线程 {jThreads}）");
+                    _logger.Info($"补帧开始: 模型 {ctx.IfModel} ×{ifMult} ({ctx.Video.FrameRate:0.##}→{outFps:0.##}fps)（线程 {jThreads}）");
                     var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, targetFrames, jThreads);
                     _logger.Command($"rife-ncnn-vulkan {args}");
                     var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中", targetFrames,
@@ -346,7 +346,7 @@ public sealed class ProcessingOrchestrator
             var fpsForMerge = ctx.Options.Interpolation ? outFps : ctx.Video.FrameRate;
             var total = ctx.Options.Interpolation ? targetFrames : totalFrames;
             // 勾选「使FFmpeg尝试使用GPU加速」→ GPU 编码优先（NVIDIA NVENC → AMD AMF → Intel QSV），失败自动回退 CPU libx265
-            var hwEnc = ctx.Settings.UseGpuAcceleration ? DetectHardwareEncoder(ctx.Tools.FFmpegExe) : null;
+            var hwEnc = ctx.Settings.UseGpuAcceleration ? DetectHardwareEncoder(ctx.Tools.FFmpegExe, ctx.Gpu) : null;
             if (ctx.Settings.UseGpuAcceleration && hwEnc is null)
                 _logger.Warn("未检测到可用的 GPU 编码器（NVENC/AMF/QSV），本次合并视频使用 CPU 编码（libx265）");
             else
@@ -798,7 +798,7 @@ public sealed class ProcessingOrchestrator
     /// <summary>探测 FFmpeg 可用的 GPU 硬件编码器（NVENC → AMF → QSV，覆盖 NVIDIA/AMD/Intel）。
     /// 探测结果静态缓存，仅首次运行 ffmpeg -encoders 查询一次；探测不到返回 null（调用方回退 CPU）。
     /// 注意：编码器"编译进 FFmpeg"不代表硬件可用，实际失败时上层会自动回退 CPU 重试。</summary>
-    private static string? DetectHardwareEncoder(string ffmpegExe)
+    private static string? DetectHardwareEncoder(string ffmpegExe, GpuInfo gpu)
     {
         if (_detectedHwEncoder is not null)
             return string.IsNullOrEmpty(_detectedHwEncoder) ? null : _detectedHwEncoder;
@@ -821,7 +821,9 @@ public sealed class ProcessingOrchestrator
             p.WaitForExit(5000);
             foreach (var cand in HwEncoderCandidates)
             {
-                var name = cand.Split(' ')[0];
+                var name = cand.Split(" ")[0];
+                // 非 NVIDIA 显卡直接跳过 NVENC（否则每次合并都会白尝试失败再回退）
+                if (!gpu.IsNvidia && name.StartsWith("hevc_nvenc", StringComparison.OrdinalIgnoreCase)) continue;
                 if (text.Contains(name, StringComparison.OrdinalIgnoreCase))
                 {
                     _detectedHwEncoder = cand;
