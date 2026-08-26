@@ -141,7 +141,7 @@ public sealed class ProcessingOrchestrator
                         _logger.Warn("GPU 加速拆帧失败，自动回退 CPU 拆帧");
                         (args, _) = FFmpegCommandBuilder.SplitFrames(ctx.InputVideo, inputFrames, false);
                         _logger.Command($"ffmpeg {args}");
-                        exit = await RunStageWithProgress(ProcessStage.Splitting, "拆帧中(已回退)", totalFrames,
+                        exit = await RunStageWithProgress(ProcessStage.Splitting, "拆帧中(CPU)", totalFrames,
                             ctx.Tools.FFmpegExe, args, ParseFfmpegFrame, inputFrames, ct);
                     }
                     if (exit != 0)
