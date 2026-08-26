@@ -200,7 +200,11 @@ public partial class MainViewModel : ObservableObject
 
     /// <summary>补帧倍率是否锁定（v2/v3 老模型仅支持 x2 时禁用倍率下拉框）</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IfMultiplierEnabled))]
     private bool _ifMultiplierLocked;
+
+    /// <summary>倍率下拉框是否可用（锁定 v2/v3 时禁用，其余可用）</summary>
+    public bool IfMultiplierEnabled => !IfMultiplierLocked;
 
     [ObservableProperty] private string _ifModel = "";
 
