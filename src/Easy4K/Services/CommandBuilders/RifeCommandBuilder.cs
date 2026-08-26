@@ -20,9 +20,10 @@ public static class RifeCommandBuilder
         int multiplier, long targetFrames, string jThreads, bool useUhdMode = false)
     {
         Directory.CreateDirectory(outputFramesDir);
-        // BUG-09：v4 系列 -n 是目标帧数；v2/v3 的 -n 是插值倍数（不支持自定义帧数）
+        // BUG-09：只有 rife-v4+ 支持 -n 自定义帧数；v2/v3 传 -n 会报
+        // "only rife-v4 model support custom numframe and timestep"，不传则默认 2 倍
         var isV4 = model.StartsWith("rife-v4", StringComparison.OrdinalIgnoreCase);
-        var nArg = isV4 ? $"-n {targetFrames}" : $"-n {multiplier}";
+        var nArg = isV4 ? $"-n {targetFrames}" : "";
         // -m 模型名（不含路径，工作目录=exe 目录）  -g 0  -u UHD（勾选才加）  -j 线程数（空则不加，用默认）
         var j = string.IsNullOrEmpty(jThreads) ? "" : $" -j {jThreads}";
         var u = useUhdMode ? " -u" : "";

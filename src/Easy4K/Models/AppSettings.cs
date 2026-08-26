@@ -9,6 +9,8 @@ public sealed class AppSettings
 
     public string DefaultSrModel { get; set; } = "realesr-animevideov3";
     public string DefaultIfModel { get; set; } = "rife-v4.6";
+    /// <summary>手动"保存当前设置为默认"时记录的补帧引擎（NCNN / Offical）；仅显式保存才生效，启动默认仍 NCNN</summary>
+    public string DefaultIfEngine { get; set; } = "NCNN";
     public int DefaultSrScale { get; set; } = 2;
     public int DefaultIfMultiplier { get; set; } = 2;
 

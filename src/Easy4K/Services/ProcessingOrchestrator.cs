@@ -58,8 +58,15 @@ public sealed class ProcessingOrchestrator
             return null;
         }
 
-        var targetFrames = ctx.Options.Interpolation ? totalFrames * ctx.IfMultiplier : totalFrames;
-        var outFps = ctx.Options.Interpolation ? ctx.Video.FrameRate * ctx.IfMultiplier : ctx.Video.FrameRate;
+        // BUG-09：NCNN 的 v2/v3 老模型不支持 -n 自定义帧数，仅支持 2 倍补帧；Offical 引擎不受限
+        var oldNcnnModel = ctx.Options.IfEngine != "Offical"
+            && ctx.IfModel.StartsWith("rife-v", StringComparison.OrdinalIgnoreCase)
+            && !ctx.IfModel.StartsWith("rife-v4", StringComparison.OrdinalIgnoreCase);
+        var ifMult = oldNcnnModel ? 2 : ctx.IfMultiplier;
+        if (oldNcnnModel && ctx.IfMultiplier != 2)
+            _logger.Warn($"模型 {ctx.IfModel} 仅支持 2 倍补帧，本次已按 x2 处理");
+        var targetFrames = ctx.Options.Interpolation ? totalFrames * ifMult : totalFrames;
+        var outFps = ctx.Options.Interpolation ? ctx.Video.FrameRate * ifMult : ctx.Video.FrameRate;
         var outWidth = ctx.Video.Width * (ctx.Options.SuperResolution ? ctx.SrScale : 1);
         var outHeight = ctx.Video.Height * (ctx.Options.SuperResolution ? ctx.SrScale : 1);
 

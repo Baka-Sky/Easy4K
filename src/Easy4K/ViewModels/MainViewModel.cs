@@ -77,6 +77,8 @@ public partial class MainViewModel : ObservableObject
         _ifMultiplier = app.DefaultIfMultiplier;
         _srModel = app.DefaultSrModel;
         _ifModel = app.DefaultIfModel;
+        // 引擎仅跟随手动"保存当前设置为默认"恢复（不自动记住上次使用的引擎）
+        _ifEngine = app.DefaultIfEngine == "Offical" ? "Offical" : "NCNN";
         _useSafeFrameRate = app.UseSafeFrameRate;
         _lowerQualityForVram = app.LowerQualityForVram;
         _useGpuAcceleration = app.UseGpuAcceleration;
@@ -1415,6 +1417,7 @@ public partial class MainViewModel : ObservableObject
     {
         _app.DefaultSrModel = SrModel;
         _app.DefaultIfModel = IfModel;
+        _app.DefaultIfEngine = IfEngine;
         _app.DefaultSrScale = SrScale;
         _app.DefaultIfMultiplier = IfMultiplier;
         _settings.Save(_app, _pathConfig);
