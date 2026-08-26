@@ -9,7 +9,9 @@ namespace Easy4K.Services.CommandBuilders;
 /// 模型命名：realesr-animevideov3 在不同 scale 下对应不同模型文件
 ///   -s 2 → realesr-animevideov3-x2
 ///   -s 3 → realesr-animevideov3-x3
-///   -s 4 → realesr-animevideov3-x4 / realesrgan-x4plus / realesrgan-x4plus-anime</summary>
+///   -s 4 → realesr-animevideov3-x4 / realesrgan-x4plus / realesrgan-x4plus-anime
+/// 模型路径：本工具版本忽略 -m 参数，始终从 exe 所在目录的 models\{模型名}.param 加载，
+/// 因此各模型的 .param/.bin 必须放在 models 根级（子目录形式不识别）。</summary>
 public static class RealEsrganCommandBuilder
 {
     /// <summary>构建超分命令。model 已是完整文件名（如 realesr-animevideov3-x2）。

@@ -7,14 +7,14 @@ namespace Easy4K.Services.CommandBuilders;
 /// 饱和度/对比度默认 200/200（规格书）。</summary>
 public static class NvEncCommandBuilder
 {
-    /// <summary>SDR → HDR10 转换。</summary>
+    /// <summary>SDR → HDR10 转换。saturation/contrast 按规格书钳制到 100-400。</summary>
     public static string Build(string inputVideo, string outputVideo, int saturation, int contrast)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(outputVideo)!);
 
         var args =
             $"-i \"{inputVideo}\" " +
-            $"--vpp-ngx-truehdr saturation={saturation},contrast={contrast} " +
+            $"--vpp-ngx-truehdr saturation={ClampParam(saturation)},contrast={ClampParam(contrast)} " +
             $"-c hevc --preset quality --profile main10 " +
             $"--lookahead 32 --aq-temporal " +
             $"--colormatrix bt2020nc --colorprim bt2020 --transfer smpte2084 " +

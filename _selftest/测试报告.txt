@@ -1,0 +1,88 @@
+Easy4K 全面测试报告
+================================
+测试时间: 2026-08-26
+测试机: Windows + AMD Radeon RX 580 (8GB)
+软件版本: 1.0.4 (appsettings.json)
+
+一、测试视频
+------------------------------------------------
+1. 桌面公开版: 彩条测试视频.mp4
+   - 640x360, 30fps, 10秒, h264 + AAC (440Hz音调)
+   - 注: 个别播放器显示9.967秒是"最后一帧PTS"显示特性, 文件实际时长10.0秒
+2. 软件自测版: _selftest\test_video.mp4 (2秒, 60帧, 带音频) / test_small.mp4 (0.5秒, 15帧)
+
+二、全部模型测试 (58个: 5超分 + 43 NCNN补帧 + 10 Offical补帧)
+------------------------------------------------
+结果: TOTAL=58  PASS=58  FAIL=0  (100%通过)
+
+超分模型 (5/5):
+  realesr-animevideov3-x2 / -x3 / -x4
+  realesrgan-x4plus / realesrgan-x4plus-anime
+
+NCNN 补帧模型 (43/43):
+  rife-v2 / v2.3 / v2.4 / v3.0 / v3.1 / v3.6 / v3.9 / v4 / v4.1 ~ v4.26 及 lite/heavy/large 变体
+
+Offical 补帧模型 (10/10):
+  official_2.3 / 4.6 / 4.8 / 4.9 / 4.15 / 4.18 / 4.22 / 4.26 / 4.26_heavy
+  rpr_v7_2.3
+
+三、软件端端到端测试 (前台软件实际运行)
+------------------------------------------------
+1) NCNN 完整流程 (掩码31: 拆帧+超分+补帧+合并+音频)
+   输入: test_video.mp4 (640x360 30fps 60帧 带音频)
+   过程: 拆帧60帧 -> 超分x4plus×4 (2560x1440) 60帧 -> 补帧rife-v4.6×2 120帧
+         -> 合并(libx265) -> 嵌入原音频 (PCM 2.0 24bit 96kHz)
+   输出: test_video_2560x1440_60fps_SDR_音频嵌入.mkv (hevc 2560x1440 60fps + pcm_s24le)
+   结果: PASS (报告无错误)
+
+2) Offical 引擎流程 (掩码12: 补帧+合并)
+   输入: test_small.mp4 (15帧, 无音频)
+   过程: 拆帧15帧 -> 补帧official_4.26×2 -> 29帧 -> 合并
+   输出: test_small_640x360_60fps_SDR.mkv
+   结果: PASS
+   说明: AMD 卡无 CUDA, Offical 自动降级 CPU 推理 (正常预期, 有提示)
+
+四、发现并修复的问题
+------------------------------------------------
+1. [严重] 超分子目录模型加载失败
+   - 现象: realesr-animevideov3-x3/x4、realesrgan-x4plus、x4plus-anime 全部无法加载
+   - 根因: 随附的 realesrgan-ncnn-vulkan 版本忽略 -m 参数, 始终从 exe 旁
+           models\{模型名}.param 根级加载; 这些模型的 param/bin 却在子目录
+   - 修复: 把 4 个模型的 .param/.bin 复制到 models 根级; 移除 C# 中无效的 -m 逻辑
+   - 验证: 58/58 全部通过
+
+2. [严重] rpr_v7_2.3 张量不匹配
+   - 现象: "Sizes of tensors must match... Expected 360 but got 368"
+   - 根因: IFNet_v7_multi 内部把输入对齐到 16 的倍数但返回未裁剪帧
+   - 修复: run.py 对 rpr_v7 手动 pad 到 16 对齐, 输出经 save_frame 裁回原尺寸
+   - 验证: rpr_v7_2.3 输出 5 帧成功
+
+3. [中] NvEnc HDR 参数钳制未生效
+   - 现象: NvEncCommandBuilder.ClampParam(100-400) 从未被调用,
+           UI 允许 0-200, 用户调到 0-99 会传给 NVEncC truehdr 导致失败
+   - 修复: Build 内对 saturation/contrast 使用 ClampParam 钳制到 100-400
+
+4. [低] RealEsrganCommandBuilder 字符串转义错误
+   - 现象: 编译报 CS1002 (双引号未转义), 该修复代码从未编译通过
+   - 修复: 转义字符串插值中的双引号
+
+五、静态审查结论
+------------------------------------------------
+- 处理流水线 (拆帧/超分/补帧/合并/HDR/音频/回退): 逻辑完整
+  * 拆帧 GPU 加速失败自动回退 CPU 并提示
+  * 超分/补帧显卡错误自动单线程降级重试, 安全帧率可自动停止
+  * rife-v4.25/v4.26 不受命令行版支持时自动回退 v4.6
+  * 合并硬件编码失败自动回退 CPU libx265
+  * 阶段完成后崩溃重跑自动跳过已完成步骤
+- UI/导航/菜单/快捷键/清理/缓存检测/配置持久化: 正常
+  * 处理中菜单清理项禁用, 完成后恢复
+  * 临时目录缓存来源与当前视频不符时弹窗拦截
+  * 模型/倍率/引擎选择即时保存到 appsettings
+  * v2/v3 老模型倍率锁定 x2, 其他可用
+- 构建产物: 版本1.0.4, 语言仅保留 zh-CN/zh-TW,
+  Tools 自包含 (FFmpeg/NVEncC/officalrife+便携python/realesrgan/rife)
+
+六、部署提醒
+------------------------------------------------
+realesrgan 模型的 .param/.bin 必须放置在 realesrgan-ncnn\models\ 根级
+(随附工具版本忽略 -m 参数, 不识别子目录形式), 否则 x3/x4/x4plus 等模型无法加载。
