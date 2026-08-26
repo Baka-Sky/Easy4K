@@ -716,14 +716,20 @@ public partial class MainViewModel : ObservableObject
     partial void OnIfModelChanged(string value)
     {
         // v2/v3 老模型仅支持 2 倍补帧：锁定倍率并强制 x2；模型即时保存到配置
-        var oldModel = IfEngine != "Offical"
-            && value.StartsWith("rife-v", StringComparison.OrdinalIgnoreCase)
-            && !value.StartsWith("rife-v4", StringComparison.OrdinalIgnoreCase);
-        IfMultiplierLocked = oldModel;
-        if (oldModel && IfMultiplier != 2) IfMultiplier = 2;
+        RefreshIfMultiplierLock(value);
         _app.DefaultIfModel = value;
         _settings.Save(_app, _pathConfig);
         UpdateWarnings();
+    }
+
+    /// <summary>v2/v3 老模型仅支持 2 倍补帧：锁定倍率并强制 x2（显式调用，不依赖属性通知时序）</summary>
+    public void RefreshIfMultiplierLock(string model)
+    {
+        var oldModel = IfEngine != "Offical"
+            && model.StartsWith("rife-v", StringComparison.OrdinalIgnoreCase)
+            && !model.StartsWith("rife-v4", StringComparison.OrdinalIgnoreCase);
+        IfMultiplierLocked = oldModel;
+        if (oldModel && IfMultiplier != 2) IfMultiplier = 2;
     }
 
     partial void OnSrModelChanged(string value)

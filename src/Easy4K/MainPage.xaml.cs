@@ -62,6 +62,7 @@ public sealed partial class MainPage : Page
         }
         IfModelCombo.SelectedItem = selected;
         Vm.IfModel = selected;
+        Vm.RefreshIfMultiplierLock(selected); // 重建后显式刷新倍率锁定（v2/v3 老模型禁用倍率）
         IfModelCombo.SelectionChanged += OnIfModelSelectionChanged;
     }
 
@@ -78,7 +79,9 @@ public sealed partial class MainPage : Page
 
     private void OnIfModelSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        Vm.IfModel = IfModelCombo.SelectedItem is string s ? s : "";
+        var m = IfModelCombo.SelectedItem is string s ? s : "";
+        if (m != Vm.IfModel) Vm.IfModel = m;
+        Vm.RefreshIfMultiplierLock(m); // 切换模型后显式刷新倍率锁定
     }
 
     /// <summary>种类旁的 Info 图标点击 → 详细讲解 NCNN / Offical 及兼容性</summary>
