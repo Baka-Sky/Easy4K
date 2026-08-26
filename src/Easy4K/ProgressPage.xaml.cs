@@ -23,6 +23,16 @@ public sealed partial class ProgressPage : Page
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        // 回填订阅前已产生的日志（重新启动时"开始处理/命令"等开头几行可能在订阅前写入，避免丢失）
+        try
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var entry in Vm.Logger.LogEntries)
+                sb.AppendLine(entry.LogText);
+            CommandLogBox.Text = sb.ToString().TrimEnd('\r', '\n');
+            if (CommandLogBox.Text.Length > 0) DispatcherQueue.TryEnqueue(ScrollLogToBottom);
+        }
+        catch { }
         Vm.ProgressChanged += OnProgress;
         Vm.ProcessingCompleted += OnProcessingCompleted;
         Vm.CleanRequested += OnCleanRequested;

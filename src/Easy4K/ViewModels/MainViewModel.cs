@@ -198,6 +198,10 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(FinalOutputName))]
     private int _ifMultiplier = 2;
 
+    /// <summary>补帧倍率是否锁定（v2/v3 老模型仅支持 x2 时禁用倍率下拉框）</summary>
+    [ObservableProperty]
+    private bool _ifMultiplierLocked;
+
     [ObservableProperty] private string _ifModel = "";
 
     /// <summary>补帧模型种类："NCNN"（rife-ncnn-vulkan）或 "Offical"（PyTorch pkl 模型）</summary>
@@ -702,13 +706,37 @@ public partial class MainViewModel : ObservableObject
         UpdateWarnings();
     }
 
-    partial void OnIfMultiplierChanged(int value) => UpdateWarnings();
+    partial void OnIfMultiplierChanged(int value)
+    {
+        _app.DefaultIfMultiplier = value;
+        _settings.Save(_app, _pathConfig);
+        UpdateWarnings();
+    }
 
-    partial void OnIfModelChanged(string value) => UpdateWarnings();
+    partial void OnIfModelChanged(string value)
+    {
+        // v2/v3 老模型仅支持 2 倍补帧：锁定倍率并强制 x2；模型即时保存到配置
+        var oldModel = IfEngine != "Offical"
+            && value.StartsWith("rife-v", StringComparison.OrdinalIgnoreCase)
+            && !value.StartsWith("rife-v4", StringComparison.OrdinalIgnoreCase);
+        IfMultiplierLocked = oldModel;
+        if (oldModel && IfMultiplier != 2) IfMultiplier = 2;
+        _app.DefaultIfModel = value;
+        _settings.Save(_app, _pathConfig);
+        UpdateWarnings();
+    }
+
+    partial void OnSrModelChanged(string value)
+    {
+        _app.DefaultSrModel = value;
+        _settings.Save(_app, _pathConfig);
+    }
 
     partial void OnSrScaleChanged(int value)
     {
         RefreshSrModels();
+        _app.DefaultSrScale = value;
+        _settings.Save(_app, _pathConfig);
         UpdateWarnings();
     }
 

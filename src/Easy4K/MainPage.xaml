@@ -200,7 +200,7 @@
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="倍率" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
-                                <ComboBox Grid.Column="1" SelectedItem="{x:Bind Vm.IfMultiplier, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" Style="{StaticResource GlassComboBox}">
+                                <ComboBox Grid.Column="1" SelectedItem="{x:Bind Vm.IfMultiplier, Mode=TwoWay}" IsEnabled="{x:Bind Vm.IfMultiplierLocked, Mode=OneWay}" MinWidth="200" HorizontalAlignment="Stretch" Style="{StaticResource GlassComboBox}">
                                     <x:Int32>2</x:Int32>
                                     <x:Int32>3</x:Int32>
                                     <x:Int32>4</x:Int32>
