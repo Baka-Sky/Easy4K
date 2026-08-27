@@ -39,8 +39,9 @@ public partial class MainViewModel : ObservableObject
     public event Action? ProcessingStarted;
     /// <summary>处理结束（含结果，用于弹完成窗体）</summary>
     public event Action<ProcessingResult>? ProcessingCompleted;
-    /// <summary>临时目录缓存与当前视频不符（UI 弹窗引导重新选择/清理）</summary>
-    public event Action? TempCacheMismatchDetected;
+    /// <summary>临时目录缓存与当前视频不符（UI 弹窗引导重新选择/清理）。
+    /// 参数 true = 点击"开始处理"时触发（累计愤怒警告计数）；false = 选视频/换目录时触发（只弹普通提示）。</summary>
+    public event Action<bool>? TempCacheMismatchDetected;
     /// <summary>清理临时文件时请求 UI 释放预览帧句柄（Image.Source 不清空会锁住帧文件删不掉）</summary>
     public event Action? CleanRequested;
 
@@ -568,7 +569,7 @@ public partial class MainViewModel : ObservableObject
             if (cstatus == TempCacheStatus.Mismatch)
             {
                 _logger.Warn($"临时目录缓存来自其他视频（{csource}），处理当前视频前请更换临时目录或清理缓存");
-                TempCacheMismatchDetected?.Invoke();
+                TempCacheMismatchDetected?.Invoke(false); // 选视频触发：只弹普通提示，不计入愤怒计数
             }
         }, TaskScheduler.FromCurrentSynchronizationContext());
     }
@@ -900,7 +901,7 @@ public partial class MainViewModel : ObservableObject
         if (cacheStatus == TempCacheStatus.Mismatch)
         {
             _logger.Error($"临时目录缓存与当前视频不符（缓存来源：{cacheSource}），请重新选择临时目录或清理缓存后再启动");
-            TempCacheMismatchDetected?.Invoke();
+            TempCacheMismatchDetected?.Invoke(true); // 点击开始处理触发：累计愤怒警告计数
             return;
         }
 
