@@ -187,14 +187,14 @@ public sealed class ProcessingOrchestrator
                 var exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中", totalFrames,
                     ctx.Tools.RealEsrganExe, args, srFrames, ct);
                 // 捆绑的 realesrgan-ncnn-vulkan 构建不支持 CPU（-g -1 报 invalid gpu device）：
-                // CPU 模式下超分失败时自动回退 GPU 处理，避免整个任务卡死（补帧阶段仍会正常走 CPU）
+                // CPU 模式下超分失败时自动升级 GPU 处理，避免整个任务卡死（补帧阶段仍会正常走 CPU）
                 if (exit != 0 && cpu && _lastStderr.Contains("invalid gpu device", StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.Warn("超分不支持 CPU 推理（realesrgan-ncnn 无 CPU 后端），已自动回退 GPU 处理");
+                    _logger.Warn("超分不支持 CPU 推理（realesrgan-ncnn 无 CPU 后端），已升级为 GPU 处理");
                     CleanPartialOutput(srFrames);
                     var cpuFallbackArgs = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, jThreads, useCpu: false);
-                    _logger.Command($"realesrgan-ncnn-vulkan {cpuFallbackArgs}（CPU 回退 GPU）");
-                    exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中(CPU回退)", totalFrames,
+                    _logger.Command($"realesrgan-ncnn-vulkan {cpuFallbackArgs}（CPU 升级 GPU）");
+                    exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中(升级GPU)", totalFrames,
                         ctx.Tools.RealEsrganExe, cpuFallbackArgs, srFrames, ct);
                 }
                 if (exit != 0)
