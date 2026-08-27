@@ -1,0 +1,74 @@
+[2026-08-27 22:55:43] [WARN] 当前显卡 Radeon RX 580 Series 非 RTX 系列，HDR 转换已自动禁用
+[2026-08-27 22:55:45] [INFO] === 自测模式启动: i:\Easy4K\_selftest\test_video.mp4 (掩码 12) ===
+[2026-08-27 22:55:46] [SUCCESS] 已清理 7 项中间产物: I:\Easy4K\src\Easy4K\bin\Release\net10.0-windows10.0.26100.0\win-x64\Temp
+[2026-08-27 22:55:46] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
+[2026-08-27 22:55:46] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
+[2026-08-27 22:55:46] [INFO] 自测[12]: 拆帧+补帧×2+合并
+[2026-08-27 22:55:46] [INFO] 开始处理: test_video.mp4
+[2026-08-27 22:55:46] [INFO] 处理参数: 超分 realesr-animevideov3-x2 ×2 / 补帧引擎 Offical / 补帧模型 official_4.6 ×2
+[2026-08-27 22:55:46] [WARN] 已开启 CPU 处理模式：超分/补帧模型将全部使用 CPU 推理，速度会大幅下降
+[2026-08-27 22:55:46] [INFO] 开始拆帧: test_video.mp4
+[2026-08-27 22:55:46] [CMD] ffmpeg -y -hwaccel auto -i "i:\Easy4K\_selftest\test_video.mp4" -q:v 2 -vsync 0 "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png"
+[2026-08-27 22:55:47] [INFO] 拆帧中 已处理 60/60
+[2026-08-27 22:55:47] [INFO] ffmpeg.exe 输出:
+...) -> png (native))
+Press [q] to stop, [?] for help
+Output #0, image2, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.100
+  Stream #0:0(und): Video: png, rgb24(pc, gbr/unknown/unknown, progressive), 640x360 [SAR 1:1 DAR 16:9], q=2-31, 200 kb/s, 30 fps, 30 tbn (default)
+    Metadata:
+      encoder         : Lavc62.28.100 png
+      handler_name    : VideoHandler
+[out#0/image2 @ 0000017e30517580] video:3389KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=   60 fps=0.0 q=-0.0 Lsize=N/A time=00:00:02.00 bitrate=N/A speed=11.4x elapsed=0:00:00.17
+[2026-08-27 22:55:47] [SUCCESS] 拆帧完成: 60 帧
+[2026-08-27 22:55:47] [INFO] 补帧开始(Offical): 模型 official_4.6 ×2 (30→60fps)（线程 2）
+[2026-08-27 22:55:47] [CMD] python "I:\Easy4K\src\Easy4K\bin\Release\net10.0-windows10.0.26100.0\win-x64\Tools\officalrife\run.py" -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/output_frames" -m "I:\Easy4K\src\Easy4K\bin\Release\net10.0-windows10.0.26100.0\win-x64\Tools\officalrife\models\official_4.6" -mult 2 -threads 2 -cpu
+[2026-08-27 22:55:51] [WARN] Offical 引擎未检测到可用 GPU（CUDA），本次补帧降级为 CPU 推理
+[2026-08-27 22:55:51] [INFO] 补帧中(Offical)（降级） 已处理 1/120 帧
+[2026-08-27 22:55:52] [INFO] 补帧中(Offical)（降级） 已处理 6/120 帧
+[2026-08-27 22:55:53] [INFO] 补帧中(Offical)（降级） 已处理 11/120 帧
+[2026-08-27 22:55:54] [INFO] 补帧中(Offical)（降级） 已处理 17/120 帧
+[2026-08-27 22:55:55] [INFO] 补帧中(Offical)（降级） 已处理 21/120 帧
+[2026-08-27 22:55:56] [INFO] 补帧中(Offical)（降级） 已处理 27/120 帧
+[2026-08-27 22:55:57] [INFO] 补帧中(Offical)（降级） 已处理 33/120 帧
+[2026-08-27 22:55:58] [INFO] 补帧中(Offical)（降级） 已处理 37/120 帧
+[2026-08-27 22:55:59] [INFO] 补帧中(Offical)（降级） 已处理 43/120 帧
+[2026-08-27 22:56:00] [INFO] 补帧中(Offical)（降级） 已处理 49/120 帧
+[2026-08-27 22:56:01] [INFO] 补帧中(Offical)（降级） 已处理 53/120 帧
+[2026-08-27 22:56:02] [INFO] 补帧中(Offical)（降级） 已处理 59/120 帧
+[2026-08-27 22:56:03] [INFO] 补帧中(Offical)（降级） 已处理 65/120 帧
+[2026-08-27 22:56:04] [INFO] 补帧中(Offical)（降级） 已处理 71/120 帧
+[2026-08-27 22:56:05] [INFO] 补帧中(Offical)（降级） 已处理 77/120 帧
+[2026-08-27 22:56:06] [INFO] 补帧中(Offical)（降级） 已处理 81/120 帧
+[2026-08-27 22:56:07] [INFO] 补帧中(Offical)（降级） 已处理 87/120 帧
+[2026-08-27 22:56:08] [INFO] 补帧中(Offical)（降级） 已处理 93/120 帧
+[2026-08-27 22:56:09] [INFO] 补帧中(Offical)（降级） 已处理 99/120 帧
+[2026-08-27 22:56:10] [INFO] 补帧中(Offical)（降级） 已处理 104/120 帧
+[2026-08-27 22:56:11] [INFO] 补帧中(Offical)（降级） 已处理 109/120 帧
+[2026-08-27 22:56:13] [INFO] 补帧中(Offical)（降级） 已处理 115/120 帧
+[2026-08-27 22:56:14] [INFO] 补帧中(Offical)（降级） 已处理 119/120 帧
+[2026-08-27 22:56:14] [SUCCESS] 补帧完成(Offical): 119 帧
+[2026-08-27 22:56:14] [INFO] 开始合并视频（编码：GPU hevc_amf）
+[2026-08-27 22:56:14] [CMD] ffmpeg -y -framerate 60 -start_number 1 -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/output_frames/%08d.png" -c:v hevc_amf -quality quality -rc cqp -qp_i 18 -qp_p 18 -threads 0 -pix_fmt yuv420p -an "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv"
+[2026-08-27 22:56:14] [INFO] 合并中 已处理 119/120
+[2026-08-27 22:56:14] [INFO] ffmpeg.exe 输出:
+... 60 tbr, 60 tbn
+Stream mapping:
+  Stream #0:0 -> #0:0 (png (native) -> hevc (hevc_amf))
+Press [q] to stop, [?] for help
+[hevc_amf @ 000001e25b57e2c0] VBAQ is not supported by cqp Rate Control Method, automatically disabled
+Output #0, matroska, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv':
+  Metadata:
+    encoder         : Lavf62.12.100
+  Stream #0:0: Video: hevc, yuv420p(tv, progressive), 640x360, q=2-31, 60 fps, 1k tbn
+    Metadata:
+      encoder         : Lavc62.28.100 hevc_amf
+[out#0/matroska @ 000001e25b57bec0] video:937KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.172052%
+frame=  119 fps=0.0 q=-0.0 Lsize=     938KiB time=00:00:01.96 bitrate=3907.8kbits/s speed=4.32x elapsed=0:00:00.45
+[2026-08-27 22:56:14] [SUCCESS] 合并视频完成
+[2026-08-27 22:56:14] [SUCCESS] 全部完成！输出: I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Output/test_video_640x360_60fps_SDR.mkv

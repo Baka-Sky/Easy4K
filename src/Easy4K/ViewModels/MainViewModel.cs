@@ -82,6 +82,7 @@ public partial class MainViewModel : ObservableObject
         _useSafeFrameRate = app.UseSafeFrameRate;
         _lowerQualityForVram = app.LowerQualityForVram;
         _useGpuAcceleration = app.UseGpuAcceleration;
+        _useCpuProcessing = app.UseCpuProcessing;
         _threadCount = Math.Clamp(app.ThreadCount, 1, 32);
         _hdrSaturation = Math.Clamp(app.HdrSaturation, 0, 200);
         _hdrContrast = Math.Clamp(app.HdrContrast, 0, 200);
@@ -258,6 +259,10 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _useGpuAcceleration = true;
 
+    /// <summary>使用 CPU 处理所有模型（超分/补帧 NCNN -g -1、Offical 强制 CPU），速度慢</summary>
+    [ObservableProperty]
+    private bool _useCpuProcessing;
+
     /// <summary>是否显示图片预览（处理中可随时开关）</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PreviewHintText))]
@@ -298,6 +303,13 @@ public partial class MainViewModel : ObservableObject
     {
         _app.UseGpuAcceleration = value;
         _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnUseCpuProcessingChanged(bool value)
+    {
+        _app.UseCpuProcessing = value;
+        _settings.Save(_app, _pathConfig);
+        _logger.Info(value ? "已开启 CPU 处理模式：超分/补帧模型将全部使用 CPU 推理" : "已关闭 CPU 处理模式");
     }
 
     partial void OnThreadCountChanged(int value)
@@ -1053,7 +1065,7 @@ public partial class MainViewModel : ObservableObject
         try
         {
             _logger.Info($"=== 自测模式启动: {videoPath} (掩码 {stages}) ===");
-            SuppressCompletionDialog = true; // 自测自动化不弹完成窗体
+            SuppressCompletionDialog = true;
             CleanTemp(); // 清理上次残留帧，避免旧帧干扰本次自测
             await SetInputVideoAsync(videoPath);
             await Task.Delay(300); // 等视频检测完成
@@ -1103,8 +1115,9 @@ public partial class MainViewModel : ObservableObject
         {
             _logger.Error($"写入自测报告失败: {ex.Message}");
         }
-        // 稍等让日志/文件落地后退出
-        var _ = Task.Delay(800).ContinueWith(_ => Application.Current?.Exit(), TaskScheduler.Default);
+        // 自测模式用 Environment.Exit 强制退出：Application.Exit() 会被窗口关闭拦截器
+        // （OnAppWindowClosing 先 args.Cancel=true 再异步确认）吞掉，导致进程残留不退出
+        var _ = Task.Delay(500).ContinueWith(_ => Environment.Exit(0), TaskScheduler.Default);
     }
 
     /// <summary>清理临时中间产物（当前 TempRoot）。只删除本软件已知的帧目录/中间文件，

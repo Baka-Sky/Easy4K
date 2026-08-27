@@ -34,7 +34,6 @@ public sealed partial class ProgressPage : Page
         }
         catch { }
         Vm.ProgressChanged += OnProgress;
-        Vm.ProcessingCompleted += OnProcessingCompleted;
         Vm.CleanRequested += OnCleanRequested;
         Vm.Logger.EntryAdded += OnLogEntryAdded;
         Vm.PropertyChanged += OnVmPropertyChanged;
@@ -44,7 +43,6 @@ public sealed partial class ProgressPage : Page
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         Vm.ProgressChanged -= OnProgress;
-        Vm.ProcessingCompleted -= OnProcessingCompleted;
         Vm.CleanRequested -= OnCleanRequested;
         Vm.Logger.EntryAdded -= OnLogEntryAdded;
         Vm.PropertyChanged -= OnVmPropertyChanged;
@@ -183,61 +181,6 @@ public sealed partial class ProgressPage : Page
         }
         catch { }
     }
-
-    private void OnProcessingCompleted(ProcessingResult r)
-    {
-        DispatcherQueue.TryEnqueue(() => _ = ShowCompleteDialogAsync(r));
-    }
-
-    /// <summary>弹"当前任务已完成"窗体：绿勾 + 产出路径 + 步骤 + 耗时 + 是否清理冗余文件。
-    /// 清理在后台线程执行（大量中间文件递归删除会冻结 UI，之前点"是"卡死就是这原因）。</summary>
-    private async Task ShowCompleteDialogAsync(ProcessingResult r)
-    {
-        var check = new FontIcon
-        {
-            Glyph = "\uE73E",
-            FontSize = 48,
-            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 80, 200, 100))
-        };
-
-        var panel = new StackPanel { Spacing = 10, MinWidth = 360 };
-        panel.Children.Add(new StackPanel
-        {
-            Spacing = 4,
-            Children =
-            {
-                check,
-                new TextBlock { Text = "当前任务已完成!", FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center }
-            }
-        });
-        panel.Children.Add(new TextBlock { Text = $"文件产出在：{r.OutputPath}", TextWrapping = TextWrapping.Wrap, FontSize = 13 });
-        panel.Children.Add(new TextBlock { Text = $"进行步骤：{r.StepsText}", TextWrapping = TextWrapping.Wrap, FontSize = 13 });
-        panel.Children.Add(new TextBlock { Text = $"总耗时：{FormatElapsed(r.Elapsed)}", FontSize = 13 });
-        panel.Children.Add(new TextBlock { Text = "是否清理冗余文件?", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 13 });
-
-        var dlg = new ContentDialog
-        {
-            Title = "完成",
-            Content = panel,
-            PrimaryButtonText = "是",
-            SecondaryButtonText = "否",
-            CloseButtonText = "取消",
-            XamlRoot = XamlRoot,
-            DefaultButton = ContentDialogButton.Primary
-        };
-
-        var result = await dlg.ShowAsync();
-        if (result == ContentDialogResult.Primary)
-        {
-            // 后台清理，主页顶部进度条显示进度（不阻塞 UI）
-            await Vm.CleanTempInAsync(Vm.TempRoot);
-        }
-    }
-
-    private static string FormatElapsed(TimeSpan t)
-        => t.TotalHours >= 1 ? $"{(int)t.TotalHours}小时{t.Minutes}分{t.Seconds}秒"
-           : t.TotalMinutes >= 1 ? $"{t.Minutes}分{t.Seconds}秒"
-           : $"{t.Seconds}秒";
 
     private void OnStop(object sender, RoutedEventArgs e) => Vm.Stop();
     private void OnCopyLog(object sender, RoutedEventArgs e) => Vm.CopyLog();

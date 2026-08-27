@@ -29,15 +29,36 @@ public sealed partial class MainPage : Page
     /// <summary>警告弹窗是否已打开（防止拖动期间重复弹）</summary>
     private bool _threadDialogOpen;
 
+    /// <summary>CPU 模式警告弹窗是否已打开（防止重复弹）</summary>
+    private bool _cpuDialogOpen;
+
+    /// <summary>标记当前是否处于页面加载恢复状态（true = 从 config 恢复 UseCpuProcessing，跳过弹窗）</summary>
+    private bool _cpuDialogFromLoad;
+
     public MainPage()
     {
         InitializeComponent();
         _lastConfirmedThreads = Vm.ThreadCount;
         // 引擎/模型属性变化兜底：即使下拉框 SelectionChanged 未触发，也重建模型列表/刷新倍率锁定
-        Loaded += (_, _) => Vm.PropertyChanged += OnVmPropertyChanged;
+        Loaded += (_, _) =>
+        {
+            _cpuDialogFromLoad = true;
+            Vm.PropertyChanged += OnVmPropertyChanged;
+            UpdateCpuDependentCheckBoxes();
+            _cpuDialogFromLoad = false;
+        };
         Unloaded += (_, _) => Vm.PropertyChanged -= OnVmPropertyChanged;
         // 初始填充模型下拉框（引擎变化后也走 ReloadIfModelCombo）
         ReloadIfModelCombo();
+    }
+
+    /// <summary>CPU 处理模式开启/关闭时，禁用/启用安全帧率、降低画质、GPU加速三个选项。</summary>
+    private void UpdateCpuDependentCheckBoxes()
+    {
+        var enabled = !Vm.UseCpuProcessing;
+        SafeFrameRateCb.IsEnabled = enabled;
+        LowerQualityCb.IsEnabled = enabled;
+        GpuAccelerationCb.IsEnabled = enabled;
     }
 
     /// <summary>VM 属性兜底：引擎变化 → 重建模型下拉框；模型变化 → 刷新倍率锁定。</summary>
@@ -47,6 +68,8 @@ public sealed partial class MainPage : Page
             ReloadIfModelCombo();
         else if (e.PropertyName == nameof(Vm.IfModel))
             Vm.RefreshIfMultiplierLock(Vm.IfModel);
+        else if (e.PropertyName == nameof(Vm.UseCpuProcessing))
+            UpdateCpuDependentCheckBoxes();
     }
 
     // ===================== 补帧模型选择（重写：整体重建下拉框，避开 ComboBox 绑定联动 0x80070490 闪退） =====================
@@ -200,6 +223,39 @@ public sealed partial class MainPage : Page
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern uint SendInput(uint nInputs, NativeInput[] pInputs, int cbSize);
+
+    /// <summary>勾选"使用CPU处理所有模型"时弹窗警告不建议开启；用户拒绝则回退取消勾选。
+    /// CPU 推理速度远慢于 GPU（超分/补帧可能慢 10 倍以上），仅显卡不可用/不稳定时才建议使用。
+    /// _cpuDialogFromLoad=true 时跳过弹窗（从 config 恢复/页面切换时不重复触发）。</summary>
+    private async void OnUseCpuProcessingChecked(object sender, RoutedEventArgs e)
+    {
+        if (_cpuDialogFromLoad) return; // 页面加载/切换恢复 config 值，不弹窗
+        if (_cpuDialogOpen) return;
+        _cpuDialogOpen = true;
+        try
+        {
+            var dlg = new ContentDialog
+            {
+                Title = "不建议开启 CPU 处理",
+                Content = "开启后所有模型（超分/补帧）将使用 CPU 推理，处理速度会大幅下降（可能比 GPU 慢 10 倍以上）。\n\n" +
+                          "仅在显卡不可用（驱动故障/设备丢失）或不稳定时才建议开启。确定要继续吗？",
+                PrimaryButtonText = "继续开启",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Close, // 默认取消更安全
+                XamlRoot = XamlRoot
+            };
+            var result = await dlg.ShowAsync();
+            if (result != ContentDialogResult.Primary)
+            {
+                // 拒绝 → 回退取消勾选（TwoWay 绑定同步关闭）
+                Vm.UseCpuProcessing = false;
+            }
+        }
+        finally
+        {
+            _cpuDialogOpen = false;
+        }
+    }
 
     // ===================== 文件 / 目录选择 =====================
 
@@ -413,6 +469,20 @@ public sealed partial class MainPage : Page
         {
             await ShowFrameParamsDialogAsync();
             if (Vm.Video is null || !Vm.Video.IsValid) return; // 未确认参数，不启动
+        }
+        // CPU 模式最终警告：每次启动处理前再次确认（防止误操作）
+        if (Vm.UseCpuProcessing)
+        {
+            var dlg = new ContentDialog
+            {
+                Title = "不建议开启 CPU 处理",
+                Content = "当前已开启 CPU 处理模式，所有模型将使用 CPU 推理，处理速度会大幅下降（可能比 GPU 慢 10 倍以上）。\n\n确定要以 CPU 模式启动处理吗？",
+                PrimaryButtonText = "继续处理",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = XamlRoot
+            };
+            if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         }
         await Vm.StartAsync();
     }

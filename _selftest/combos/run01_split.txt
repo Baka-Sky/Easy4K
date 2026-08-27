@@ -1,0 +1,29 @@
+[2026-08-27 22:52:08] [WARN] 当前显卡 Radeon RX 580 Series 非 RTX 系列，HDR 转换已自动禁用
+[2026-08-27 22:52:10] [INFO] === 自测模式启动: i:\Easy4K\_selftest\test_video.mp4 (掩码 1) ===
+[2026-08-27 22:52:11] [SUCCESS] 已清理 2 项中间产物: I:\Easy4K\src\Easy4K\bin\Release\net10.0-windows10.0.26100.0\win-x64\Temp
+[2026-08-27 22:52:11] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
+[2026-08-27 22:52:11] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
+[2026-08-27 22:52:11] [INFO] 自测[1]: 拆帧
+[2026-08-27 22:52:11] [INFO] 开始处理: test_video.mp4
+[2026-08-27 22:52:11] [INFO] 处理参数: 超分 realesr-animevideov3-x2 ×2 / 补帧引擎 NCNN / 补帧模型 rife-v4.6 ×2
+[2026-08-27 22:52:11] [WARN] 已开启 CPU 处理模式：超分/补帧模型将全部使用 CPU 推理，速度会大幅下降
+[2026-08-27 22:52:11] [INFO] 开始拆帧: test_video.mp4
+[2026-08-27 22:52:11] [CMD] ffmpeg -y -i "i:\Easy4K\_selftest\test_video.mp4" -q:v 2 -vsync 0 "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png"
+[2026-08-27 22:52:11] [INFO] 拆帧中 已处理 60/60
+[2026-08-27 22:52:11] [INFO] ffmpeg.exe 输出:
+...) -> png (native))
+Press [q] to stop, [?] for help
+Output #0, image2, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.100
+  Stream #0:0(und): Video: png, rgb24(pc, gbr/unknown/unknown, progressive), 640x360 [SAR 1:1 DAR 16:9], q=2-31, 200 kb/s, 30 fps, 30 tbn (default)
+    Metadata:
+      encoder         : Lavc62.28.100 png
+      handler_name    : VideoHandler
+[out#0/image2 @ 0000017ae735d8c0] video:2995KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=   60 fps=0.0 q=-0.0 Lsize=N/A time=00:00:02.00 bitrate=N/A speed=19.8x elapsed=0:00:00.10
+[2026-08-27 22:52:11] [SUCCESS] 拆帧完成: 60 帧
+[2026-08-27 22:52:11] [INFO] 未勾选合并视频，跳过最终视频输出（中间帧保留在临时目录）

@@ -1,0 +1,173 @@
+[2026-08-27 22:52:38] [WARN] 当前显卡 Radeon RX 580 Series 非 RTX 系列，HDR 转换已自动禁用
+[2026-08-27 22:52:40] [INFO] === 自测模式启动: i:\Easy4K\_selftest\test_video.mp4 (掩码 15) ===
+[2026-08-27 22:52:40] [SUCCESS] 已清理 3 项中间产物: I:\Easy4K\src\Easy4K\bin\Release\net10.0-windows10.0.26100.0\win-x64\Temp
+[2026-08-27 22:52:40] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
+[2026-08-27 22:52:40] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
+[2026-08-27 22:52:41] [INFO] 自测[15]: 拆帧+超分×2+补帧×2+合并
+[2026-08-27 22:52:41] [INFO] 开始处理: test_video.mp4
+[2026-08-27 22:52:41] [INFO] 处理参数: 超分 realesr-animevideov3-x2 ×2 / 补帧引擎 NCNN / 补帧模型 rife-v4.6 ×2
+[2026-08-27 22:52:41] [INFO] 开始拆帧: test_video.mp4
+[2026-08-27 22:52:41] [CMD] ffmpeg -y -hwaccel auto -i "i:\Easy4K\_selftest\test_video.mp4" -q:v 2 -vsync 0 "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png"
+[2026-08-27 22:52:41] [INFO] 拆帧中 已处理 60/60
+[2026-08-27 22:52:41] [INFO] ffmpeg.exe 输出:
+...) -> png (native))
+Press [q] to stop, [?] for help
+Output #0, image2, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.100
+  Stream #0:0(und): Video: png, rgb24(pc, gbr/unknown/unknown, progressive), 640x360 [SAR 1:1 DAR 16:9], q=2-31, 200 kb/s, 30 fps, 30 tbn (default)
+    Metadata:
+      encoder         : Lavc62.28.100 png
+      handler_name    : VideoHandler
+[out#0/image2 @ 000001d5a45b7580] video:3389KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=   60 fps=0.0 q=-0.0 Lsize=N/A time=00:00:02.00 bitrate=N/A speed=12.2x elapsed=0:00:00.16
+[2026-08-27 22:52:41] [SUCCESS] 拆帧完成: 60 帧
+[2026-08-27 22:52:41] [INFO] 超分开始: 模型 realesr-animevideov3-x2 ×2（线程 1:2:2）
+[2026-08-27 22:52:41] [CMD] realesrgan-ncnn-vulkan -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/4k_frames" -n realesr-animevideov3-x2 -s 2 -g 0 -j 1:2:2
+[2026-08-27 22:52:42] [INFO] 超分中 已处理 0/60 帧
+[2026-08-27 22:52:43] [INFO] 超分中 已处理 6/60 帧
+[2026-08-27 22:52:44] [INFO] 超分中 已处理 12/60 帧
+[2026-08-27 22:52:45] [INFO] 超分中 已处理 18/60 帧
+[2026-08-27 22:52:46] [INFO] 超分中 已处理 24/60 帧
+[2026-08-27 22:52:47] [INFO] 超分中 已处理 30/60 帧
+[2026-08-27 22:52:48] [INFO] 超分中 已处理 36/60 帧
+[2026-08-27 22:52:49] [INFO] 超分中 已处理 42/60 帧
+[2026-08-27 22:52:50] [INFO] 超分中 已处理 48/60 帧
+[2026-08-27 22:52:51] [INFO] 超分中 已处理 54/60 帧
+[2026-08-27 22:52:52] [INFO] realesrgan-ncnn-vulkan.exe 输出:
+....50%
+62.50%
+75.00%
+75.00%
+87.50%
+87.50%
+0.00%
+0.00%
+12.50%
+12.50%
+25.00%
+25.00%
+37.50%
+37.50%
+50.00%
+50.00%
+62.50%
+62.50%
+75.00%
+75.00%
+87.50%
+87.50%
+0.00%
+0.00%
+12.50%
+12.50%
+25.00%
+25.00%
+37.50%
+37.50%
+50.00%
+50.00%
+62.50%
+62.50%
+75.00%
+75.00%
+87.50%
+87.50%
+0.00%
+0.00%
+12.50%
+12.50%
+25.00%
+25.00%
+37.50%
+37.50%
+50.00%
+50.00%
+62.50%
+62.50%
+75.00%
+75.00%
+87.50%
+87.50%
+0.00%
+0.00%
+12.50%
+12.50%
+25.00%
+25.00%
+37.50%
+37.50%
+50.00%
+50.00%
+62.50%
+62.50%
+75.00%
+75.00%
+87.50%
+87.50%
+0.00%
+0.00%
+12.50%
+12.50%
+25.00%
+25.00%
+37.50%
+37.50%
+50.00%
+50.00%
+62.50%
+62.50%
+75.00%
+75.00%
+87.50%
+87.50%
+0.00%
+0.00%
+12.50%
+12.50%
+25.00%
+25.00%
+37.50%
+37.50%
+50.00%
+50.00%
+62.50%
+62.50%
+75.00%
+75.00%
+87.50%
+87.50%
+[2026-08-27 22:52:52] [SUCCESS] 超分完成: 60 帧
+[2026-08-27 22:52:52] [INFO] 补帧开始: 模型 rife-v4.6 ×2 (30→60fps)（线程 1:2:2）
+[2026-08-27 22:52:52] [CMD] rife-ncnn-vulkan -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/4k_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/output_frames" -m rife-v4.6 -g 0 -n 120 -j 1:2:2
+[2026-08-27 22:52:53] [INFO] 补帧中 已处理 2/120 帧
+[2026-08-27 22:52:54] [INFO] 补帧中 已处理 32/120 帧
+[2026-08-27 22:52:55] [INFO] 补帧中 已处理 63/120 帧
+[2026-08-27 22:52:56] [INFO] 补帧中 已处理 94/120 帧
+[2026-08-27 22:52:57] [INFO] rife-ncnn-vulkan.exe 输出:
+[0 Radeon RX 580 Series]  queueC=1[2]  queueG=0[1]  queueT=2[2]
+[0 Radeon RX 580 Series]  bugsbn1=0  bugbilz=0  bugcopc=0  bugihfa=0
+[0 Radeon RX 580 Series]  fp16-p/s/a=1/1/0  int8-p/s/a=1/1/1
+[0 Radeon RX 580 Series]  subgroup=64  basic=1  vote=1  ballot=1  shuffle=1
+[2026-08-27 22:52:57] [SUCCESS] 补帧完成: 120 帧
+[2026-08-27 22:52:57] [INFO] 开始合并视频（编码：GPU hevc_amf）
+[2026-08-27 22:52:57] [CMD] ffmpeg -y -framerate 60 -start_number 1 -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/output_frames/%08d.png" -c:v hevc_amf -quality quality -rc cqp -qp_i 18 -qp_p 18 -threads 0 -pix_fmt yuv420p -an "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv"
+[2026-08-27 22:52:58] [INFO] 合并中 已处理 120/120
+[2026-08-27 22:52:58] [INFO] ffmpeg.exe 输出:
+...:
+  Stream #0:0 -> #0:0 (png (native) -> hevc (hevc_amf))
+Press [q] to stop, [?] for help
+[hevc_amf @ 00000245fd43eb00] VBAQ is not supported by cqp Rate Control Method, automatically disabled
+Output #0, matroska, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv':
+  Metadata:
+    encoder         : Lavf62.12.100
+  Stream #0:0: Video: hevc, yuv420p(tv, unknown/bt709/iec61966-2-1, progressive), 1280x720, q=2-31, 60 fps, 1k tbn
+    Metadata:
+      encoder         : Lavc62.28.100 hevc_amf
+[out#0/matroska @ 00000245fd43bec0] video:2612KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.066665%
+frame=  120 fps=0.0 q=-0.0 Lsize=    2614KiB time=00:00:01.98 bitrate=10795.4kbits/s speed=3.94x elapsed=0:00:00.50
+[2026-08-27 22:52:58] [SUCCESS] 合并视频完成
+[2026-08-27 22:52:58] [SUCCESS] 全部完成！输出: I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Output/test_video_1280x720_60fps_SDR.mkv

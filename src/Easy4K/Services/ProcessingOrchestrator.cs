@@ -69,6 +69,10 @@ public sealed class ProcessingOrchestrator
         var outFps = ctx.Options.Interpolation ? ctx.Video.FrameRate * ifMult : ctx.Video.FrameRate;
         var outWidth = ctx.Video.Width * (ctx.Options.SuperResolution ? ctx.SrScale : 1);
         var outHeight = ctx.Video.Height * (ctx.Options.SuperResolution ? ctx.SrScale : 1);
+        // CPU 处理模式：超分/补帧模型全部用 CPU 推理（NCNN -g -1 / Offical 强制 CPU）
+        var cpu = ctx.Settings.UseCpuProcessing;
+        if (cpu)
+            _logger.Warn("已开启 CPU 处理模式：超分/补帧模型将全部使用 CPU 推理，速度会大幅下降");
 
         // 高负载稳定性：预估磁盘占用，剩余空间过少时提前警告（几万帧 PNG 可能占用数十 GB）
         try
@@ -175,11 +179,24 @@ public sealed class ProcessingOrchestrator
                 // 线程由滑块控制（1:1:1 ~ 1:32:32）；安全帧率只负责"致命 GPU 错误自动停止"，不再强制单线程
                 var jThreads = $"1:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}";
                 _fatalGpuError = false;
-                _logger.Info($"超分开始: 模型 {ctx.SrModel} ×{ctx.SrScale}（线程 {jThreads}）");
-                var args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, jThreads);
+                _logger.Info(cpu
+                    ? $"超分开始(CPU): 模型 {ctx.SrModel} ×{ctx.SrScale}（线程 {jThreads}）"
+                    : $"超分开始: 模型 {ctx.SrModel} ×{ctx.SrScale}（线程 {jThreads}）");
+                var args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, jThreads, useCpu: cpu);
                 _logger.Command($"realesrgan-ncnn-vulkan {args}");
                 var exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中", totalFrames,
                     ctx.Tools.RealEsrganExe, args, srFrames, ct);
+                // 捆绑的 realesrgan-ncnn-vulkan 构建不支持 CPU（-g -1 报 invalid gpu device）：
+                // CPU 模式下超分失败时自动回退 GPU 处理，避免整个任务卡死（补帧阶段仍会正常走 CPU）
+                if (exit != 0 && cpu && _lastStderr.Contains("invalid gpu device", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.Warn("超分不支持 CPU 推理（realesrgan-ncnn 无 CPU 后端），已自动回退 GPU 处理");
+                    CleanPartialOutput(srFrames);
+                    var cpuFallbackArgs = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, jThreads, useCpu: false);
+                    _logger.Command($"realesrgan-ncnn-vulkan {cpuFallbackArgs}（CPU 回退 GPU）");
+                    exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中(CPU回退)", totalFrames,
+                        ctx.Tools.RealEsrganExe, cpuFallbackArgs, srFrames, ct);
+                }
                 if (exit != 0)
                 {
                     // 用户停止 → 抛取消异常由上层显示"处理已停止"；工具异常 → 本次停止，下次启动清理重跑
@@ -194,7 +211,7 @@ public sealed class ProcessingOrchestrator
                     {
                         _logger.Warn("检测到显卡错误（Vulkan 设备丢失/显存溢出），自动降级为单线程重试本次超分");
                         CleanPartialOutput(srFrames);
-                        var retryArgs = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, "1:1:1");
+                        var retryArgs = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, "1:1:1", useCpu: cpu);
                         _logger.Command($"realesrgan-ncnn-vulkan {retryArgs}（降级单线程重试）");
                         exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中(降级)", totalFrames,
                             ctx.Tools.RealEsrganExe, retryArgs, srFrames, ct);
@@ -245,10 +262,10 @@ public sealed class ProcessingOrchestrator
                     _fatalGpuError = false;
                     _logger.Info($"补帧开始(Offical): 模型 {ctx.IfModel} ×{ctx.IfMultiplier} ({ctx.Video.FrameRate:0.##}→{outFps:0.##}fps)（线程 {threads}）");
                     var oArgs = OfficalRifeCommandBuilder.Build(ctx.Tools.OfficalRifeRunPy, inputDirForIf, ifFrames, modelDir,
-                        ctx.IfMultiplier, threads, ctx.Settings.LowerQualityForVram);
+                        ctx.IfMultiplier, threads, ctx.Settings.LowerQualityForVram, ctx.Settings.UseCpuProcessing);
                     _logger.Command($"python {oArgs}");
                     var oExit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(Offical)", targetFrames,
-                        py, oArgs, ifFrames, ct);
+                        py, oArgs, ifFrames, ct, forcedCpu: cpu);
                     if (oExit != 0)
                     {
                         // 用户停止 → 抛取消异常由上层显示"处理已停止"；工具异常 → 本次停止，下次启动清理重跑
@@ -264,10 +281,10 @@ public sealed class ProcessingOrchestrator
                             _logger.Warn("检测到设备错误/内存溢出，自动降级为单线程重试本次补帧(Offical)");
                             CleanPartialOutput(ifFrames);
                             var retryArgs = OfficalRifeCommandBuilder.Build(ctx.Tools.OfficalRifeRunPy, inputDirForIf, ifFrames, modelDir,
-                                ctx.IfMultiplier, 1, ctx.Settings.LowerQualityForVram);
+                                ctx.IfMultiplier, 1, ctx.Settings.LowerQualityForVram, ctx.Settings.UseCpuProcessing);
                             _logger.Command($"python {retryArgs}（降级单线程重试）");
                             oExit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(Offical降级)", targetFrames,
-                                py, retryArgs, ifFrames, ct);
+                                py, retryArgs, ifFrames, ct, forcedCpu: cpu);
                             if (oExit != 0)
                             {
                                 ct.ThrowIfCancellationRequested();
@@ -289,7 +306,7 @@ public sealed class ProcessingOrchestrator
                     var jThreads = $"1:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}";
                     _fatalGpuError = false;
                     _logger.Info($"补帧开始: 模型 {ctx.IfModel} ×{ifMult} ({ctx.Video.FrameRate:0.##}→{outFps:0.##}fps)（线程 {jThreads}）");
-                    var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, targetFrames, jThreads);
+                    var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, targetFrames, jThreads, useCpu: cpu);
                     _logger.Command($"rife-ncnn-vulkan {args}");
                     var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中", targetFrames,
                         ctx.Tools.RifeExe, args, ifFrames, ct);
@@ -299,7 +316,7 @@ public sealed class ProcessingOrchestrator
                     {
                         _logger.Warn($"模型 {ctx.IfModel} 不被命令行版支持（BUG-04），自动切换为 rife-v4.6");
                         CleanPartialOutput(ifFrames);
-                        var args2 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, "rife-v4.6", ctx.IfMultiplier, targetFrames, jThreads);
+                        var args2 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, "rife-v4.6", ctx.IfMultiplier, targetFrames, jThreads, useCpu: cpu);
                         _logger.Command($"rife-ncnn-vulkan {args2}");
                         exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(回退v4.6)", targetFrames,
                             ctx.Tools.RifeExe, args2, ifFrames, ct);
@@ -318,7 +335,7 @@ public sealed class ProcessingOrchestrator
                         {
                             _logger.Warn("检测到显卡错误（Vulkan 设备丢失/显存溢出），自动降级为单线程重试本次补帧");
                             CleanPartialOutput(ifFrames);
-                            var retryArgs = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, targetFrames, "1:1:1", ctx.Settings.LowerQualityForVram);
+                            var retryArgs = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, targetFrames, "1:1:1", ctx.Settings.LowerQualityForVram, useCpu: cpu);
                             _logger.Command($"rife-ncnn-vulkan {retryArgs}（降级单线程重试）");
                             exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(降级)", targetFrames,
                                 ctx.Tools.RifeExe, retryArgs, ifFrames, ct);
@@ -611,9 +628,10 @@ public sealed class ProcessingOrchestrator
 
     /// <summary>运行一个只往目录写帧的工具（Real-ESRGAN / RIFE），
     /// 通过轮询输出目录帧数 + 解析 stderr 百分比来估算进度。
-    /// Real-ESRGAN 输出 0.00%~98.33% 的帧内 tile 进度；RIFE 无进度输出，仅靠帧数。</summary>
+    /// Real-ESRGAN 输出 0.00%~98.33% 的帧内 tile 进度；RIFE 无进度输出，仅靠帧数。
+    /// forcedCpu：CPU 处理模式开启时传入 true，Offical 的 [IF_DEVICE] cpu 提示改为"主动强制"而非"自动降级"。</summary>
     private async Task<int> RunStageWithDirectoryPolling(ProcessStage stage, string stageText, long total,
-        string exe, string args, string outputDir, CancellationToken ct)
+        string exe, string args, string outputDir, CancellationToken ct, bool forcedCpu = false)
     {
         var captured = new System.Text.StringBuilder();
         using var pollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -666,12 +684,20 @@ public sealed class ProcessingOrchestrator
         var exit = await _runner.RunAsync(exe, args,
             onLine: line =>
             {
-                // Offical run.py 打印 [IF_DEVICE] cpu/cuda：CUDA 不可用时降级 CPU，阶段文本标注（降级）
+                // Offical run.py 打印 [IF_DEVICE] cpu/cuda：未指定 -cpu 时 CUDA 不可用则自动降级 CPU；
+                // 指定 -cpu（CPU 处理模式）时属用户主动选择，提示语区分开，避免误导
                 if (!cpuDegraded && line.Contains("[IF_DEVICE] cpu", StringComparison.OrdinalIgnoreCase))
                 {
                     cpuDegraded = true;
-                    displayText = stageText + "（降级）";
-                    _logger.Warn("Offical 引擎未检测到可用 GPU（CUDA），本次补帧降级为 CPU 推理");
+                    if (forcedCpu)
+                    {
+                        _logger.Info("Offical 引擎已按 CPU 处理模式强制使用 CPU 推理");
+                    }
+                    else
+                    {
+                        displayText = stageText + "（降级）";
+                        _logger.Warn("Offical 引擎未检测到可用 GPU（CUDA），本次补帧降级为 CPU 推理");
+                    }
                 }
                 // 检测 Vulkan 设备丢失/显存溢出（线程过高压垮 GPU 或显存不足）。
                 // 一旦出现立即终止进程快速失败，避免工具反复刷错浪费时间

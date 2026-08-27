@@ -57,14 +57,15 @@ public sealed partial class MainWindow : Window
             });
         };
 
-        // 处理结束 → 隐藏导航按钮 + 切回主页
-        Vm.ProcessingCompleted += _ =>
+        // 处理结束 → 弹完成窗体（窗口级 XamlRoot，页面切换/卸载不影响）+ 隐藏导航按钮 + 切回主页
+        Vm.ProcessingCompleted += r =>
         {
             DispatcherQueue.TryEnqueue(() =>
             {
                 NavButtons.Visibility = Visibility.Collapsed;
                 CleanTempMenuItem.IsEnabled = true; // 处理结束恢复清理菜单
                 NavigateToHome();
+                _ = ShowCompletionDialogAsync(r);
             });
         };
 
@@ -160,6 +161,59 @@ public sealed partial class MainWindow : Window
 
     private void OnNavHome(object sender, RoutedEventArgs e) => NavigateToHome();
     private void OnNavProgress(object sender, RoutedEventArgs e) => NavigateToProgress();
+
+    // ===================== 完成弹窗 =====================
+
+    /// <summary>弹"当前任务已完成"窗体：绿勾 + 产出路径 + 步骤 + 耗时 + 是否清理冗余文件。
+    /// 用窗口级 XamlRoot（RootFrame.XamlRoot，不随页面导航卸载失效），处理完成自动切回主页后仍能正常弹出。
+    /// 清理在后台线程执行（大量中间文件递归删除会冻结 UI，之前点"是"卡死就是这原因）。</summary>
+    private async Task ShowCompletionDialogAsync(ProcessingResult r)
+    {
+        var check = new FontIcon
+        {
+            Glyph = "\uE73E",
+            FontSize = 48,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 80, 200, 100))
+        };
+
+        var panel = new StackPanel { Spacing = 10, MinWidth = 360 };
+        panel.Children.Add(new StackPanel
+        {
+            Spacing = 4,
+            Children =
+            {
+                check,
+                new TextBlock { Text = "当前任务已完成!", FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center }
+            }
+        });
+        panel.Children.Add(new TextBlock { Text = $"文件产出在：{r.OutputPath}", TextWrapping = TextWrapping.Wrap, FontSize = 13 });
+        panel.Children.Add(new TextBlock { Text = $"进行步骤：{r.StepsText}", TextWrapping = TextWrapping.Wrap, FontSize = 13 });
+        panel.Children.Add(new TextBlock { Text = $"总耗时：{FormatElapsed(r.Elapsed)}", FontSize = 13 });
+        panel.Children.Add(new TextBlock { Text = "是否清理冗余文件?", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 13 });
+
+        var dlg = new ContentDialog
+        {
+            Title = "完成",
+            Content = panel,
+            PrimaryButtonText = "是",
+            SecondaryButtonText = "否",
+            CloseButtonText = "取消",
+            XamlRoot = RootFrame.XamlRoot,
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        var result = await dlg.ShowAsync();
+        if (result == ContentDialogResult.Primary)
+        {
+            // 后台清理（主页顶部进度条显示清理进度，不阻塞 UI）
+            await Vm.CleanTempInAsync(Vm.TempRoot);
+        }
+    }
+
+    private static string FormatElapsed(TimeSpan t)
+        => t.TotalHours >= 1 ? $"{(int)t.TotalHours}小时{t.Minutes}分{t.Seconds}秒"
+           : t.TotalMinutes >= 1 ? $"{t.Minutes}分{t.Seconds}秒"
+           : $"{t.Seconds}秒";
 
     // ===================== 关闭拦截 =====================
 

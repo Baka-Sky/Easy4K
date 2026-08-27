@@ -22,6 +22,8 @@ public sealed class AppSettings
     public bool LowerQualityForVram { get; set; }
     /// <summary>使 FFmpeg 尝试使用 GPU 加速（拆帧解码 -hwaccel / 合并帧 GPU 编码器优先，失败自动回退 CPU）</summary>
     public bool UseGpuAcceleration { get; set; } = true;
+    /// <summary>使用 CPU 处理所有模型（超分/补帧 NCNN -g -1、Offical 强制 CPU），速度慢，仅在 GPU 不可用/不稳定时使用</summary>
+    public bool UseCpuProcessing { get; set; }
 
     /// <summary>HDR 转换饱和度（NVEncC --vpp-ngx-truehdr saturation，最高 200）</summary>
     public int HdrSaturation { get; set; } = 200;
