@@ -314,11 +314,11 @@ public sealed class ProcessingOrchestrator
                     // BUG-04：rife-v4.25/v4.26 命令行版会报 "layer MemoryData not exists" → 回退 v4.6
                     if (exit != 0 && _lastStderr.Contains("MemoryData not exists", StringComparison.OrdinalIgnoreCase))
                     {
-                        _logger.Warn($"模型 {ctx.IfModel} 不被命令行版支持（BUG-04），自动切换为 rife-v4.6");
+                        _logger.Warn($"模型 {ctx.IfModel} 不被命令行版支持，已因硬件原因回退至 rife-v4.6");
                         CleanPartialOutput(ifFrames);
                         var args2 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, "rife-v4.6", ctx.IfMultiplier, targetFrames, jThreads, useCpu: cpu);
-                        _logger.Command($"rife-ncnn-vulkan {args2}");
-                        exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(回退v4.6)", targetFrames,
+                        _logger.Command($"rife-ncnn-vulkan {args2}（因硬件原因回退至 rife-v4.6）");
+                        exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(因硬件原因回退至v4.6)", targetFrames,
                             ctx.Tools.RifeExe, args2, ifFrames, ct);
                     }
                     if (exit != 0)
