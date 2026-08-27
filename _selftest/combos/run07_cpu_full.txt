@@ -1,16 +1,16 @@
-[2026-08-27 22:53:56] [WARN] 当前显卡 Radeon RX 580 Series 非 RTX 系列，HDR 转换已自动禁用
-[2026-08-27 22:53:58] [INFO] === 自测模式启动: i:\Easy4K\_selftest\test_video.mp4 (掩码 31) ===
-[2026-08-27 22:53:58] [SUCCESS] 已清理 4 项中间产物: I:\Easy4K\src\Easy4K\bin\Release\net10.0-windows10.0.26100.0\win-x64\Temp
-[2026-08-27 22:53:58] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
-[2026-08-27 22:53:58] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
-[2026-08-27 22:53:59] [INFO] 自测[31]: 拆帧+超分×2+补帧×2+合并+音频
-[2026-08-27 22:53:59] [INFO] 开始处理: test_video.mp4
-[2026-08-27 22:53:59] [INFO] 处理参数: 超分 realesr-animevideov3-x2 ×2 / 补帧引擎 NCNN / 补帧模型 rife-v4.6 ×2
-[2026-08-27 22:53:59] [WARN] 已开启 CPU 处理模式：超分/补帧模型将全部使用 CPU 推理，速度会大幅下降
-[2026-08-27 22:53:59] [INFO] 开始拆帧: test_video.mp4
-[2026-08-27 22:53:59] [CMD] ffmpeg -y -hwaccel auto -i "i:\Easy4K\_selftest\test_video.mp4" -q:v 2 -vsync 0 "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png"
-[2026-08-27 22:53:59] [INFO] 拆帧中 已处理 60/60
-[2026-08-27 22:53:59] [INFO] ffmpeg.exe 输出:
+[2026-08-28 00:30:13] [WARN] 当前显卡 Radeon RX 580 Series 非 RTX 系列，HDR 转换已自动禁用
+[2026-08-28 00:30:15] [INFO] === 自测模式启动: i:\Easy4K\_selftest\test_video.mp4 (掩码 31) ===
+[2026-08-28 00:30:16] [SUCCESS] 已清理 4 项中间产物: I:\Easy4K\src\Easy4K\bin\Release\net10.0-windows10.0.26100.0\win-x64\Temp
+[2026-08-28 00:30:16] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
+[2026-08-28 00:30:16] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
+[2026-08-28 00:30:16] [INFO] 自测[31]: 拆帧+超分×2+补帧×2+合并+音频
+[2026-08-28 00:30:16] [INFO] 开始处理: test_video.mp4
+[2026-08-28 00:30:16] [INFO] 处理参数: 超分 realesr-animevideov3-x2 ×2 / 补帧引擎 NCNN / 补帧模型 rife-v4.6 ×2
+[2026-08-28 00:30:16] [WARN] 已开启 CPU 处理模式：超分/补帧模型将全部使用 CPU 推理，速度会大幅下降
+[2026-08-28 00:30:16] [INFO] 开始拆帧: test_video.mp4
+[2026-08-28 00:30:16] [CMD] ffmpeg -y -hwaccel auto -i "i:\Easy4K\_selftest\test_video.mp4" -q:v 2 -vsync 0 "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png"
+[2026-08-28 00:30:17] [INFO] 拆帧中 已处理 60/60
+[2026-08-28 00:30:17] [INFO] ffmpeg.exe 输出:
 ...) -> png (native))
 Press [q] to stop, [?] for help
 Output #0, image2, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png':
@@ -23,30 +23,30 @@ Output #0, image2, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.2610
     Metadata:
       encoder         : Lavc62.28.100 png
       handler_name    : VideoHandler
-[out#0/image2 @ 0000015454127580] video:3389KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
-frame=   60 fps=0.0 q=-0.0 Lsize=N/A time=00:00:02.00 bitrate=N/A speed=10.9x elapsed=0:00:00.18
-[2026-08-27 22:53:59] [SUCCESS] 拆帧完成: 60 帧
-[2026-08-27 22:53:59] [INFO] 超分开始(CPU): 模型 realesr-animevideov3-x2 ×2（线程 1:2:2）
-[2026-08-27 22:53:59] [CMD] realesrgan-ncnn-vulkan -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/4k_frames" -n realesr-animevideov3-x2 -s 2 -g -1 -j 1:2:2
-[2026-08-27 22:53:59] [ERROR] [exit=-1] realesrgan-ncnn-vulkan.exe stderr:
+[out#0/image2 @ 000002373dcc7f80] video:3389KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=   60 fps=0.0 q=-0.0 Lsize=N/A time=00:00:02.00 bitrate=N/A speed=9.97x elapsed=0:00:00.20
+[2026-08-28 00:30:17] [SUCCESS] 拆帧完成: 60 帧
+[2026-08-28 00:30:17] [INFO] 超分开始(CPU): 模型 realesr-animevideov3-x2 ×2（线程 1:2:2）
+[2026-08-28 00:30:17] [CMD] realesrgan-ncnn-vulkan -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/4k_frames" -n realesr-animevideov3-x2 -s 2 -g -1 -j 1:2:2
+[2026-08-28 00:30:17] [ERROR] [exit=-1] realesrgan-ncnn-vulkan.exe stderr:
 [0 Radeon RX 580 Series]  queueC=1[2]  queueG=0[1]  queueT=2[2]
 [0 Radeon RX 580 Series]  bugsbn1=0  bugbilz=0  bugcopc=0  bugihfa=0
 [0 Radeon RX 580 Series]  fp16-p/s/a=1/1/0  int8-p/s/a=1/1/1
 [0 Radeon RX 580 Series]  subgroup=64  basic=1  vote=1  ballot=1  shuffle=1
 invalid gpu device
-[2026-08-27 22:53:59] [WARN] 当前 realesrgan-ncnn 构建不支持 CPU 推理（-g -1 无效），超分自动回退 GPU 处理
-[2026-08-27 22:53:59] [CMD] realesrgan-ncnn-vulkan -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/4k_frames" -n realesr-animevideov3-x2 -s 2 -g 0 -j 1:2:2（CPU 回退 GPU）
-[2026-08-27 22:54:00] [INFO] 超分中(CPU回退) 已处理 0/60 帧
-[2026-08-27 22:54:01] [INFO] 超分中(CPU回退) 已处理 6/60 帧
-[2026-08-27 22:54:02] [INFO] 超分中(CPU回退) 已处理 12/60 帧
-[2026-08-27 22:54:03] [INFO] 超分中(CPU回退) 已处理 18/60 帧
-[2026-08-27 22:54:04] [INFO] 超分中(CPU回退) 已处理 24/60 帧
-[2026-08-27 22:54:05] [INFO] 超分中(CPU回退) 已处理 30/60 帧
-[2026-08-27 22:54:06] [INFO] 超分中(CPU回退) 已处理 36/60 帧
-[2026-08-27 22:54:07] [INFO] 超分中(CPU回退) 已处理 42/60 帧
-[2026-08-27 22:54:08] [INFO] 超分中(CPU回退) 已处理 48/60 帧
-[2026-08-27 22:54:09] [INFO] 超分中(CPU回退) 已处理 54/60 帧
-[2026-08-27 22:54:10] [INFO] realesrgan-ncnn-vulkan.exe 输出:
+[2026-08-28 00:30:17] [WARN] 超分不支持 CPU 推理（realesrgan-ncnn 无 CPU 后端），已升级为 GPU 处理
+[2026-08-28 00:30:17] [CMD] realesrgan-ncnn-vulkan -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/4k_frames" -n realesr-animevideov3-x2 -s 2 -g 0 -j 1:2:2（CPU 升级 GPU）
+[2026-08-28 00:30:18] [INFO] 超分中(升级GPU) 已处理 0/60 帧
+[2026-08-28 00:30:19] [INFO] 超分中(升级GPU) 已处理 6/60 帧
+[2026-08-28 00:30:20] [INFO] 超分中(升级GPU) 已处理 12/60 帧
+[2026-08-28 00:30:21] [INFO] 超分中(升级GPU) 已处理 18/60 帧
+[2026-08-28 00:30:22] [INFO] 超分中(升级GPU) 已处理 24/60 帧
+[2026-08-28 00:30:23] [INFO] 超分中(升级GPU) 已处理 28/60 帧
+[2026-08-28 00:30:24] [INFO] 超分中(升级GPU) 已处理 34/60 帧
+[2026-08-28 00:30:25] [INFO] 超分中(升级GPU) 已处理 40/60 帧
+[2026-08-28 00:30:26] [INFO] 超分中(升级GPU) 已处理 48/60 帧
+[2026-08-28 00:30:27] [INFO] 超分中(升级GPU) 已处理 54/60 帧
+[2026-08-28 00:30:28] [INFO] realesrgan-ncnn-vulkan.exe 输出:
 ....50%
 62.50%
 75.00%
@@ -149,125 +149,126 @@ invalid gpu device
 75.00%
 87.50%
 87.50%
-[2026-08-27 22:54:10] [SUCCESS] 超分完成: 60 帧
-[2026-08-27 22:54:10] [INFO] 补帧开始: 模型 rife-v4.6 ×2 (30→60fps)（线程 1:2:2）
-[2026-08-27 22:54:10] [CMD] rife-ncnn-vulkan -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/4k_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/output_frames" -m rife-v4.6 -g -1 -n 120 -j 1:2:2
-[2026-08-27 22:54:10] [INFO] 补帧中 已处理 1/120 帧
-[2026-08-27 22:54:11] [INFO] 补帧中 已处理 1/120 帧
-[2026-08-27 22:54:12] [INFO] 补帧中 已处理 3/120 帧
-[2026-08-27 22:54:13] [INFO] 补帧中 已处理 3/120 帧
-[2026-08-27 22:54:14] [INFO] 补帧中 已处理 5/120 帧
-[2026-08-27 22:54:15] [INFO] 补帧中 已处理 7/120 帧
-[2026-08-27 22:54:16] [INFO] 补帧中 已处理 7/120 帧
-[2026-08-27 22:54:17] [INFO] 补帧中 已处理 9/120 帧
-[2026-08-27 22:54:18] [INFO] 补帧中 已处理 11/120 帧
-[2026-08-27 22:54:19] [INFO] 补帧中 已处理 11/120 帧
-[2026-08-27 22:54:20] [INFO] 补帧中 已处理 13/120 帧
-[2026-08-27 22:54:21] [INFO] 补帧中 已处理 15/120 帧
-[2026-08-27 22:54:22] [INFO] 补帧中 已处理 15/120 帧
-[2026-08-27 22:54:23] [INFO] 补帧中 已处理 17/120 帧
-[2026-08-27 22:54:24] [INFO] 补帧中 已处理 19/120 帧
-[2026-08-27 22:54:25] [INFO] 补帧中 已处理 19/120 帧
-[2026-08-27 22:54:26] [INFO] 补帧中 已处理 21/120 帧
-[2026-08-27 22:54:27] [INFO] 补帧中 已处理 23/120 帧
-[2026-08-27 22:54:28] [INFO] 补帧中 已处理 23/120 帧
-[2026-08-27 22:54:29] [INFO] 补帧中 已处理 25/120 帧
-[2026-08-27 22:54:30] [INFO] 补帧中 已处理 27/120 帧
-[2026-08-27 22:54:31] [INFO] 补帧中 已处理 27/120 帧
-[2026-08-27 22:54:32] [INFO] 补帧中 已处理 29/120 帧
-[2026-08-27 22:54:33] [INFO] 补帧中 已处理 31/120 帧
-[2026-08-27 22:54:34] [INFO] 补帧中 已处理 31/120 帧
-[2026-08-27 22:54:35] [INFO] 补帧中 已处理 33/120 帧
-[2026-08-27 22:54:36] [INFO] 补帧中 已处理 33/120 帧
-[2026-08-27 22:54:37] [INFO] 补帧中 已处理 35/120 帧
-[2026-08-27 22:54:38] [INFO] 补帧中 已处理 37/120 帧
-[2026-08-27 22:54:39] [INFO] 补帧中 已处理 37/120 帧
-[2026-08-27 22:54:40] [INFO] 补帧中 已处理 39/120 帧
-[2026-08-27 22:54:41] [INFO] 补帧中 已处理 41/120 帧
-[2026-08-27 22:54:42] [INFO] 补帧中 已处理 41/120 帧
-[2026-08-27 22:54:43] [INFO] 补帧中 已处理 43/120 帧
-[2026-08-27 22:54:44] [INFO] 补帧中 已处理 45/120 帧
-[2026-08-27 22:54:45] [INFO] 补帧中 已处理 45/120 帧
-[2026-08-27 22:54:46] [INFO] 补帧中 已处理 47/120 帧
-[2026-08-27 22:54:47] [INFO] 补帧中 已处理 49/120 帧
-[2026-08-27 22:54:48] [INFO] 补帧中 已处理 49/120 帧
-[2026-08-27 22:54:49] [INFO] 补帧中 已处理 51/120 帧
-[2026-08-27 22:54:50] [INFO] 补帧中 已处理 53/120 帧
-[2026-08-27 22:54:51] [INFO] 补帧中 已处理 53/120 帧
-[2026-08-27 22:54:53] [INFO] 补帧中 已处理 55/120 帧
-[2026-08-27 22:54:54] [INFO] 补帧中 已处理 57/120 帧
-[2026-08-27 22:54:55] [INFO] 补帧中 已处理 57/120 帧
-[2026-08-27 22:54:56] [INFO] 补帧中 已处理 59/120 帧
-[2026-08-27 22:54:57] [INFO] 补帧中 已处理 59/120 帧
-[2026-08-27 22:54:58] [INFO] 补帧中 已处理 61/120 帧
-[2026-08-27 22:54:59] [INFO] 补帧中 已处理 63/120 帧
-[2026-08-27 22:55:00] [INFO] 补帧中 已处理 63/120 帧
-[2026-08-27 22:55:01] [INFO] 补帧中 已处理 65/120 帧
-[2026-08-27 22:55:02] [INFO] 补帧中 已处理 67/120 帧
-[2026-08-27 22:55:03] [INFO] 补帧中 已处理 67/120 帧
-[2026-08-27 22:55:04] [INFO] 补帧中 已处理 69/120 帧
-[2026-08-27 22:55:05] [INFO] 补帧中 已处理 71/120 帧
-[2026-08-27 22:55:06] [INFO] 补帧中 已处理 71/120 帧
-[2026-08-27 22:55:07] [INFO] 补帧中 已处理 73/120 帧
-[2026-08-27 22:55:08] [INFO] 补帧中 已处理 75/120 帧
-[2026-08-27 22:55:09] [INFO] 补帧中 已处理 75/120 帧
-[2026-08-27 22:55:10] [INFO] 补帧中 已处理 77/120 帧
-[2026-08-27 22:55:11] [INFO] 补帧中 已处理 79/120 帧
-[2026-08-27 22:55:12] [INFO] 补帧中 已处理 79/120 帧
-[2026-08-27 22:55:13] [INFO] 补帧中 已处理 81/120 帧
-[2026-08-27 22:55:14] [INFO] 补帧中 已处理 83/120 帧
-[2026-08-27 22:55:15] [INFO] 补帧中 已处理 83/120 帧
-[2026-08-27 22:55:16] [INFO] 补帧中 已处理 85/120 帧
-[2026-08-27 22:55:17] [INFO] 补帧中 已处理 87/120 帧
-[2026-08-27 22:55:18] [INFO] 补帧中 已处理 87/120 帧
-[2026-08-27 22:55:19] [INFO] 补帧中 已处理 89/120 帧
-[2026-08-27 22:55:20] [INFO] 补帧中 已处理 91/120 帧
-[2026-08-27 22:55:21] [INFO] 补帧中 已处理 91/120 帧
-[2026-08-27 22:55:22] [INFO] 补帧中 已处理 93/120 帧
-[2026-08-27 22:55:23] [INFO] 补帧中 已处理 95/120 帧
-[2026-08-27 22:55:24] [INFO] 补帧中 已处理 95/120 帧
-[2026-08-27 22:55:25] [INFO] 补帧中 已处理 97/120 帧
-[2026-08-27 22:55:26] [INFO] 补帧中 已处理 99/120 帧
-[2026-08-27 22:55:27] [INFO] 补帧中 已处理 99/120 帧
-[2026-08-27 22:55:28] [INFO] 补帧中 已处理 101/120 帧
-[2026-08-27 22:55:29] [INFO] 补帧中 已处理 103/120 帧
-[2026-08-27 22:55:30] [INFO] 补帧中 已处理 105/120 帧
-[2026-08-27 22:55:31] [INFO] 补帧中 已处理 105/120 帧
-[2026-08-27 22:55:32] [INFO] 补帧中 已处理 107/120 帧
-[2026-08-27 22:55:33] [INFO] 补帧中 已处理 109/120 帧
-[2026-08-27 22:55:34] [INFO] 补帧中 已处理 109/120 帧
-[2026-08-27 22:55:35] [INFO] 补帧中 已处理 111/120 帧
-[2026-08-27 22:55:36] [INFO] 补帧中 已处理 113/120 帧
-[2026-08-27 22:55:37] [INFO] 补帧中 已处理 113/120 帧
-[2026-08-27 22:55:38] [INFO] 补帧中 已处理 115/120 帧
-[2026-08-27 22:55:39] [INFO] 补帧中 已处理 117/120 帧
-[2026-08-27 22:55:40] [INFO] 补帧中 已处理 117/120 帧
-[2026-08-27 22:55:40] [INFO] rife-ncnn-vulkan.exe 输出:
+[2026-08-28 00:30:28] [SUCCESS] 超分完成: 60 帧
+[2026-08-28 00:30:28] [INFO] 补帧开始: 模型 rife-v4.6 ×2 (30→60fps)（线程 1:2:2）
+[2026-08-28 00:30:28] [CMD] rife-ncnn-vulkan -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/4k_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/output_frames" -m rife-v4.6 -g -1 -n 120 -j 1:2:2
+[2026-08-28 00:30:28] [INFO] 补帧中 已处理 1/120 帧
+[2026-08-28 00:30:29] [INFO] 补帧中 已处理 1/120 帧
+[2026-08-28 00:30:30] [INFO] 补帧中 已处理 3/120 帧
+[2026-08-28 00:30:31] [INFO] 补帧中 已处理 3/120 帧
+[2026-08-28 00:30:32] [INFO] 补帧中 已处理 5/120 帧
+[2026-08-28 00:30:34] [INFO] 补帧中 已处理 7/120 帧
+[2026-08-28 00:30:35] [INFO] 补帧中 已处理 7/120 帧
+[2026-08-28 00:30:36] [INFO] 补帧中 已处理 9/120 帧
+[2026-08-28 00:30:37] [INFO] 补帧中 已处理 11/120 帧
+[2026-08-28 00:30:38] [INFO] 补帧中 已处理 11/120 帧
+[2026-08-28 00:30:39] [INFO] 补帧中 已处理 13/120 帧
+[2026-08-28 00:30:40] [INFO] 补帧中 已处理 15/120 帧
+[2026-08-28 00:30:41] [INFO] 补帧中 已处理 15/120 帧
+[2026-08-28 00:30:42] [INFO] 补帧中 已处理 17/120 帧
+[2026-08-28 00:30:43] [INFO] 补帧中 已处理 17/120 帧
+[2026-08-28 00:30:44] [INFO] 补帧中 已处理 19/120 帧
+[2026-08-28 00:30:45] [INFO] 补帧中 已处理 21/120 帧
+[2026-08-28 00:30:46] [INFO] 补帧中 已处理 21/120 帧
+[2026-08-28 00:30:47] [INFO] 补帧中 已处理 23/120 帧
+[2026-08-28 00:30:48] [INFO] 补帧中 已处理 25/120 帧
+[2026-08-28 00:30:49] [INFO] 补帧中 已处理 25/120 帧
+[2026-08-28 00:30:50] [INFO] 补帧中 已处理 27/120 帧
+[2026-08-28 00:30:51] [INFO] 补帧中 已处理 29/120 帧
+[2026-08-28 00:30:52] [INFO] 补帧中 已处理 29/120 帧
+[2026-08-28 00:30:53] [INFO] 补帧中 已处理 31/120 帧
+[2026-08-28 00:30:54] [INFO] 补帧中 已处理 33/120 帧
+[2026-08-28 00:30:55] [INFO] 补帧中 已处理 33/120 帧
+[2026-08-28 00:30:56] [INFO] 补帧中 已处理 35/120 帧
+[2026-08-28 00:30:57] [INFO] 补帧中 已处理 37/120 帧
+[2026-08-28 00:30:58] [INFO] 补帧中 已处理 37/120 帧
+[2026-08-28 00:30:59] [INFO] 补帧中 已处理 39/120 帧
+[2026-08-28 00:31:00] [INFO] 补帧中 已处理 41/120 帧
+[2026-08-28 00:31:01] [INFO] 补帧中 已处理 41/120 帧
+[2026-08-28 00:31:02] [INFO] 补帧中 已处理 43/120 帧
+[2026-08-28 00:31:03] [INFO] 补帧中 已处理 43/120 帧
+[2026-08-28 00:31:05] [INFO] 补帧中 已处理 45/120 帧
+[2026-08-28 00:31:06] [INFO] 补帧中 已处理 47/120 帧
+[2026-08-28 00:31:07] [INFO] 补帧中 已处理 47/120 帧
+[2026-08-28 00:31:08] [INFO] 补帧中 已处理 49/120 帧
+[2026-08-28 00:31:09] [INFO] 补帧中 已处理 51/120 帧
+[2026-08-28 00:31:10] [INFO] 补帧中 已处理 51/120 帧
+[2026-08-28 00:31:11] [INFO] 补帧中 已处理 53/120 帧
+[2026-08-28 00:31:12] [INFO] 补帧中 已处理 55/120 帧
+[2026-08-28 00:31:13] [INFO] 补帧中 已处理 55/120 帧
+[2026-08-28 00:31:14] [INFO] 补帧中 已处理 57/120 帧
+[2026-08-28 00:31:15] [INFO] 补帧中 已处理 59/120 帧
+[2026-08-28 00:31:16] [INFO] 补帧中 已处理 59/120 帧
+[2026-08-28 00:31:17] [INFO] 补帧中 已处理 61/120 帧
+[2026-08-28 00:31:18] [INFO] 补帧中 已处理 63/120 帧
+[2026-08-28 00:31:19] [INFO] 补帧中 已处理 63/120 帧
+[2026-08-28 00:31:20] [INFO] 补帧中 已处理 65/120 帧
+[2026-08-28 00:31:21] [INFO] 补帧中 已处理 67/120 帧
+[2026-08-28 00:31:22] [INFO] 补帧中 已处理 67/120 帧
+[2026-08-28 00:31:23] [INFO] 补帧中 已处理 69/120 帧
+[2026-08-28 00:31:24] [INFO] 补帧中 已处理 71/120 帧
+[2026-08-28 00:31:25] [INFO] 补帧中 已处理 71/120 帧
+[2026-08-28 00:31:26] [INFO] 补帧中 已处理 73/120 帧
+[2026-08-28 00:31:28] [INFO] 补帧中 已处理 73/120 帧
+[2026-08-28 00:31:29] [INFO] 补帧中 已处理 75/120 帧
+[2026-08-28 00:31:30] [INFO] 补帧中 已处理 77/120 帧
+[2026-08-28 00:31:31] [INFO] 补帧中 已处理 77/120 帧
+[2026-08-28 00:31:32] [INFO] 补帧中 已处理 79/120 帧
+[2026-08-28 00:31:33] [INFO] 补帧中 已处理 81/120 帧
+[2026-08-28 00:31:34] [INFO] 补帧中 已处理 81/120 帧
+[2026-08-28 00:31:35] [INFO] 补帧中 已处理 83/120 帧
+[2026-08-28 00:31:36] [INFO] 补帧中 已处理 85/120 帧
+[2026-08-28 00:31:37] [INFO] 补帧中 已处理 85/120 帧
+[2026-08-28 00:31:38] [INFO] 补帧中 已处理 87/120 帧
+[2026-08-28 00:31:39] [INFO] 补帧中 已处理 87/120 帧
+[2026-08-28 00:31:40] [INFO] 补帧中 已处理 89/120 帧
+[2026-08-28 00:31:41] [INFO] 补帧中 已处理 91/120 帧
+[2026-08-28 00:31:42] [INFO] 补帧中 已处理 91/120 帧
+[2026-08-28 00:31:43] [INFO] 补帧中 已处理 93/120 帧
+[2026-08-28 00:31:44] [INFO] 补帧中 已处理 95/120 帧
+[2026-08-28 00:31:45] [INFO] 补帧中 已处理 95/120 帧
+[2026-08-28 00:31:46] [INFO] 补帧中 已处理 97/120 帧
+[2026-08-28 00:31:47] [INFO] 补帧中 已处理 97/120 帧
+[2026-08-28 00:31:48] [INFO] 补帧中 已处理 99/120 帧
+[2026-08-28 00:31:49] [INFO] 补帧中 已处理 101/120 帧
+[2026-08-28 00:31:50] [INFO] 补帧中 已处理 101/120 帧
+[2026-08-28 00:31:51] [INFO] 补帧中 已处理 103/120 帧
+[2026-08-28 00:31:52] [INFO] 补帧中 已处理 105/120 帧
+[2026-08-28 00:31:53] [INFO] 补帧中 已处理 105/120 帧
+[2026-08-28 00:31:54] [INFO] 补帧中 已处理 107/120 帧
+[2026-08-28 00:31:55] [INFO] 补帧中 已处理 107/120 帧
+[2026-08-28 00:31:56] [INFO] 补帧中 已处理 109/120 帧
+[2026-08-28 00:31:57] [INFO] 补帧中 已处理 111/120 帧
+[2026-08-28 00:31:58] [INFO] 补帧中 已处理 111/120 帧
+[2026-08-28 00:31:59] [INFO] 补帧中 已处理 113/120 帧
+[2026-08-28 00:32:00] [INFO] 补帧中 已处理 115/120 帧
+[2026-08-28 00:32:01] [INFO] 补帧中 已处理 115/120 帧
+[2026-08-28 00:32:02] [INFO] 补帧中 已处理 117/120 帧
+[2026-08-28 00:32:03] [INFO] 补帧中 已处理 117/120 帧
+[2026-08-28 00:32:03] [INFO] rife-ncnn-vulkan.exe 输出:
 [0 Radeon RX 580 Series]  queueC=1[2]  queueG=0[1]  queueT=2[2]
 [0 Radeon RX 580 Series]  bugsbn1=0  bugbilz=0  bugcopc=0  bugihfa=0
 [0 Radeon RX 580 Series]  fp16-p/s/a=1/1/0  int8-p/s/a=1/1/1
 [0 Radeon RX 580 Series]  subgroup=64  basic=1  vote=1  ballot=1  shuffle=1
-[2026-08-27 22:55:40] [SUCCESS] 补帧完成: 120 帧
-[2026-08-27 22:55:40] [INFO] 开始合并视频（编码：GPU hevc_amf）
-[2026-08-27 22:55:40] [CMD] ffmpeg -y -framerate 60 -start_number 1 -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/output_frames/%08d.png" -c:v hevc_amf -quality quality -rc cqp -qp_i 18 -qp_p 18 -threads 0 -pix_fmt yuv420p -an "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv"
-[2026-08-27 22:55:41] [INFO] 合并中 已处理 120/120
-[2026-08-27 22:55:41] [INFO] ffmpeg.exe 输出:
-...:
-  Stream #0:0 -> #0:0 (png (native) -> hevc (hevc_amf))
-Press [q] to stop, [?] for help
-[hevc_amf @ 0000023ac757eb00] VBAQ is not supported by cqp Rate Control Method, automatically disabled
+[2026-08-28 00:32:03] [SUCCESS] 补帧完成: 120 帧
+[2026-08-28 00:32:03] [INFO] 开始合并视频（编码：GPU hevc_amf）
+[2026-08-28 00:32:03] [CMD] ffmpeg -y -framerate 60 -start_number 1 -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/output_frames/%08d.png" -c:v hevc_amf -quality quality -rc cqp -qp_i 18 -qp_p 18 -threads 0 -pix_fmt yuv420p -an "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv"
+[2026-08-28 00:32:04] [INFO] 合并中 已处理 86/120
+[2026-08-28 00:32:04] [INFO] ffmpeg.exe 输出:
+...80] VBAQ is not supported by cqp Rate Control Method, automatically disabled
 Output #0, matroska, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv':
   Metadata:
     encoder         : Lavf62.12.100
   Stream #0:0: Video: hevc, yuv420p(tv, unknown/bt709/iec61966-2-1, progressive), 1280x720, q=2-31, 60 fps, 1k tbn
     Metadata:
       encoder         : Lavc62.28.100 hevc_amf
-[out#0/matroska @ 0000023ac757bec0] video:2614KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.066609%
-frame=  120 fps=0.0 q=-0.0 Lsize=    2616KiB time=00:00:01.98 bitrate=10804.5kbits/s speed=3.91x elapsed=0:00:00.50
-[2026-08-27 22:55:41] [SUCCESS] 合并视频完成
-[2026-08-27 22:55:41] [INFO] 从输入视频提取音频...
-[2026-08-27 22:55:41] [CMD] ffmpeg -y -i "i:\Easy4K\_selftest\test_video.mp4" -vn -c:a flac "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/audio.flac"
-[2026-08-27 22:55:41] [INFO] ffmpeg.exe 输出:
+frame=   86 fps=0.0 q=-0.0 size=    1280KiB time=00:00:01.41 bitrate=7401.7kbits/s speed=2.76x elapsed=0:00:00.51    
+[out#0/matroska @ 000002399988bf40] video:2614KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.066609%
+frame=  120 fps=0.0 q=-0.0 Lsize=    2616KiB time=00:00:01.98 bitrate=10804.5kbits/s speed=3.09x elapsed=0:00:00.64
+[2026-08-28 00:32:04] [SUCCESS] 合并视频完成
+[2026-08-28 00:32:04] [INFO] 从输入视频提取音频...
+[2026-08-28 00:32:04] [CMD] ffmpeg -y -i "i:\Easy4K\_selftest\test_video.mp4" -vn -c:a flac "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/audio.flac"
+[2026-08-28 00:32:04] [INFO] ffmpeg.exe 输出:
 ... encoding as 24 bits-per-sample, more is considered experimental. Add -strict experimental if you want to encode more than 24 bits-per-sample
 Output #0, flac, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/audio.flac':
   Metadata:
@@ -279,11 +280,11 @@ Output #0, flac, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.
     Metadata:
       encoder         : Lavc62.28.100 flac
       handler_name    : SoundHandler
-[out#0/flac @ 000001a6955dd800] video:0KiB audio:97KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 8.445544%
-size=     105KiB time=00:00:02.02 bitrate= 425.5kbits/s speed= 227x elapsed=0:00:00.00
-[2026-08-27 22:55:41] [INFO] 合并原音频到新视频 (PCM 2.0 24bit 96kHz)
-[2026-08-27 22:55:41] [CMD] ffmpeg -y -hwaccel auto -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv" -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/audio.flac" -c:v copy -c:a pcm_s24le -ar 96000 -ac 2 -map 0:v:0 -map 1:a:0 "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/audio_embedded.mkv"
-[2026-08-27 22:55:41] [INFO] ffmpeg.exe 输出:
+[out#0/flac @ 000002557250d880] video:0KiB audio:97KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 8.445544%
+size=     105KiB time=00:00:02.02 bitrate= 425.5kbits/s speed= 221x elapsed=0:00:00.00
+[2026-08-28 00:32:04] [INFO] 合并原音频到新视频 (PCM 2.0 24bit 96kHz)
+[2026-08-28 00:32:04] [CMD] ffmpeg -y -hwaccel auto -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv" -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/audio.flac" -c:v copy -c:a pcm_s24le -ar 96000 -ac 2 -map 0:v:0 -map 1:a:0 "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/audio_embedded.mkv"
+[2026-08-28 00:32:05] [INFO] ffmpeg.exe 输出:
 ...lease/net10.0-windows10.0.26100.0/win-x64/Temp/audio_embedded.mkv':
   Metadata:
     encoder         : Lavf62.12.100
@@ -294,7 +295,7 @@ size=     105KiB time=00:00:02.02 bitrate= 425.5kbits/s speed= 227x elapsed=0:00
   Stream #0:1: Audio: pcm_s24le ([1][0][0][0] / 0x0001), 96000 Hz, stereo, s32 (24 bit), 4608 kb/s
     Metadata:
       encoder         : Lavc62.28.100 pcm_s24le
-[out#0/matroska @ 00000207729cd040] video:2614KiB audio:1136KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.055280%
-frame=  120 fps=0.0 q=-1.0 Lsize=    3752KiB time=00:00:01.99 bitrate=15377.9kbits/s speed= 140x elapsed=0:00:00.01
-[2026-08-27 22:55:41] [SUCCESS] 合并原音频完成
-[2026-08-27 22:55:41] [SUCCESS] 全部完成！输出: I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Output/test_video_1280x720_60fps_SDR_音频嵌入.mkv
+[out#0/matroska @ 00000297fd0ac9c0] video:2614KiB audio:1136KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.055280%
+frame=  120 fps=0.0 q=-1.0 Lsize=    3752KiB time=00:00:01.99 bitrate=15377.9kbits/s speed= 136x elapsed=0:00:00.01
+[2026-08-28 00:32:05] [SUCCESS] 合并原音频完成
+[2026-08-28 00:32:05] [SUCCESS] 全部完成！输出: I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Output/test_video_1280x720_60fps_SDR_音频嵌入.mkv

@@ -1,15 +1,15 @@
-[2026-08-27 22:56:17] [WARN] 当前显卡 Radeon RX 580 Series 非 RTX 系列，HDR 转换已自动禁用
-[2026-08-27 22:56:19] [INFO] === 自测模式启动: i:\Easy4K\_selftest\test_video.mp4 (掩码 31) ===
-[2026-08-27 22:56:19] [SUCCESS] 已清理 4 项中间产物: I:\Easy4K\src\Easy4K\bin\Release\net10.0-windows10.0.26100.0\win-x64\Temp
-[2026-08-27 22:56:19] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
-[2026-08-27 22:56:19] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
-[2026-08-27 22:56:19] [INFO] 自测[31]: 拆帧+超分×2+补帧×2+合并+音频
-[2026-08-27 22:56:19] [INFO] 开始处理: test_video.mp4
-[2026-08-27 22:56:19] [INFO] 处理参数: 超分 realesr-animevideov3-x2 ×2 / 补帧引擎 NCNN / 补帧模型 rife-v4.6 ×2
-[2026-08-27 22:56:19] [INFO] 开始拆帧: test_video.mp4
-[2026-08-27 22:56:19] [CMD] ffmpeg -y -hwaccel auto -i "i:\Easy4K\_selftest\test_video.mp4" -q:v 2 -vsync 0 "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png"
-[2026-08-27 22:56:20] [INFO] 拆帧中 已处理 60/60
-[2026-08-27 22:56:20] [INFO] ffmpeg.exe 输出:
+[2026-08-28 00:32:41] [WARN] 当前显卡 Radeon RX 580 Series 非 RTX 系列，HDR 转换已自动禁用
+[2026-08-28 00:32:43] [INFO] === 自测模式启动: i:\Easy4K\_selftest\test_video.mp4 (掩码 31) ===
+[2026-08-28 00:32:43] [SUCCESS] 已清理 4 项中间产物: I:\Easy4K\src\Easy4K\bin\Release\net10.0-windows10.0.26100.0\win-x64\Temp
+[2026-08-28 00:32:44] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
+[2026-08-28 00:32:44] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
+[2026-08-28 00:32:44] [INFO] 自测[31]: 拆帧+超分×2+补帧×2+合并+音频
+[2026-08-28 00:32:44] [INFO] 开始处理: test_video.mp4
+[2026-08-28 00:32:44] [INFO] 处理参数: 超分 realesr-animevideov3-x2 ×2 / 补帧引擎 NCNN / 补帧模型 rife-v4.6 ×2
+[2026-08-28 00:32:44] [INFO] 开始拆帧: test_video.mp4
+[2026-08-28 00:32:44] [CMD] ffmpeg -y -hwaccel auto -i "i:\Easy4K\_selftest\test_video.mp4" -q:v 2 -vsync 0 "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png"
+[2026-08-28 00:32:44] [INFO] 拆帧中 已处理 60/60
+[2026-08-28 00:32:44] [INFO] ffmpeg.exe 输出:
 ...) -> png (native))
 Press [q] to stop, [?] for help
 Output #0, image2, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png':
@@ -22,22 +22,22 @@ Output #0, image2, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.2610
     Metadata:
       encoder         : Lavc62.28.100 png
       handler_name    : VideoHandler
-[out#0/image2 @ 00000154553f7580] video:3389KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
-frame=   60 fps=0.0 q=-0.0 Lsize=N/A time=00:00:02.00 bitrate=N/A speed=12.3x elapsed=0:00:00.16
-[2026-08-27 22:56:20] [SUCCESS] 拆帧完成: 60 帧
-[2026-08-27 22:56:20] [INFO] 超分开始: 模型 realesr-animevideov3-x2 ×2（线程 1:2:2）
-[2026-08-27 22:56:20] [CMD] realesrgan-ncnn-vulkan -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/4k_frames" -n realesr-animevideov3-x2 -s 2 -g 0 -j 1:2:2
-[2026-08-27 22:56:21] [INFO] 超分中 已处理 0/60 帧
-[2026-08-27 22:56:22] [INFO] 超分中 已处理 6/60 帧
-[2026-08-27 22:56:23] [INFO] 超分中 已处理 12/60 帧
-[2026-08-27 22:56:24] [INFO] 超分中 已处理 18/60 帧
-[2026-08-27 22:56:25] [INFO] 超分中 已处理 24/60 帧
-[2026-08-27 22:56:26] [INFO] 超分中 已处理 30/60 帧
-[2026-08-27 22:56:27] [INFO] 超分中 已处理 36/60 帧
-[2026-08-27 22:56:28] [INFO] 超分中 已处理 42/60 帧
-[2026-08-27 22:56:29] [INFO] 超分中 已处理 48/60 帧
-[2026-08-27 22:56:30] [INFO] 超分中 已处理 54/60 帧
-[2026-08-27 22:56:30] [INFO] realesrgan-ncnn-vulkan.exe 输出:
+[out#0/image2 @ 0000025f2a597f80] video:3389KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=   60 fps=0.0 q=-0.0 Lsize=N/A time=00:00:02.00 bitrate=N/A speed=9.01x elapsed=0:00:00.22
+[2026-08-28 00:32:45] [SUCCESS] 拆帧完成: 60 帧
+[2026-08-28 00:32:45] [INFO] 超分开始: 模型 realesr-animevideov3-x2 ×2（线程 1:2:2）
+[2026-08-28 00:32:45] [CMD] realesrgan-ncnn-vulkan -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/4k_frames" -n realesr-animevideov3-x2 -s 2 -g 0 -j 1:2:2
+[2026-08-28 00:32:46] [INFO] 超分中 已处理 0/60 帧
+[2026-08-28 00:32:47] [INFO] 超分中 已处理 6/60 帧
+[2026-08-28 00:32:48] [INFO] 超分中 已处理 12/60 帧
+[2026-08-28 00:32:49] [INFO] 超分中 已处理 18/60 帧
+[2026-08-28 00:32:50] [INFO] 超分中 已处理 26/60 帧
+[2026-08-28 00:32:51] [INFO] 超分中 已处理 32/60 帧
+[2026-08-28 00:32:52] [INFO] 超分中 已处理 38/60 帧
+[2026-08-28 00:32:53] [INFO] 超分中 已处理 44/60 帧
+[2026-08-28 00:32:54] [INFO] 超分中 已处理 50/60 帧
+[2026-08-28 00:32:55] [INFO] 超分中 已处理 56/60 帧
+[2026-08-28 00:32:56] [INFO] realesrgan-ncnn-vulkan.exe 输出:
 ....50%
 62.50%
 75.00%
@@ -140,39 +140,37 @@ frame=   60 fps=0.0 q=-0.0 Lsize=N/A time=00:00:02.00 bitrate=N/A speed=12.3x el
 75.00%
 87.50%
 87.50%
-[2026-08-27 22:56:30] [SUCCESS] 超分完成: 60 帧
-[2026-08-27 22:56:30] [INFO] 补帧开始: 模型 rife-v4.6 ×2 (30→60fps)（线程 1:2:2）
-[2026-08-27 22:56:30] [CMD] rife-ncnn-vulkan -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/4k_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/output_frames" -m rife-v4.6 -g 0 -n 120 -j 1:2:2
-[2026-08-27 22:56:31] [INFO] 补帧中 已处理 2/120 帧
-[2026-08-27 22:56:32] [INFO] 补帧中 已处理 32/120 帧
-[2026-08-27 22:56:33] [INFO] 补帧中 已处理 64/120 帧
-[2026-08-27 22:56:34] [INFO] 补帧中 已处理 96/120 帧
-[2026-08-27 22:56:35] [INFO] rife-ncnn-vulkan.exe 输出:
+[2026-08-28 00:32:56] [SUCCESS] 超分完成: 60 帧
+[2026-08-28 00:32:56] [INFO] 补帧开始: 模型 rife-v4.6 ×2 (30→60fps)（线程 1:2:2）
+[2026-08-28 00:32:56] [CMD] rife-ncnn-vulkan -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/4k_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/output_frames" -m rife-v4.6 -g 0 -n 120 -j 1:2:2
+[2026-08-28 00:32:57] [INFO] 补帧中 已处理 1/120 帧
+[2026-08-28 00:32:58] [INFO] 补帧中 已处理 32/120 帧
+[2026-08-28 00:32:59] [INFO] 补帧中 已处理 62/120 帧
+[2026-08-28 00:33:00] [INFO] 补帧中 已处理 94/120 帧
+[2026-08-28 00:33:01] [INFO] rife-ncnn-vulkan.exe 输出:
 [0 Radeon RX 580 Series]  queueC=1[2]  queueG=0[1]  queueT=2[2]
 [0 Radeon RX 580 Series]  bugsbn1=0  bugbilz=0  bugcopc=0  bugihfa=0
 [0 Radeon RX 580 Series]  fp16-p/s/a=1/1/0  int8-p/s/a=1/1/1
 [0 Radeon RX 580 Series]  subgroup=64  basic=1  vote=1  ballot=1  shuffle=1
-[2026-08-27 22:56:35] [SUCCESS] 补帧完成: 120 帧
-[2026-08-27 22:56:35] [INFO] 开始合并视频（编码：GPU hevc_amf）
-[2026-08-27 22:56:35] [CMD] ffmpeg -y -framerate 60 -start_number 1 -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/output_frames/%08d.png" -c:v hevc_amf -quality quality -rc cqp -qp_i 18 -qp_p 18 -threads 0 -pix_fmt yuv420p -an "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv"
-[2026-08-27 22:56:36] [INFO] 合并中 已处理 120/120
-[2026-08-27 22:56:36] [INFO] ffmpeg.exe 输出:
-...:
-  Stream #0:0 -> #0:0 (png (native) -> hevc (hevc_amf))
-Press [q] to stop, [?] for help
-[hevc_amf @ 000001a0437ceb00] VBAQ is not supported by cqp Rate Control Method, automatically disabled
+[2026-08-28 00:33:01] [SUCCESS] 补帧完成: 120 帧
+[2026-08-28 00:33:01] [INFO] 开始合并视频（编码：GPU hevc_amf）
+[2026-08-28 00:33:01] [CMD] ffmpeg -y -framerate 60 -start_number 1 -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/output_frames/%08d.png" -c:v hevc_amf -quality quality -rc cqp -qp_i 18 -qp_p 18 -threads 0 -pix_fmt yuv420p -an "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv"
+[2026-08-28 00:33:02] [INFO] 合并中 已处理 94/120
+[2026-08-28 00:33:02] [INFO] ffmpeg.exe 输出:
+...80] VBAQ is not supported by cqp Rate Control Method, automatically disabled
 Output #0, matroska, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv':
   Metadata:
     encoder         : Lavf62.12.100
   Stream #0:0: Video: hevc, yuv420p(tv, unknown/bt709/iec61966-2-1, progressive), 1280x720, q=2-31, 60 fps, 1k tbn
     Metadata:
       encoder         : Lavc62.28.100 hevc_amf
-[out#0/matroska @ 000001a0437cbec0] video:2612KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.066665%
-frame=  120 fps=0.0 q=-0.0 Lsize=    2614KiB time=00:00:01.98 bitrate=10795.4kbits/s speed=3.91x elapsed=0:00:00.50
-[2026-08-27 22:56:36] [SUCCESS] 合并视频完成
-[2026-08-27 22:56:36] [INFO] 从输入视频提取音频...
-[2026-08-27 22:56:36] [CMD] ffmpeg -y -i "i:\Easy4K\_selftest\test_video.mp4" -vn -c:a flac "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/audio.flac"
-[2026-08-27 22:56:36] [INFO] ffmpeg.exe 输出:
+frame=   94 fps=0.0 q=-0.0 size=    1792KiB time=00:00:01.55 bitrate=9471.0kbits/s speed=3.03x elapsed=0:00:00.51    
+[out#0/matroska @ 000001ee718fbf40] video:2612KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.066665%
+frame=  120 fps=0.0 q=-0.0 Lsize=    2614KiB time=00:00:01.98 bitrate=10795.4kbits/s speed=3.34x elapsed=0:00:00.59
+[2026-08-28 00:33:02] [SUCCESS] 合并视频完成
+[2026-08-28 00:33:02] [INFO] 从输入视频提取音频...
+[2026-08-28 00:33:02] [CMD] ffmpeg -y -i "i:\Easy4K\_selftest\test_video.mp4" -vn -c:a flac "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/audio.flac"
+[2026-08-28 00:33:02] [INFO] ffmpeg.exe 输出:
 ... encoding as 24 bits-per-sample, more is considered experimental. Add -strict experimental if you want to encode more than 24 bits-per-sample
 Output #0, flac, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/audio.flac':
   Metadata:
@@ -184,11 +182,11 @@ Output #0, flac, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.
     Metadata:
       encoder         : Lavc62.28.100 flac
       handler_name    : SoundHandler
-[out#0/flac @ 000001a399e1d800] video:0KiB audio:97KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 8.445544%
-size=     105KiB time=00:00:02.02 bitrate= 425.5kbits/s speed= 234x elapsed=0:00:00.00
-[2026-08-27 22:56:36] [INFO] 合并原音频到新视频 (PCM 2.0 24bit 96kHz)
-[2026-08-27 22:56:36] [CMD] ffmpeg -y -hwaccel auto -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv" -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/audio.flac" -c:v copy -c:a pcm_s24le -ar 96000 -ac 2 -map 0:v:0 -map 1:a:0 "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/audio_embedded.mkv"
-[2026-08-27 22:56:36] [INFO] ffmpeg.exe 输出:
+[out#0/flac @ 000002a598f222c0] video:0KiB audio:97KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 8.445544%
+size=     105KiB time=00:00:02.02 bitrate= 425.5kbits/s speed= 225x elapsed=0:00:00.00
+[2026-08-28 00:33:02] [INFO] 合并原音频到新视频 (PCM 2.0 24bit 96kHz)
+[2026-08-28 00:33:02] [CMD] ffmpeg -y -hwaccel auto -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv" -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/audio.flac" -c:v copy -c:a pcm_s24le -ar 96000 -ac 2 -map 0:v:0 -map 1:a:0 "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/audio_embedded.mkv"
+[2026-08-28 00:33:02] [INFO] ffmpeg.exe 输出:
 ...lease/net10.0-windows10.0.26100.0/win-x64/Temp/audio_embedded.mkv':
   Metadata:
     encoder         : Lavf62.12.100
@@ -199,7 +197,7 @@ size=     105KiB time=00:00:02.02 bitrate= 425.5kbits/s speed= 234x elapsed=0:00
   Stream #0:1: Audio: pcm_s24le ([1][0][0][0] / 0x0001), 96000 Hz, stereo, s32 (24 bit), 4608 kb/s
     Metadata:
       encoder         : Lavc62.28.100 pcm_s24le
-[out#0/matroska @ 000002630636d040] video:2612KiB audio:1136KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.055313%
-frame=  120 fps=0.0 q=-1.0 Lsize=    3750KiB time=00:00:01.99 bitrate=15368.9kbits/s speed= 133x elapsed=0:00:00.01
-[2026-08-27 22:56:36] [SUCCESS] 合并原音频完成
-[2026-08-27 22:56:36] [SUCCESS] 全部完成！输出: I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Output/test_video_1280x720_60fps_SDR_音频嵌入.mkv
+[out#0/matroska @ 00000291f156c9c0] video:2612KiB audio:1136KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.055313%
+frame=  120 fps=0.0 q=-1.0 Lsize=    3750KiB time=00:00:01.99 bitrate=15368.9kbits/s speed= 124x elapsed=0:00:00.01
+[2026-08-28 00:33:02] [SUCCESS] 合并原音频完成
+[2026-08-28 00:33:02] [SUCCESS] 全部完成！输出: I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Output/test_video_1280x720_60fps_SDR_音频嵌入.mkv

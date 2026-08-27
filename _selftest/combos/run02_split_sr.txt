@@ -1,15 +1,15 @@
-[2026-08-27 22:52:14] [WARN] 当前显卡 Radeon RX 580 Series 非 RTX 系列，HDR 转换已自动禁用
-[2026-08-27 22:52:16] [INFO] === 自测模式启动: i:\Easy4K\_selftest\test_video.mp4 (掩码 3) ===
-[2026-08-27 22:52:16] [SUCCESS] 已清理 3 项中间产物: I:\Easy4K\src\Easy4K\bin\Release\net10.0-windows10.0.26100.0\win-x64\Temp
-[2026-08-27 22:52:16] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
-[2026-08-27 22:52:16] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
-[2026-08-27 22:52:16] [INFO] 自测[3]: 拆帧+超分×2
-[2026-08-27 22:52:16] [INFO] 开始处理: test_video.mp4
-[2026-08-27 22:52:16] [INFO] 处理参数: 超分 realesr-animevideov3-x2 ×2 / 补帧引擎 NCNN / 补帧模型 rife-v4.6 ×2
-[2026-08-27 22:52:16] [INFO] 开始拆帧: test_video.mp4
-[2026-08-27 22:52:16] [CMD] ffmpeg -y -hwaccel auto -i "i:\Easy4K\_selftest\test_video.mp4" -q:v 2 -vsync 0 "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png"
-[2026-08-27 22:52:17] [INFO] 拆帧中 已处理 60/60
-[2026-08-27 22:52:17] [INFO] ffmpeg.exe 输出:
+[2026-08-28 00:28:27] [WARN] 当前显卡 Radeon RX 580 Series 非 RTX 系列，HDR 转换已自动禁用
+[2026-08-28 00:28:30] [INFO] === 自测模式启动: i:\Easy4K\_selftest\test_video.mp4 (掩码 3) ===
+[2026-08-28 00:28:30] [SUCCESS] 已清理 2 项中间产物: I:\Easy4K\src\Easy4K\bin\Release\net10.0-windows10.0.26100.0\win-x64\Temp
+[2026-08-28 00:28:30] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
+[2026-08-28 00:28:30] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:02  60 帧
+[2026-08-28 00:28:30] [INFO] 自测[3]: 拆帧+超分×2
+[2026-08-28 00:28:30] [INFO] 开始处理: test_video.mp4
+[2026-08-28 00:28:30] [INFO] 处理参数: 超分 realesr-animevideov3-x2 ×2 / 补帧引擎 NCNN / 补帧模型 rife-v4.6 ×2
+[2026-08-28 00:28:30] [INFO] 开始拆帧: test_video.mp4
+[2026-08-28 00:28:30] [CMD] ffmpeg -y -hwaccel auto -i "i:\Easy4K\_selftest\test_video.mp4" -q:v 2 -vsync 0 "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png"
+[2026-08-28 00:28:31] [INFO] 拆帧中 已处理 60/60
+[2026-08-28 00:28:31] [INFO] ffmpeg.exe 输出:
 ...) -> png (native))
 Press [q] to stop, [?] for help
 Output #0, image2, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png':
@@ -22,24 +22,22 @@ Output #0, image2, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.2610
     Metadata:
       encoder         : Lavc62.28.100 png
       handler_name    : VideoHandler
-[out#0/image2 @ 000001b17bb29140] video:3389KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
-frame=   60 fps=0.0 q=-0.0 Lsize=N/A time=00:00:02.00 bitrate=N/A speed=11.1x elapsed=0:00:00.18
-[2026-08-27 22:52:17] [SUCCESS] 拆帧完成: 60 帧
-[2026-08-27 22:52:17] [WARN] 此次超分遇到了因意外导致关闭，已自动清理并重新启动
-[2026-08-27 22:52:17] [INFO] 超分开始: 模型 realesr-animevideov3-x2 ×2（线程 1:2:2）
-[2026-08-27 22:52:17] [CMD] realesrgan-ncnn-vulkan -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/4k_frames" -n realesr-animevideov3-x2 -s 2 -g 0 -j 1:2:2
-[2026-08-27 22:52:17] [INFO] 超分中 已处理 2/60 帧
-[2026-08-27 22:52:18] [INFO] 超分中 已处理 9/60 帧
-[2026-08-27 22:52:19] [INFO] 超分中 已处理 15/60 帧
-[2026-08-27 22:52:20] [INFO] 超分中 已处理 21/60 帧
-[2026-08-27 22:52:21] [INFO] 超分中 已处理 27/60 帧
-[2026-08-27 22:52:22] [INFO] 超分中 已处理 31/60 帧
-[2026-08-27 22:52:23] [INFO] 超分中 已处理 36/60 帧
-[2026-08-27 22:52:24] [INFO] 超分中 已处理 42/60 帧
-[2026-08-27 22:52:25] [INFO] 超分中 已处理 48/60 帧
-[2026-08-27 22:52:26] [INFO] 超分中 已处理 54/60 帧
-[2026-08-27 22:52:27] [INFO] 超分中 已处理 58/60 帧
-[2026-08-27 22:52:28] [INFO] realesrgan-ncnn-vulkan.exe 输出:
+[out#0/image2 @ 00000169d0707f80] video:3389KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=   60 fps=0.0 q=-0.0 Lsize=N/A time=00:00:02.00 bitrate=N/A speed=9.15x elapsed=0:00:00.21
+[2026-08-28 00:28:31] [SUCCESS] 拆帧完成: 60 帧
+[2026-08-28 00:28:31] [INFO] 超分开始: 模型 realesr-animevideov3-x2 ×2（线程 1:2:2）
+[2026-08-28 00:28:31] [CMD] realesrgan-ncnn-vulkan -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/4k_frames" -n realesr-animevideov3-x2 -s 2 -g 0 -j 1:2:2
+[2026-08-28 00:28:32] [INFO] 超分中 已处理 0/60 帧
+[2026-08-28 00:28:33] [INFO] 超分中 已处理 6/60 帧
+[2026-08-28 00:28:34] [INFO] 超分中 已处理 12/60 帧
+[2026-08-28 00:28:35] [INFO] 超分中 已处理 18/60 帧
+[2026-08-28 00:28:36] [INFO] 超分中 已处理 24/60 帧
+[2026-08-28 00:28:37] [INFO] 超分中 已处理 30/60 帧
+[2026-08-28 00:28:38] [INFO] 超分中 已处理 36/60 帧
+[2026-08-28 00:28:39] [INFO] 超分中 已处理 42/60 帧
+[2026-08-28 00:28:40] [INFO] 超分中 已处理 50/60 帧
+[2026-08-28 00:28:41] [INFO] 超分中 已处理 56/60 帧
+[2026-08-28 00:28:42] [INFO] realesrgan-ncnn-vulkan.exe 输出:
 ....50%
 62.50%
 75.00%
@@ -142,5 +140,5 @@ frame=   60 fps=0.0 q=-0.0 Lsize=N/A time=00:00:02.00 bitrate=N/A speed=11.1x el
 75.00%
 87.50%
 87.50%
-[2026-08-27 22:52:28] [SUCCESS] 超分完成: 60 帧
-[2026-08-27 22:52:28] [INFO] 未勾选合并视频，跳过最终视频输出（中间帧保留在临时目录）
+[2026-08-28 00:28:42] [SUCCESS] 超分完成: 60 帧
+[2026-08-28 00:28:42] [INFO] 未勾选合并视频，跳过最终视频输出（中间帧保留在临时目录）

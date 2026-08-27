@@ -1,15 +1,9 @@
 
-[run11_gpuaccel_off] mask=31 note=ffmpeg-gpu-accel=off => REPORT_MISSING
+[run01_split] mask=1 note=split only => PASS (bad-lines=0)
 
-[run01_split] mask=1 note=split only => FAIL (bad-lines=0)
+[run02_split_sr] mask=3 note=split+superres => PASS (bad-lines=0)
 
-[run12_all_switches] mask=31 note=cpu+safe-off+lowerq+gpuaccel-off => REPORT_MISSING
-
-[run13_full_10s] mask=31 note=10s video full+audio => FAIL (bad-lines=0)
-
-[run02_split_sr] mask=3 note=split+superres => FAIL (bad-lines=0)
-
-[run03_split_if] mask=5 note=split+interp NCNN => FAIL (bad-lines=0)
+[run03_split_if] mask=5 note=split+interp NCNN => PASS (bad-lines=0)
 
 [run04_full] mask=15 note=split+sr+if+merge => PASS (bad-lines=0)
 

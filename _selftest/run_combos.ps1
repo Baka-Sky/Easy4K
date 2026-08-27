@@ -75,8 +75,12 @@ function Invoke-Run {
         $t = Get-Content $report -Raw -Encoding UTF8
         $ok  = $t.Contains($markDone)
         $bad = ([regex]::Matches($t, $markFail).Count + [regex]::Matches($t, $markEx).Count)
-        $line = "`n[$name] mask=$mask note=$note => " + $(if ($ok) { "PASS" } else { "FAIL" }) + " (bad-lines=$bad)"
-        if ($ok) { Write-Host $line -ForegroundColor Green } else { Write-Host $line -ForegroundColor Red }
+        $timeout = $t.Contains("TIMEOUT")
+        # 无合并掩码(不含 8)时软件不写"全部完成"标记：以 失败/异常 行数为 0 且未超时判定
+        $noMerge = ($mask -band 8) -ne 8
+        $pass = if ($timeout) { $false } elseif ($noMerge) { $bad -eq 0 } else { $ok }
+        $line = "`n[$name] mask=$mask note=$note => " + $(if ($pass) { "PASS" } else { "FAIL" }) + " (bad-lines=$bad)"
+        if ($pass) { Write-Host $line -ForegroundColor Green } else { Write-Host $line -ForegroundColor Red }
     } else {
         $line = "`n[$name] mask=$mask note=$note => REPORT_MISSING"
         Write-Host $line -ForegroundColor Red
