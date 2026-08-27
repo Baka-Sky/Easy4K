@@ -310,6 +310,13 @@ public partial class MainViewModel : ObservableObject
         _app.UseCpuProcessing = value;
         _settings.Save(_app, _pathConfig);
         _logger.Info(value ? "已开启 CPU 处理模式：超分/补帧模型将全部使用 CPU 推理" : "已关闭 CPU 处理模式");
+        // CPU 模式下安全帧率/降低画质/GPU加速无效：先取消勾选再禁用（UI 监听本属性禁用），避免"勾着却灰显"的别扭状态
+        if (value)
+        {
+            UseSafeFrameRate = false;
+            LowerQualityForVram = false;
+            UseGpuAcceleration = false;
+        }
     }
 
     partial void OnThreadCountChanged(int value)
@@ -618,6 +625,17 @@ public partial class MainViewModel : ObservableObject
     }
 
     public void SetOutputRoot(string path) => OutputRoot = path;
+
+    /// <summary>输出目录改动即持久化到配置文件（否则重启后丢失，输出会错误地回到默认 Output 目录）。
+    /// 空值不持久化（清空输入框只是临时禁用启动，重启后仍恢复上次有效目录）。</summary>
+    partial void OnOutputRootChanged(string value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            _app.OutputRoot = value;
+            _settings.Save(_app, _pathConfig);
+        }
+    }
 
     /// <summary>手动导入外部帧文件夹（跳过拆帧）。校验目录存在且有 PNG 帧，否则拒绝。</summary>
     public void ImportFrameFolder(string dir)
