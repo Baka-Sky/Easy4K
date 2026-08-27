@@ -280,7 +280,7 @@
                         <CheckBox x:Name="GpuAccelerationCb" Content="使FFmpeg尝试使用GPU 加速 (拆帧解码 -hwaccel / 合并帧 GPU 编码器优先，失败自动回退 CPU)" IsChecked="{x:Bind Vm.UseGpuAcceleration, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox Content="使用CPU处理所有模型 (超分/补帧 NCNN -g -1、Offical 强制 CPU，速度很慢，仅在 GPU 不可用/不稳定时建议开启)"
                                   IsChecked="{x:Bind Vm.UseCpuProcessing, Mode=TwoWay}"
-                                  Click="OnUseCpuProcessingClicked"
+                                  Checked="OnUseCpuProcessingChecked"
                                   FontSize="12"/>
                     </StackPanel>
                 </Border>

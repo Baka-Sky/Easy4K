@@ -32,9 +32,17 @@ public sealed partial class MainPage : Page
     /// <summary>CPU 模式确认弹窗是否已打开（防止重复弹）</summary>
     private bool _cpuDialogOpen;
 
+    /// <summary>页面构造/绑定恢复阶段标志：x:Bind TwoWay 初始化赋值 CheckBox 会触发 Checked 事件，
+    /// 此时置 true 跳过弹窗（应用启动/页面切换从 config 恢复勾选都不弹）；仅用户手动勾选才弹。</summary>
+    private bool _cpuDialogFromLoad;
+
     public MainPage()
     {
+        // 必须在 InitializeComponent 之前置标志：x:Bind 绑定初始化在 InitializeComponent 内完成，
+        // 它会用 VM 的值赋值 CheckBox.IsChecked 并触发 Checked 事件（此期间不弹窗）
+        _cpuDialogFromLoad = true;
         InitializeComponent();
+        _cpuDialogFromLoad = false;
         _lastConfirmedThreads = Vm.ThreadCount;
         // 引擎/模型属性变化兜底：即使下拉框 SelectionChanged 未触发，也重建模型列表/刷新倍率锁定
         Loaded += (_, _) =>
@@ -219,13 +227,12 @@ public sealed partial class MainPage : Page
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern uint SendInput(uint nInputs, NativeInput[] pInputs, int cbSize);
 
-    /// <summary>用户手动勾选"使用CPU处理所有模型"时弹窗警告不建议开启；拒绝则回退取消勾选。
-    /// 使用 Click 事件（而非 Checked）：程序从 config 恢复勾选/页面切换时不触发 Click，因此不会弹窗；
-    /// 仅用户手动点击才触发，实现"自动恢复不弹、手动启用弹"。CPU 推理速度远慢于 GPU（可能慢 10 倍以上）。</summary>
-    private async void OnUseCpuProcessingClicked(object sender, RoutedEventArgs e)
+    /// <summary>勾选"使用CPU处理所有模型"时弹窗警告不建议开启；拒绝则回退取消勾选。
+    /// _cpuDialogFromLoad=true（构造/绑定恢复阶段）时不弹窗——应用启动、页面切换从 config 恢复勾选均不触发弹窗，
+    /// 仅用户手动勾选才弹。CPU 推理速度远慢于 GPU（可能慢 10 倍以上）。</summary>
+    private async void OnUseCpuProcessingChecked(object sender, RoutedEventArgs e)
     {
-        // 仅勾选（启用）时确认；取消勾选不弹窗
-        if (!(sender is CheckBox { IsChecked: true })) return;
+        if (_cpuDialogFromLoad) return; // 构造/绑定恢复阶段不弹窗
         if (_cpuDialogOpen) return;
         _cpuDialogOpen = true;
         try
