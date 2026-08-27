@@ -24,6 +24,8 @@ public partial class MainViewModel : ObservableObject
     private readonly ProcessingOrchestrator _orchestratorAssigned;
     private readonly ProcessRunner _runner;
     private CancellationTokenSource? _cts;
+    /// <summary>启动确认弹窗（临时目录冲突 / CPU 最终警告）的等待器：UI 弹窗处理完成后调 DialogResult 唤醒</summary>
+    private TaskCompletionSource<bool>? _dialogTcs;
     private AppSettings _app;
     private readonly ToolPathConfig _pathConfig;
     private readonly CpuGpuMonitor _monitor = new();
@@ -44,6 +46,8 @@ public partial class MainViewModel : ObservableObject
     public event Action<bool>? TempCacheMismatchDetected;
     /// <summary>清理临时文件时请求 UI 释放预览帧句柄（Image.Source 不清空会锁住帧文件删不掉）</summary>
     public event Action? CleanRequested;
+    /// <summary>启动前 CPU 最终警告（UI 弹窗确认"不建议开启 CPU 处理"；确认后调 DialogResult(true) 继续）</summary>
+    public event Action? CpuFinalWarningRequired;
 
     /// <summary>自测/自动化模式下抑制完成弹窗（true 时不弹）</summary>
     public bool SuppressCompletionDialog { get; set; }
@@ -882,6 +886,38 @@ public partial class MainViewModel : ObservableObject
     public string DefaultIfModel => _app.DefaultIfModel;
 
     // ===================== 处理流程 =====================
+
+    /// <summary>启动前确认流程（顺序执行）：
+    /// 1) 临时目录有旧文件/缓存不符 → 弹窗引导（重新选择临时目录/清理缓存/取消），未解决则阻断启动；
+    /// 2) CPU 处理模式开启 → 弹最终警告"不建议开启 CPU 处理"，取消则不启动。
+    /// 弹窗由 MainWindow 弹出并处理，处理完成后回调 DialogResult 唤醒本流程继续。</summary>
+    public async Task<bool> ConfirmStartAsync()
+    {
+        // 1. 临时目录冲突优先处理
+        while (true)
+        {
+            var (status, _) = CheckTempCache(TempRoot);
+            if (status != TempCacheStatus.Mismatch) break;
+            CacheBlocked = true;
+            _dialogTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            TempCacheMismatchDetected?.Invoke(true); // 点开始处理触发：累计愤怒计数
+            var ok = await _dialogTcs.Task;
+            if (!ok) return false; // 用户取消且仍未解决 → 阻断启动
+        }
+        CacheBlocked = false;
+
+        // 2. CPU 最终警告（排在临时目录冲突之后）
+        if (UseCpuProcessing)
+        {
+            _dialogTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            CpuFinalWarningRequired?.Invoke();
+            if (!await _dialogTcs.Task) return false; // 用户取消 → 不启动
+        }
+        return true;
+    }
+
+    /// <summary>UI 弹窗处理结果回调：resolved=true 表示已解决/已确认（继续），false 表示取消（阻断启动）</summary>
+    public void DialogResult(bool resolved) => _dialogTcs?.TrySetResult(resolved);
 
     public async Task StartAsync()
     {

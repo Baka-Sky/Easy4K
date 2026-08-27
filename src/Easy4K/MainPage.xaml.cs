@@ -32,16 +32,18 @@ public sealed partial class MainPage : Page
     /// <summary>CPU 模式确认弹窗是否已打开（防止重复弹）</summary>
     private bool _cpuDialogOpen;
 
-    /// <summary>页面构造/绑定恢复阶段标志：x:Bind TwoWay 初始化赋值 CheckBox 会触发 Checked 事件，
-    /// 此时置 true 跳过弹窗（应用启动/页面切换从 config 恢复勾选都不弹）；仅用户手动勾选才弹。</summary>
+    /// <summary>页面构造/恢复阶段标志：程序从 config/VM 恢复 CPU 勾选时跳过弹窗（应用启动、页面切换都不弹）；
+    /// 仅用户手动勾选才弹。用代码手动赋值（不用 x:Bind）彻底规避绑定初始化时机不确定性。</summary>
     private bool _cpuDialogFromLoad;
 
     public MainPage()
     {
-        // 必须在 InitializeComponent 之前置标志：x:Bind 绑定初始化在 InitializeComponent 内完成，
-        // 它会用 VM 的值赋值 CheckBox.IsChecked 并触发 Checked 事件（此期间不弹窗）
         _cpuDialogFromLoad = true;
         InitializeComponent();
+        _cpuDialogFromLoad = false;
+        // CPU 勾选状态手动同步自 VM（x:Bind 初始化时机不可靠，会让"读取 config 恢复勾选"误触发弹窗）
+        _cpuDialogFromLoad = true;
+        CpuProcessingCb.IsChecked = Vm.UseCpuProcessing;
         _cpuDialogFromLoad = false;
         _lastConfirmedThreads = Vm.ThreadCount;
         // 引擎/模型属性变化兜底：即使下拉框 SelectionChanged 未触发，也重建模型列表/刷新倍率锁定
@@ -72,7 +74,12 @@ public sealed partial class MainPage : Page
         else if (e.PropertyName == nameof(Vm.IfModel))
             Vm.RefreshIfMultiplierLock(Vm.IfModel);
         else if (e.PropertyName == nameof(Vm.UseCpuProcessing))
+        {
             UpdateCpuDependentCheckBoxes();
+            // 程序侧同步勾选状态（如用户拒绝弹窗回退取消勾选时联动；程序设值不弹窗）
+            if (CpuProcessingCb.IsChecked != Vm.UseCpuProcessing)
+                CpuProcessingCb.IsChecked = Vm.UseCpuProcessing;
+        }
     }
 
     // ===================== 补帧模型选择（重写：整体重建下拉框，避开 ComboBox 绑定联动 0x80070490 闪退） =====================
@@ -473,20 +480,8 @@ public sealed partial class MainPage : Page
             await ShowFrameParamsDialogAsync();
             if (Vm.Video is null || !Vm.Video.IsValid) return; // 未确认参数，不启动
         }
-        // CPU 模式最终警告：每次启动处理前再次确认（防止误操作）
-        if (Vm.UseCpuProcessing)
-        {
-            var dlg = new ContentDialog
-            {
-                Title = "不建议开启 CPU 处理",
-                Content = "当前已开启 CPU 处理模式，所有模型将使用 CPU 推理，处理速度会大幅下降（可能比 GPU 慢 10 倍以上）。\n\n确定要以 CPU 模式启动处理吗？",
-                PrimaryButtonText = "继续处理",
-                CloseButtonText = "取消",
-                DefaultButton = ContentDialogButton.Close,
-                XamlRoot = XamlRoot
-            };
-            if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
-        }
+        // 启动前确认（顺序在 VM 内编排）：先临时目录冲突弹窗引导，再 CPU 最终警告；任一被阻断则不启动
+        if (!await Vm.ConfirmStartAsync()) return;
         await Vm.StartAsync();
     }
 

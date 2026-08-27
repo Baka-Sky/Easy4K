@@ -96,7 +96,7 @@ public sealed partial class MainWindow : Window
 
         // 临时目录有旧文件（缓存来自其他视频/残留帧）→ 弹窗引导（重新选择临时目录 / 清理缓存 / 取消）
         // 启动按钮不再因缓存不符置灰：用户每次点"开始处理"都会再次弹窗，直到清理或更换目录；
-        // 愤怒计数仅在"点开始处理"触发时累计，连续超过 5 次后改为"你怎么不听"的警告文案；
+        // 愤怒计数仅在"点开始处理"触发时累计，按下第 5 次仍不处理时改为"你怎么不听"的警告文案；
         // 选视频等其它途径触发的一律保持普通弹窗，不累计。
         Vm.TempCacheMismatchDetected += fromStart => DispatcherQueue.TryEnqueue(async () =>
         {
@@ -105,7 +105,7 @@ public sealed partial class MainWindow : Window
             if (fromStart) _cacheWarnCount++; // 仅点开始处理累计愤怒计数
             try
             {
-                var angry = fromStart && _cacheWarnCount > 5; // 点开始处理第 6 次起上警告
+                var angry = fromStart && _cacheWarnCount >= 5; // 点开始处理第 5 次起上警告
                 var dlg = new ContentDialog
                 {
                     Title = angry ? "你为什么不听呢" : "临时目录有旧文件",
@@ -132,12 +132,29 @@ public sealed partial class MainWindow : Window
                 // 重新评估：已清理/已更换到匹配或无缓存目录 → 放行并重置警告计数；
                 // 仍不匹配（含用户点取消/更换时取消选择器）→ 计数继续累加，下次点击启动再弹
                 Vm.RefreshCacheBlock();
-                if (!Vm.CacheBlocked) _cacheWarnCount = 0;
+                var resolved = !Vm.CacheBlocked;
+                if (resolved) _cacheWarnCount = 0;
+                Vm.DialogResult(resolved); // 唤醒启动确认流程：true 继续（可能弹 CPU 警告），false 阻断启动
             }
             finally
             {
                 _cacheDialogOpen = false;
             }
+        });
+
+        // 启动前 CPU 最终警告（ConfirmStartAsync 在临时目录冲突通过后触发）
+        Vm.CpuFinalWarningRequired += () => DispatcherQueue.TryEnqueue(async () =>
+        {
+            var dlg = new ContentDialog
+            {
+                Title = "不建议开启 CPU 处理",
+                Content = "当前已开启 CPU 处理模式，所有模型将使用 CPU 推理，处理速度会大幅下降（可能比 GPU 慢 10 倍以上）。\n\n确定要以 CPU 模式启动处理吗？",
+                PrimaryButtonText = "继续处理",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = RootFrame.XamlRoot
+            };
+            Vm.DialogResult(await dlg.ShowAsync() == ContentDialogResult.Primary);
         });
 
         // 启动时恢复上次保存的主题（light/dark/system/acrylic）
