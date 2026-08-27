@@ -2,7 +2,7 @@ Easy4K - 一键视频超分补帧工具
 ================================
 
 基于 WinUI 3 (Windows App SDK 2.4) 的桌面应用，一站式完成：
-拆帧 → AI 超分 (Real-ESRGAN) → AI 补帧 (RIFE) → 合并 → 嵌入原音频 → (可选) SDR→HDR
+拆帧 → AI 超分 (Real-ESRGAN) → AI 补帧 (RIFE / Offical) → 合并 → 嵌入原音频 → (可选) SDR→HDR
 
 ----------------------------------------------------------------
 一、环境要求
@@ -12,20 +12,23 @@ Easy4K - 一键视频超分补帧工具
 - SDR→HDR 转换需要 NVIDIA RTX 20/30/40/50 系列 + NVEncC ≥ 9.32
   （非 RTX 显卡软件会自动禁用 HDR 选项）
 - 建议 8GB+ 内存；超分 4K 视频建议 6GB+ 显存（低显存会自动降线程重试）
+- CPU 处理模式无需独显（速度很慢，仅 GPU 不可用时建议）
 
 ----------------------------------------------------------------
 二、目录结构
 ----------------------------------------------------------------
 Easy4K/
 ├── Easy4K.exe                # 主程序
+├── appsettings.json          # 配置（默认模型、线程数、开关、目录等，自动保存）
 ├── crash.log                 # 崩溃日志（程序异常时生成，排障用）
 ├── Temp/                     # 处理中间产物（帧序列/临时视频）
 ├── Output/                   # 最终输出视频
-└── Tools/                    # 外部工具（ffmpeg / realesrgan / rife / NVEncC）
-    ├── FFmpeg-Lei/bin/ffmpeg.exe
-    ├── realesrgan-ncnn/realesrgan-ncnn-vulkan.exe
-    ├── rife/rife-ncnn-vulkan.exe
-    └── NVEncC_9.32_x64/NVEncC64.exe
+└── Tools/                    # 外部工具
+    ├── FFmpeg-Lei/           # ffmpeg / ffprobe
+    ├── realesrgan-ncnn/      # Real-ESRGAN
+    ├── rife/                 # RIFE-ncnn-vulkan + 模型
+    ├── officalrife/          # Offical 补帧（python 运行时 + pkl 模型 + run.py）
+    └── NVEncC_9.32_x64/      # NVEncC（HDR 编码）
 
 工具必须放在 exe 同级的 Tools 目录下（或任意外层包含 Tools 的目录），
 程序启动时自动向上查找定位，无需配置环境变量。
@@ -39,14 +42,20 @@ Easy4K/
 3. 按需勾选处理选项：
    - [√] 拆分帧      把视频拆成 PNG 帧（其他选项的依赖，自动强制勾选）
    - [√] 超分        AI 放大分辨率（模型 + 倍率 2/3/4）
-   - [√] 补帧        AI 补帧提升流畅度（模型 + 倍率 2）
+   - [√] 补帧        AI 补帧提升流畅度（模型 + 倍率 2，引擎 NCNN / Offical）
    - [√] 合并视频    把处理后的帧合成视频
    - [√] 将原音频合并进新视频  自动提取原视频音频并以 PCM 24bit/96kHz 嵌入
    - [ ] SDR→HDR     需要 RTX 显卡，否则自动禁用
-4. 选择超分模型（按倍率自动过滤）与补帧模型
-5. 点击"开始处理"（Ctrl+S），等待完成
-   - 处理中可实时查看：当前阶段进度条 + 逐帧进度 + 详细日志
-6. 输出文件在 Output/ 目录，命名规则：
+4. 选择超分模型（按倍率自动过滤）与补帧模型（补帧引擎 NCNN / Offical 可切换）
+5. （可选）高级性能选项：
+   - 安全帧率        设备丢失/显存溢出时强制停止（默认开启）
+   - 降低部分画质    -u UHD / Offical FP16，降低显存/内存占用
+   - FFmpeg GPU 加速 拆帧 -hwaccel / 合并 GPU 编码器，失败自动回退 CPU
+   - 使用 CPU 处理   全部模型 CPU 推理（开启后自动取消并禁用以上三项）
+6. 点击"开始处理"（Ctrl+S），等待完成
+   - 处理中可实时查看：当前阶段进度条 + 逐帧进度 + 详细日志 + CPU/GPU 占用
+   - 临时目录有旧文件会弹窗引导清理/更换；CPU 模式会弹最终确认
+7. 输出文件在 Output/ 目录，命名规则：
    - 仅合并        {原名}_SDR.mkv
    - 超分+补帧     {原名}_{分辨率}_{帧率}fps_SDR.mkv（HDR 则 _HDR）
    - 嵌入音频追加  _音频嵌入 后缀
@@ -114,6 +123,14 @@ Q5: 日志太多/看不清
 Q6: 程序崩溃
    → 查看 exe 同目录 crash.log，其中记录了异常堆栈
 
+Q7: 开启 CPU 处理后超分还在用 GPU？
+   → 捆绑的 realesrgan-ncnn 无 CPU 后端，超分自动升级为 GPU 处理（日志"超分中(升级GPU)"）；
+     补帧（NCNN -g -1 / Offical -cpu）正常走 CPU
+
+Q8: 提示"临时目录有旧文件"怎么办？
+   → 弹窗提供"重新选择临时目录 / 清理缓存 / 取消"；未处理前点开始会反复弹窗，
+     连续 5 次不处理转为强烈提醒，清理或更换干净目录后放行
+
 ----------------------------------------------------------------
 七、模型说明
 ----------------------------------------------------------------
@@ -122,16 +139,17 @@ Q6: 程序崩溃
   realesrgan-x4plus              通用照片/视频，画质最高（慢）
   realesrgan-x4plus-anime        动漫专用
 
-补帧 (RIFE):
-  rife-v4.6    默认推荐，兼容性最好
-  rife-v4.25/v4.26  画质更好但需要 8GB+ 显存，不支持时自动回退 v4.6
+补帧 (RIFE) 两种引擎：
+  NCNN   rife-v2~v4.26 全系（40+ 模型，含 lite/heavy/large 变体），默认 v4.6
+  Offical official_2.3~4.26_heavy 及 rpr_v7_2.3（10+ 模型，PyTorch 官方实现）
 
 ----------------------------------------------------------------
 八、处理链路（技术说明）
 ----------------------------------------------------------------
 拆帧   ffmpeg -q:v 2 → Temp/input_frames/%08d.png（纯数字命名，RIFE 目录模式硬性要求）
 超分   realesrgan-ncnn-vulkan -n {模型} -s {倍率} → Temp/4k_frames
-补帧   rife-ncnn-vulkan -n {总帧数} -u → Temp/output_frames
+补帧   rife-ncnn-vulkan -n {总帧数} -u → Temp/output_frames（NCNN）
+补帧   python run.py -m {模型目录} -mult 2 → Temp/output_frames（Offical）
 合并   ffmpeg -framerate {fps} -start_number 1 libx265 -crf 18
 音频   提取 flac → 嵌入 pcm_s24le 96000Hz 双声道
 HDR    NVEncC64 SDR→HDR（仅 RTX）
