@@ -272,6 +272,14 @@ public sealed partial class MainPage : Page
         }
     }
 
+    /// <summary>用户取消勾选"使用CPU处理"→ 写回 VM 关闭（触发联动：恢复三个选项可用，保存 config）。
+    /// CheckBox 已去掉 x:Bind 手动同步，取消勾选不会自动写回 VM。</summary>
+    private void OnUseCpuProcessingUnchecked(object sender, RoutedEventArgs e)
+    {
+        if (_cpuDialogFromLoad) return; // 构造/恢复阶段程序赋值不处理
+        if (Vm.UseCpuProcessing) Vm.UseCpuProcessing = false;
+    }
+
     // ===================== 文件 / 目录选择 =====================
 
     private async void OnBrowseInput(object sender, RoutedEventArgs e) => await PickVideoAsync();
