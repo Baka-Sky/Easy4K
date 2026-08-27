@@ -18,6 +18,8 @@ public sealed partial class MainWindow : Window
     private bool _allowClose;
     /// <summary>老缓存弹窗是否已打开（防止重复触发时叠弹多个）</summary>
     private bool _cacheDialogOpen;
+    /// <summary>临时目录旧文件提示弹窗连续弹出次数（用户一直点取消/不处理时逐次累加，超过 5 次转"你怎么不听"警告）</summary>
+    private int _cacheWarnCount;
     /// <summary>亚克力主题材质（作为独立主题选项，与普通主题互斥）</summary>
     private DesktopAcrylicBackdrop? _acrylic;
 
@@ -92,20 +94,27 @@ public sealed partial class MainWindow : Window
             }
         });
 
-        // 临时目录缓存与当前视频不符 → 弹窗引导（可重新选择临时目录 / 清理缓存 / 取消）
-        // 取消 → 阻断启动（启动按钮禁用），再次用快捷键/按钮启动仍会重新弹窗，直到清理缓存或换目录
+        // 临时目录有旧文件（缓存来自其他视频/残留帧）→ 弹窗引导（清理 / 更换 / 取消）
+        // 启动按钮不再因缓存不符置灰：用户每次点"开始处理"都会再次弹窗，直到清理或更换目录；
+        // 连续弹出超过 5 次后改为"你怎么不听"的警告文案。
         Vm.TempCacheMismatchDetected += () => DispatcherQueue.TryEnqueue(async () =>
         {
             if (_cacheDialogOpen) return;
             _cacheDialogOpen = true;
+            _cacheWarnCount++;
             try
             {
+                var angry = _cacheWarnCount > 5; // 第 6 次起上警告
                 var dlg = new ContentDialog
                 {
-                    Title = "临时目录缓存不符",
-                    Content = "当前临时目录中的缓存来自其他视频，直接处理会被旧缓存误导。\n\n请重新选择临时目录，或先清理缓存。",
-                    PrimaryButtonText = "重新选择临时目录",
-                    SecondaryButtonText = "清理缓存",
+                    Title = angry ? "你为什么不听呢" : "临时目录有旧文件",
+                    Content = angry
+                        ? "欸朋友，我跟你说话你怎么不听呢？都说了临时目录有旧文件会导致处理中断，你为什么不听呢？\n\n" +
+                          "请清理旧临时文件，或更换临时目录后再继续！"
+                        : "当前临时目录中有来自其他视频的旧文件/缓存，直接处理会被旧缓存误导导致中断。\n\n" +
+                          "请清理旧临时文件，或更换临时目录后再继续。",
+                    PrimaryButtonText = "清理旧文件",
+                    SecondaryButtonText = "更换目录",
                     CloseButtonText = "取消",
                     DefaultButton = ContentDialogButton.Primary,
                     XamlRoot = RootFrame.XamlRoot
@@ -113,16 +122,17 @@ public sealed partial class MainWindow : Window
                 var r = await dlg.ShowAsync();
                 if (r == ContentDialogResult.Primary)
                 {
-                    await PickTempFolderAsync();
-                }
-                else if (r == ContentDialogResult.Secondary)
-                {
                     // 清理缓存（双重警告确认后执行，含 cache.json 一并删除）
                     await ConfirmCleanTempAsync();
                 }
-                // 任何结果后重新评估阻断状态：
-                // 换了匹配/无缓存的目录或已清理 → 放行；仍不匹配（含用户点取消）→ 保持阻断禁用启动
+                else if (r == ContentDialogResult.Secondary)
+                {
+                    await PickTempFolderAsync();
+                }
+                // 重新评估：已清理/已更换到匹配或无缓存目录 → 放行并重置警告计数；
+                // 仍不匹配（含用户点取消/更换时取消选择器）→ 计数继续累加，下次点击启动再弹
                 Vm.RefreshCacheBlock();
+                if (!Vm.CacheBlocked) _cacheWarnCount = 0;
             }
             finally
             {

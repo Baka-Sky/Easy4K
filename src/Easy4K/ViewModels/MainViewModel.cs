@@ -441,8 +441,8 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>输入+输出均配置完整才可启动：输出目录与临时目录非空，且（有外部帧文件夹 或 已检测到有效输入视频文件）。
-    /// 任一条件不满足 → 按钮置灰不可点。</summary>
-    public bool CanStart => !IsProcessing && !CacheBlocked
+    /// 临时目录缓存不符不再禁用按钮——改为点击启动时弹窗引导（清理/更换/取消），避免"按钮灰了但不知道为什么"。</summary>
+    public bool CanStart => !IsProcessing
         && !string.IsNullOrWhiteSpace(OutputRoot)
         && !string.IsNullOrWhiteSpace(TempRoot)
         && (HasExternalFrames || (Video is not null && Video.IsValid && File.Exists(InputVideo)));
