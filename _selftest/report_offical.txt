@@ -1,0 +1,57 @@
+[2026-08-26 19:27:31] [WARN] 当前显卡 Radeon RX 580 Series 非 RTX 系列，HDR 转换已自动禁用
+[2026-08-26 19:27:31] [INFO] 主题切换为: Dark
+[2026-08-26 19:27:33] [INFO] === 自测模式启动: I:\Easy4K\_selftest\test_small.mp4 (掩码 12) ===
+[2026-08-26 19:27:33] [SUCCESS] 已清理 7 项中间产物: I:\Easy4K\src\Easy4K\bin\Release\net10.0-windows10.0.26100.0\win-x64\Temp
+[2026-08-26 19:27:33] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:00  15 帧
+[2026-08-26 19:27:33] [INFO] 已检测视频: 640 x 360  30.00 fps  时长 00:00  15 帧
+[2026-08-26 19:27:34] [INFO] 自测[12]: 拆帧+补帧×2+合并
+[2026-08-26 19:27:34] [INFO] 开始处理: test_small.mp4
+[2026-08-26 19:27:34] [INFO] 处理参数: 超分 realesrgan-x4plus ×4 / 补帧引擎 Offical / 补帧模型 official_4.26 ×2
+[2026-08-26 19:27:34] [INFO] 开始拆帧: test_small.mp4
+[2026-08-26 19:27:34] [CMD] ffmpeg -y -i "I:\Easy4K\_selftest\test_small.mp4" -q:v 2 -vsync 0 "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png"
+[2026-08-26 19:27:34] [INFO] 拆帧中 已处理 15/15
+[2026-08-26 19:27:34] [INFO] ffmpeg.exe 输出:
+...e) -> png (native))
+Press [q] to stop, [?] for help
+Output #0, image2, to 'I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames/%08d.png':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.100
+  Stream #0:0(und): Video: png, rgb24(pc, gbr/unknown/unknown, progressive), 640x360 [SAR 1:1 DAR 16:9], q=2-31, 200 kb/s, 30 fps, 30 tbn (default)
+    Metadata:
+      encoder         : Lavc62.28.100 png
+      handler_name    : VideoHandler
+[out#0/image2 @ 00000216e461b740] video:735KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=   15 fps=0.0 q=-0.0 Lsize=N/A time=00:00:00.50 bitrate=N/A speed=12.1x elapsed=0:00:00.04
+[2026-08-26 19:27:34] [SUCCESS] 拆帧完成: 15 帧
+[2026-08-26 19:27:34] [INFO] 补帧开始(Offical): 模型 official_4.26 ×2 (30→60fps)（线程 4）
+[2026-08-26 19:27:34] [CMD] python "I:\Easy4K\src\Easy4K\bin\Release\net10.0-windows10.0.26100.0\win-x64\Tools\officalrife\run.py" -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/input_frames" -o "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/output_frames" -m "I:\Easy4K\src\Easy4K\bin\Release\net10.0-windows10.0.26100.0\win-x64\Tools\officalrife\models\official_4.26" -mult 2 -threads 4
+[2026-08-26 19:27:55] [WARN] Offical 引擎未检测到可用 GPU（CUDA），本次补帧降级为 CPU 推理
+[2026-08-26 19:27:56] [INFO] 补帧中(Offical)（降级） 已处理 1/30 帧
+[2026-08-26 19:27:57] [INFO] 补帧中(Offical)（降级） 已处理 5/30 帧
+[2026-08-26 19:27:58] [INFO] 补帧中(Offical)（降级） 已处理 11/30 帧
+[2026-08-26 19:27:59] [INFO] 补帧中(Offical)（降级） 已处理 15/30 帧
+[2026-08-26 19:28:00] [INFO] 补帧中(Offical)（降级） 已处理 21/30 帧
+[2026-08-26 19:28:01] [INFO] 补帧中(Offical)（降级） 已处理 25/30 帧
+[2026-08-26 19:28:02] [INFO] 补帧中(Offical)（降级） 已处理 29/30 帧
+[2026-08-26 19:28:02] [SUCCESS] 补帧完成(Offical): 29 帧
+[2026-08-26 19:28:02] [INFO] 开始合并视频（编码：CPU libx265）
+[2026-08-26 19:28:02] [CMD] ffmpeg -y -framerate 60 -start_number 1 -i "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/output_frames/%08d.png" -c:v libx265 -preset medium -crf 18 -threads 0 -pix_fmt yuv420p -an "I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Temp/temp_video.mkv"
+[2026-08-26 19:28:03] [INFO] 合并中 已处理 29/30
+[2026-08-26 19:28:03] [INFO] ffmpeg.exe 输出:
+...  Stream #0:0: Video: hevc, yuv420p(tv, progressive), 640x360, q=2-31, 60 fps, 1k tbn
+    Metadata:
+      encoder         : Lavc62.28.100 libx265
+    Side data:
+      CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[out#0/matroska @ 0000026eb38399c0] video:80KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:2KiB muxing overhead: 3.963843%
+frame=   29 fps=0.0 q=28.4 Lsize=      83KiB time=00:00:00.45 bitrate=1513.1kbits/s speed=0.965x elapsed=0:00:00.46    
+x265 [info]: frame I:      1, Avg QP:21.53  kb/s: 5111.04 
+x265 [info]: frame P:      7, Avg QP:22.56  kb/s: 2673.12 
+x265 [info]: frame B:     21, Avg QP:27.83  kb/s: 734.13  
+x265 [info]: Weighted P-Frames: Y:0.0% UV:0.0%
+encoded 29 frames in 0.35s (81.69 fps), 1353.09 kb/s, Avg QP:26.34
+[2026-08-26 19:28:03] [SUCCESS] 合并视频完成
+[2026-08-26 19:28:03] [SUCCESS] 全部完成！输出: I:/Easy4K/src/Easy4K/bin/Release/net10.0-windows10.0.26100.0/win-x64/Output/test_small_640x360_60fps_SDR.mkv

@@ -30,3 +30,5 @@ Backup_*/
 selftest_*.txt
 re_stderr.txt
 DebugINFO.txt
+_selftest/out/
+_selftest/test_in/
