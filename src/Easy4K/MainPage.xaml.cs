@@ -255,9 +255,14 @@ public sealed partial class MainPage : Page
                 XamlRoot = XamlRoot
             };
             var result = await dlg.ShowAsync();
-            if (result != ContentDialogResult.Primary)
+            if (result == ContentDialogResult.Primary)
             {
-                // 拒绝 → 回退取消勾选（TwoWay 绑定同步关闭）
+                // 确认开启 → 写回 VM（触发联动：取消勾选安全帧率/降低画质/GPU加速并禁用，保存 config）
+                Vm.UseCpuProcessing = true;
+            }
+            else
+            {
+                // 拒绝 → 回退取消勾选（VM 同步关闭，UI 经 PropertyChanged 同步取消勾选）
                 Vm.UseCpuProcessing = false;
             }
         }
