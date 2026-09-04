@@ -89,6 +89,7 @@ public partial class MainViewModel : ObservableObject
         _useGpuAcceleration = app.UseGpuAcceleration;
         _useCpuProcessing = app.UseCpuProcessing;
         _noReport = !app.ReportEnabled;
+        _skipStartupSelfTest = !app.StartupSelfTest;
         _threadCount = Math.Clamp(app.ThreadCount, 1, 32);
         _hdrSaturation = Math.Clamp(app.HdrSaturation, 0, 200);
         _hdrContrast = Math.Clamp(app.HdrContrast, 0, 200);
@@ -289,6 +290,10 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _noReport;
 
+    /// <summary>勾选=每次启动跳过自动测试(自检)（反相存入配置 StartupSelfTest，下次启动生效）</summary>
+    [ObservableProperty]
+    private bool _skipStartupSelfTest;
+
     /// <summary>是否显示图片预览（处理中可随时开关）</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PreviewHintText))]
@@ -351,6 +356,14 @@ public partial class MainViewModel : ObservableObject
         _settings.Save(_app, _pathConfig);
         _logger.Info(value ? "已勾选不生成配置文件：本次及后续处理完成不再生成 HTML 报告"
                            : "已取消：处理完成将自动生成 HTML 报告");
+    }
+
+    partial void OnSkipStartupSelfTestChanged(bool value)
+    {
+        _app.StartupSelfTest = !value; // 跳过测试 = 关掉 StartupSelfTest；向导第4步开关与此共享同一字段
+        _settings.Save(_app, _pathConfig);
+        _logger.Info(value ? "已勾选跳过测试：下次启动不再自动跑测试视频自检"
+                           : "已取消：下次启动将自动跑测试视频自检（可在进行中页跳过）");
     }
 
     partial void OnThreadCountChanged(int value)

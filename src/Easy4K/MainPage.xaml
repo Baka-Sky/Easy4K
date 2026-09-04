@@ -275,6 +275,8 @@
                                    FontSize="10" Opacity="0.6"/>
                         <TextBlock Text="{x:Bind Vm.ThreadWarnText, Mode=OneWay}" Foreground="Orange"
                                    FontSize="11" TextWrapping="Wrap" Visibility="{x:Bind Vm.ThreadWarnVis, Mode=OneWay}"/>
+                        <CheckBox x:Name="SkipStartupSelfTestCb" Content="跳过启动测试（每次打开不再自动跑测试视频自检）"
+                                  IsChecked="{x:Bind Vm.SkipStartupSelfTest, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="SafeFrameRateCb" Content="开启安全帧率 (NCNN/Offical 遇到设备丢失/显存/内存溢出时强制停止)" IsChecked="{x:Bind Vm.UseSafeFrameRate, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="LowerQualityCb" Content="降低部分画质以降低显存/内存占用 (-u：NCNN UHD / Offical FP16，可与安全帧率共存)" IsChecked="{x:Bind Vm.LowerQualityForVram, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="GpuAccelerationCb" Content="使FFmpeg尝试使用GPU 加速 (拆帧解码 -hwaccel / 合并帧 GPU 编码器优先，失败自动回退 CPU)" IsChecked="{x:Bind Vm.UseGpuAcceleration, Mode=TwoWay}" FontSize="12"/>
