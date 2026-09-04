@@ -76,7 +76,7 @@
                     <StackPanel MaxWidth="600" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" Padding="0,16">
                         <TextBlock Text="协议声明" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,4"/>
                         <TextBlock Text="在继续之前，请阅读以下 Easy4K 使用协议、开源许可与隐私说明。"
-                                   HorizontalAlignment="Center" Opacity="0.7" TextAlignment="Center" Margin="0,0,0,8"/>
+                                   HorizontalAlignment="Center" Opacity="0.7" TextAlignment="Center" TextWrapping="Wrap" Margin="0,0,0,8"/>
                         <TextBox x:Name="LicenseBox" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
                                  FontFamily="Consolas" FontSize="11" MinHeight="200" MaxHeight="280"
                                  ScrollViewer.VerticalScrollBarVisibility="Auto"/>
@@ -102,7 +102,7 @@
                     <StackPanel MaxWidth="600" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" Padding="0,16">
                         <TextBlock Text="硬件声明" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,4"/>
                         <TextBlock Text="Easy4K 依赖你的显卡与第三方 AI 工具，请确认硬件满足以下最低要求。"
-                                   HorizontalAlignment="Center" Opacity="0.7" TextAlignment="Center" Margin="0,0,0,8"/>
+                                   HorizontalAlignment="Center" Opacity="0.7" TextAlignment="Center" TextWrapping="Wrap" Margin="0,0,0,8"/>
                         <TextBox x:Name="HardwareBox" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
                                  FontFamily="Consolas" FontSize="11" MinHeight="180" MaxHeight="260"
                                  ScrollViewer.VerticalScrollBarVisibility="Auto"/>
@@ -127,7 +127,7 @@
                     <StackPanel MaxWidth="600" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" Padding="0,16">
                         <TextBlock Text="配置软件" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,4"/>
                         <TextBlock Text="选择软件默认启用的处理步骤。启动时软件会先用一段 1 秒测试视频按这里的默认步骤自检，通过后再进入正式使用。"
-                                   HorizontalAlignment="Center" Opacity="0.7" TextAlignment="Center" Margin="0,0,0,4"/>
+                                   HorizontalAlignment="Center" Opacity="0.7" TextAlignment="Center" TextWrapping="Wrap" Margin="0,0,0,4"/>
                         <TextBlock Text="高级功能选择" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,6,0,0"/>
                         <Border Background="{ThemeResource CardBgBrush}" BorderBrush="{ThemeResource CardBorderBrush}"
                                 BorderThickness="1" CornerRadius="8" Padding="18,14">
@@ -166,7 +166,7 @@
                     <StackPanel MaxWidth="600" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" Padding="0,16">
                         <TextBlock Text="处理报告配置" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,4"/>
                         <TextBlock Text="每次视频处理完成后，Easy4K 会自动生成一份 HTML 报告并保存到下面指定的目录。"
-                                   HorizontalAlignment="Center" Opacity="0.7" TextAlignment="Center" Margin="0,0,0,8"/>
+                                   HorizontalAlignment="Center" Opacity="0.7" TextAlignment="Center" TextWrapping="Wrap" Margin="0,0,0,8"/>
                         <TextBox x:Name="ReportDesc" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
                                  FontFamily="Consolas" FontSize="11" MinHeight="120" MaxHeight="180"
                                  ScrollViewer.VerticalScrollBarVisibility="Auto"/>
@@ -199,7 +199,7 @@
                 <StackPanel MaxWidth="600" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="14">
                     <TextBlock Text="选择默认主题配置" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,4"/>
                     <TextBlock Text="选择 Easy4K 的默认外观。之后你随时可以在菜单里切换主题。"
-                               HorizontalAlignment="Center" Opacity="0.7" Margin="0,0,0,8"/>
+                               HorizontalAlignment="Center" Opacity="0.7" TextAlignment="Center" TextWrapping="Wrap" Margin="0,0,0,8"/>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="10">
                         <RadioButton x:Name="ThemeLightRb" Content="浅色" Checked="OnThemeChanged"/>
                         <RadioButton x:Name="ThemeDarkRb" Content="深色" Checked="OnThemeChanged"/>
