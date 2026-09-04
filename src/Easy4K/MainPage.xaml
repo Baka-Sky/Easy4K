@@ -282,6 +282,8 @@
                                   Checked="OnUseCpuProcessingChecked"
                                   Unchecked="OnUseCpuProcessingUnchecked"
                                   FontSize="12"/>
+                        <CheckBox x:Name="NoReportCb" Content="不生成配置文件（处理完成后不再生成 HTML 报告文件）"
+                                  IsChecked="{x:Bind Vm.NoReport, Mode=TwoWay}" FontSize="12"/>
                     </StackPanel>
                 </Border>
 

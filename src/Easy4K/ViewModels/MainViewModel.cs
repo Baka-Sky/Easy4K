@@ -88,6 +88,7 @@ public partial class MainViewModel : ObservableObject
         _lowerQualityForVram = app.LowerQualityForVram;
         _useGpuAcceleration = app.UseGpuAcceleration;
         _useCpuProcessing = app.UseCpuProcessing;
+        _noReport = !app.ReportEnabled;
         _threadCount = Math.Clamp(app.ThreadCount, 1, 32);
         _hdrSaturation = Math.Clamp(app.HdrSaturation, 0, 200);
         _hdrContrast = Math.Clamp(app.HdrContrast, 0, 200);
@@ -284,6 +285,10 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _useCpuProcessing;
 
+    /// <summary>勾选=处理完成后不生成 HTML 配置文件(报告)（反相存入配置 ReportEnabled，与向导第4/5步同一开关）</summary>
+    [ObservableProperty]
+    private bool _noReport;
+
     /// <summary>是否显示图片预览（处理中可随时开关）</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PreviewHintText))]
@@ -338,6 +343,14 @@ public partial class MainViewModel : ObservableObject
             LowerQualityForVram = false;
             UseGpuAcceleration = false;
         }
+    }
+
+    partial void OnNoReportChanged(bool value)
+    {
+        _app.ReportEnabled = !value; // 不生成报告 = 关掉 ReportEnabled；向导开关与此共享同一字段
+        _settings.Save(_app, _pathConfig);
+        _logger.Info(value ? "已勾选不生成配置文件：本次及后续处理完成不再生成 HTML 报告"
+                           : "已取消：处理完成将自动生成 HTML 报告");
     }
 
     partial void OnThreadCountChanged(int value)
