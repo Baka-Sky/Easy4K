@@ -111,11 +111,19 @@ public sealed partial class WelcomeWindow : Window
         }
         catch { }
 
-        // intro 已移除，欢迎内容直接可见；配置页勾选与主界面一致（回填后再挂事件避免干扰恢复）
+        // 欢迎内容直接可见；配置页勾选与主界面一致（回填后再挂事件避免干扰恢复）
         HookStepLinkage();
+        HookReportToggleSync();
 
         // 静默循环播放欢迎音乐
         await PlayMusicLoopAsync();
+    }
+
+    /// <summary>第 4/5 步两个"生成配置文件(HTML报告)"开关互相同步（XAML 事件改代码挂接，规避解析期崩溃）。</summary>
+    private void HookReportToggleSync()
+    {
+        CfgReportTs.Toggled += OnReportToggleChanged;
+        ReportEnabledTs.Toggled += OnReportToggleChanged;
     }
 
     /// <summary>与主界面一致的强制勾选联动（MainViewModel 同规则）：

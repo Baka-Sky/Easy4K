@@ -141,8 +141,7 @@
                         </Border>
                         <ToggleSwitch x:Name="CfgStartupTestTs" Header="每次启动先跑测试视频自检" OnContent="开启" OffContent="关闭" IsOn="True"/>
                         <ToggleSwitch x:Name="CfgReportTs" Header="处理完成后生成配置文件（HTML 处理报告）"
-                                      OnContent="生成" OffContent="不生成" IsOn="True"
-                                      Toggled="OnReportToggleChanged"
+                                      OnContent="生成" OffContent="不生成"
                                       ToolTipService.ToolTip="勾选开关后，每次正式处理完成都会生成一份 HTML 报告；选择“不生成”则不写任何报告文件，相当于完全不生成配置文件。"/>
                         <TextBlock Text="模型 / 倍率 / 线程等更多默认参数，可在进入软件后在主界面调整并“保存当前设置为默认”。"
                                    Opacity="0.6" FontSize="12" TextWrapping="Wrap"/>
@@ -168,7 +167,7 @@
                         <TextBox x:Name="ReportDesc" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
                                  FontFamily="Consolas" FontSize="11" MinHeight="120" MaxHeight="180"
                                  ScrollViewer.VerticalScrollBarVisibility="Auto"/>
-                        <ToggleSwitch x:Name="ReportEnabledTs" Header="处理完成后自动生成 HTML 报告" OnContent="开启" OffContent="关闭" IsOn="True" Toggled="OnReportToggleChanged"/>
+                        <ToggleSwitch x:Name="ReportEnabledTs" Header="处理完成后自动生成 HTML 报告" OnContent="开启" OffContent="关闭"/>
                         <ToggleSwitch x:Name="ReportAutoOpenTs" Header="生成后自动用浏览器打开" OnContent="开启" OffContent="关闭" IsOn="True"/>
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
