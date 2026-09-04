@@ -86,6 +86,8 @@ public partial class App : Application
         // 软件内自测命令行模式（不弹 OOBE、不启动自动自检）
         var cmdLine = Environment.GetCommandLineArgs();
         var selftestCli = false;
+        var autoTestCli = false;
+        var autoTestFull = false;
         for (int i = 0; i < cmdLine.Length; i++)
         {
             if (cmdLine[i].Equals("--selftest", StringComparison.OrdinalIgnoreCase) && i + 2 < cmdLine.Length)
@@ -108,10 +110,21 @@ public partial class App : Application
                 _ = RunSelfCleanAsync(dir, report);
                 break;
             }
+
+            // GUI 全面自动测试: Easy4K.exe --autotest-all [full]（全模型×2；full 时全部模型×2~5 全矩阵）
+            if (cmdLine[i].Equals("--autotest-all", StringComparison.OrdinalIgnoreCase))
+            {
+                autoTestCli = true;
+                if (i + 1 < cmdLine.Length
+                    && (cmdLine[i + 1].Equals("full", StringComparison.OrdinalIgnoreCase)
+                        || cmdLine[i + 1].Equals("matrix", StringComparison.OrdinalIgnoreCase)))
+                    autoTestFull = true;
+                break;
+            }
         }
 
         // 首次运行：先展示 OOBE 设置向导（完成后保存配置并衔接正式主界面）
-        if (!selftestCli && !app.SetupCompleted)
+        if (!selftestCli && !autoTestCli && !app.SetupCompleted)
         {
             var wizard = new WelcomeWindow(Services, settingsSvc, app, toolCfg);
             wizard.Completed += () =>
@@ -123,7 +136,9 @@ public partial class App : Application
             return;
         }
 
-        OpenMainWindow(startupSelfTest: !selftestCli, isCliSelftest: selftestCli);
+        OpenMainWindow(startupSelfTest: !selftestCli && !autoTestCli, isCliSelftest: selftestCli);
+        if (autoTestCli)
+            _ = RunAutoTestDelayedAsync(autoTestFull);
     }
 
     /// <summary>创建并显示正式主窗口；非命令行模式且配置开启时，显示后自动衔接"启动自检 → 正式界面"。</summary>
@@ -152,6 +167,20 @@ public partial class App : Application
         catch (Exception ex)
         {
             File.AppendAllText(CrashLogPath, $"[StartupSelfTest @ {DateTime.Now}]\n{ex}\n\n");
+        }
+    }
+
+    /// <summary>延迟到主窗口/页面加载完成后再跑 GUI 全面自动测试（避免与启动自检同时跑）。</summary>
+    private static async Task RunAutoTestDelayedAsync(bool fullMatrix)
+    {
+        try
+        {
+            await Task.Delay(1500);
+            await Services.RunAutoTestAllAsync(fullMatrix);
+        }
+        catch (Exception ex)
+        {
+            File.AppendAllText(CrashLogPath, $"[AutoTest @ {DateTime.Now}]\n{ex}\n\n");
         }
     }
 

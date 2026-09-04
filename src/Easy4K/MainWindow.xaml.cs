@@ -94,6 +94,17 @@ public sealed partial class MainWindow : Window
             Vm.Logger.Info(ok ? "启动自检通过，已衔接正式界面" : "启动自检跳过/未通过，仍可正常处理");
         });
 
+        // 自动测试结束 → 回主页并展示结果
+        Vm.AutoTestFinished += ok => DispatcherQueue.TryEnqueue(() =>
+        {
+            NavButtons.Visibility = Visibility.Collapsed;
+            CleanTempMenuItem.IsEnabled = true;
+            ThinProgressBar.Visibility = Visibility.Collapsed;
+            NavigateToHome();
+            Vm.ProgressDetail = ok ? "自动测试全部通过，总结见日志" : "自动测试结束（有失败项），详见日志/总结文件";
+            Vm.Logger.Info(ok ? "自动测试全部通过" : "自动测试结束（存在失败项），请查看 Res\\autotest_summary.txt 与失败保留目录");
+        });
+
         // 清理临时文件：主页进度条显示清理进度（不定进度转圈，避免 0→100→0 跳变抽搐；不切换进行中页）
         Vm.PropertyChanged += (s, e) => DispatcherQueue.TryEnqueue(() =>
         {

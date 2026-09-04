@@ -5,7 +5,6 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    xmlns:oobe="using:Easy4K.Welcome"
     mc:Ignorable="d"
     Title="Easy4K">
 
@@ -25,10 +24,10 @@
 
         <!-- 内容宿主 -->
         <Grid Grid.Row="1">
-            <!-- ============ 第 1 步：欢迎（100% 复刻 ClassIsland WelcomePage 布局） ============ -->
+            <!-- 第 1 步：欢迎（100% 复刻 ClassIsland WelcomePage 布局，普通文字，无方块动画） -->
             <Grid x:Name="StepWelcome">
-                <!-- 正式内容：intro 动画结束后 0.2s 淡入 -->
-                <Grid x:Name="WelcomeContent" Opacity="0">
+                <!-- 正式内容：logo + 品牌字母 + 圆形下一步按钮 -->
+                <Grid x:Name="WelcomeContent">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
@@ -69,9 +68,6 @@
                                    Opacity="0.75" Margin="0,8,0,8" FontSize="12"/>
                     </Grid>
                 </Grid>
-
-                <!-- intro 动画覆盖在上层 -->
-                <oobe:OobeIntroControl x:Name="Intro"/>
             </Grid>
 
             <!-- ============ 第 2 步：协议声明 ============ -->
@@ -131,7 +127,8 @@
                     <StackPanel MaxWidth="600" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" Padding="0,16">
                         <TextBlock Text="配置软件" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,4"/>
                         <TextBlock Text="选择软件默认启用的处理步骤。启动时软件会先用一段 1 秒测试视频按这里的默认步骤自检，通过后再进入正式使用。"
-                                   HorizontalAlignment="Center" Opacity="0.7" TextAlignment="Center" Margin="0,0,0,8"/>
+                                   HorizontalAlignment="Center" Opacity="0.7" TextAlignment="Center" Margin="0,0,0,4"/>
+                        <TextBlock Text="高级功能选择" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,6,0,0"/>
                         <Border Background="{ThemeResource CardBgBrush}" BorderBrush="{ThemeResource CardBorderBrush}"
                                 BorderThickness="1" CornerRadius="8" Padding="18,14">
                             <StackPanel Spacing="8">
@@ -143,6 +140,10 @@
                             </StackPanel>
                         </Border>
                         <ToggleSwitch x:Name="CfgStartupTestTs" Header="每次启动先跑测试视频自检" OnContent="开启" OffContent="关闭" IsOn="True"/>
+                        <ToggleSwitch x:Name="CfgReportTs" Header="处理完成后生成配置文件（HTML 处理报告）"
+                                      OnContent="生成" OffContent="不生成" IsOn="True"
+                                      Toggled="OnReportToggleChanged"
+                                      ToolTipService.ToolTip="勾选开关后，每次正式处理完成都会生成一份 HTML 报告；选择“不生成”则不写任何报告文件，相当于完全不生成配置文件。"/>
                         <TextBlock Text="模型 / 倍率 / 线程等更多默认参数，可在进入软件后在主界面调整并“保存当前设置为默认”。"
                                    Opacity="0.6" FontSize="12" TextWrapping="Wrap"/>
                         <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
@@ -167,7 +168,7 @@
                         <TextBox x:Name="ReportDesc" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
                                  FontFamily="Consolas" FontSize="11" MinHeight="120" MaxHeight="180"
                                  ScrollViewer.VerticalScrollBarVisibility="Auto"/>
-                        <ToggleSwitch x:Name="ReportEnabledTs" Header="处理完成后自动生成 HTML 报告" OnContent="开启" OffContent="关闭" IsOn="True"/>
+                        <ToggleSwitch x:Name="ReportEnabledTs" Header="处理完成后自动生成 HTML 报告" OnContent="开启" OffContent="关闭" IsOn="True" Toggled="OnReportToggleChanged"/>
                         <ToggleSwitch x:Name="ReportAutoOpenTs" Header="生成后自动用浏览器打开" OnContent="开启" OffContent="关闭" IsOn="True"/>
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
@@ -198,9 +199,10 @@
                     <TextBlock Text="选择 Easy4K 的默认外观。之后你随时可以在菜单里切换主题。"
                                HorizontalAlignment="Center" Opacity="0.7" Margin="0,0,0,8"/>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="10">
-                        <RadioButton x:Name="ThemeSystemRb" Content="跟随系统" IsChecked="True" Checked="OnThemeChanged"/>
                         <RadioButton x:Name="ThemeLightRb" Content="浅色" Checked="OnThemeChanged"/>
                         <RadioButton x:Name="ThemeDarkRb" Content="深色" Checked="OnThemeChanged"/>
+                        <RadioButton x:Name="ThemeAcrylicRb" Content="亚克力" Checked="OnThemeChanged"/>
+                        <RadioButton x:Name="ThemeSystemRb" Content="跟随系统" IsChecked="True" Checked="OnThemeChanged"/>
                     </StackPanel>
                     <TextBlock Text="预览" FontWeight="SemiBold" HorizontalAlignment="Center"/>
                     <Border Width="300" Height="90" CornerRadius="10" BorderThickness="1" BorderBrush="{ThemeResource CardBorderBrush}"

@@ -33,6 +33,7 @@ public sealed partial class WelcomeWindow : Window
     private int _step;
     private Windows.Media.Playback.MediaPlayer? _music;
     private bool _finished;
+    private Microsoft.UI.Xaml.Media.DesktopAcrylicBackdrop? _welcomeAcrylic;
 
     public WelcomeWindow(MainViewModel vm, SettingsService settings, AppSettings app, ToolPathConfig toolCfg)
     {
@@ -46,9 +47,7 @@ public sealed partial class WelcomeWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(TitleBar);
         try { AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico")); } catch { }
-        // 跨电脑兼容背景：优先 Mica（Win11），失败回退 Acrylic（Win10 支持），再失败纯色
-        try { SystemBackdrop = new MicaBackdrop(); }
-        catch { try { SystemBackdrop = new DesktopAcrylicBackdrop(); } catch { } }
+        // 背景主题由第 6 步四选（浅色/深色/亚克力/跟随系统）决定，回填后由 ApplyOobeTheme 应用
 
         // 固定 800x600 居中（与 ClassIsland WelcomeWindow 一致），不可缩放
         var presenter = AppWindow.Presenter as OverlappedPresenter;
@@ -95,12 +94,14 @@ public sealed partial class WelcomeWindow : Window
         CfgAudioCb.IsChecked = _app.DefaultMergeAudio;
         CfgStartupTestTs.IsOn = _app.StartupSelfTest;
         ReportEnabledTs.IsOn = _app.ReportEnabled;
+        CfgReportTs.IsOn = _app.ReportEnabled; // 与第 5 步同源；切换时互相同步
         ReportAutoOpenTs.IsOn = _app.ReportAutoOpen;
         ReportDirBox.Text = string.IsNullOrWhiteSpace(_app.ReportDir) ? "Reports" : _app.ReportDir;
         switch (_app.Theme)
         {
             case "light": ThemeLightRb.IsChecked = true; break;
             case "dark": ThemeDarkRb.IsChecked = true; break;
+            case "acrylic": ThemeAcrylicRb.IsChecked = true; break;
             default: ThemeSystemRb.IsChecked = true; break;
         }
 
@@ -110,29 +111,31 @@ public sealed partial class WelcomeWindow : Window
         }
         catch { }
 
-        // intro 动画结束 → 正式欢迎内容 0.2s 淡入（原版 ContentRoot.anim）
-        Intro.AnimationEnd += (_, _) =>
-        {
-            try
-            {
-                var fade = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
-                {
-                    From = 0,
-                    To = 1,
-                    Duration = TimeSpan.FromMilliseconds(200),
-                    EnableDependentAnimation = true
-                };
-                Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(fade, WelcomeContent);
-                Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(fade, "Opacity");
-                var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
-                sb.Children.Add(fade);
-                sb.Begin();
-            }
-            catch { WelcomeContent.Opacity = 1; }
-        };
+        // intro 已移除，欢迎内容直接可见；配置页勾选与主界面一致（回填后再挂事件避免干扰恢复）
+        HookStepLinkage();
 
         // 静默循环播放欢迎音乐
         await PlayMusicLoopAsync();
+    }
+
+    /// <summary>与主界面一致的强制勾选联动（MainViewModel 同规则）：
+    /// 勾选 超分/补帧/合并/音频 → 强制勾选拆帧；取消 拆帧 → 取消全部依赖项。</summary>
+    private void HookStepLinkage()
+    {
+        // 依赖项勾选 → 强制勾选拆帧
+        foreach (var cb in new[] { CfgSrCb, CfgIfCb, CfgMergeCb, CfgAudioCb })
+            cb.Checked += (_, _) =>
+            {
+                if (CfgSplitCb.IsChecked != true) CfgSplitCb.IsChecked = true;
+            };
+        // 取消拆帧 → 取消全部依赖项（与主界面 OnSplitFramesChanged 一致）
+        CfgSplitCb.Unchecked += (_, _) =>
+        {
+            CfgSrCb.IsChecked = false;
+            CfgIfCb.IsChecked = false;
+            CfgMergeCb.IsChecked = false;
+            CfgAudioCb.IsChecked = false;
+        };
     }
 
     private async Task LoadLogoAsync()
@@ -248,14 +251,47 @@ public sealed partial class WelcomeWindow : Window
         if (folder is not null) ReportDirBox.Text = folder.Path;
     }
 
-    // ===================== 主题即时预览 =====================
+    // ===================== 主题（浅色/深色/亚克力/跟随系统）与报告开关同步 =====================
 
-    private void OnThemeChanged(object sender, RoutedEventArgs e)
+    /// <summary>第 4/5 步的"生成配置文件(HTML报告)"开关互相同步。</summary>
+    private void OnReportToggleChanged(object sender, RoutedEventArgs e)
     {
-        ElementTheme theme = ThemeSystemRb.IsChecked == true ? ElementTheme.Default
-            : ThemeLightRb.IsChecked == true ? ElementTheme.Light : ElementTheme.Dark;
-        RootLayout.RequestedTheme = theme;
+        if (sender is not ToggleSwitch ts) return;
+        var other = ReferenceEquals(ts, CfgReportTs) ? ReportEnabledTs : CfgReportTs;
+        if (other.IsOn != ts.IsOn) other.IsOn = ts.IsOn;
     }
+
+    /// <summary>把四选主题即时应用到向导窗口：浅色/深色/跟随系统为纯色主题，亚克力加半透明毛玻璃。</summary>
+    private void OnThemeChanged(object sender, RoutedEventArgs e) => ApplyOobeTheme();
+
+    private void ApplyOobeTheme()
+    {
+        try
+        {
+            if (ThemeAcrylicRb.IsChecked == true)
+            {
+                _welcomeAcrylic ??= new Microsoft.UI.Xaml.Media.DesktopAcrylicBackdrop();
+                SystemBackdrop = _welcomeAcrylic;
+                RootLayout.RequestedTheme = ElementTheme.Default; // 亚克力颜色跟随系统
+            }
+            else
+            {
+                SystemBackdrop = null;
+                RootLayout.RequestedTheme = ThemeLightRb.IsChecked == true ? ElementTheme.Light
+                    : ThemeDarkRb.IsChecked == true ? ElementTheme.Dark : ElementTheme.Default;
+            }
+        }
+        catch
+        {
+            // 亚克力不可用（系统关闭透明效果等）时退化为纯色跟随系统
+            SystemBackdrop = null;
+            RootLayout.RequestedTheme = ElementTheme.Default;
+        }
+    }
+
+    private string SelectedThemeName => ThemeLightRb.IsChecked == true ? "浅色"
+        : ThemeDarkRb.IsChecked == true ? "深色"
+        : ThemeAcrylicRb.IsChecked == true ? "亚克力" : "跟随系统";
 
     // ===================== 完成 =====================
 
@@ -269,12 +305,11 @@ public sealed partial class WelcomeWindow : Window
         if (CfgAudioCb.IsChecked == true) parts.Add("音频");
         var steps = parts.Count == 0 ? "无（仅视频信息检测）" : string.Join(" → ", parts);
 
-        var theme = ThemeSystemRb.IsChecked == true ? "跟随系统" : ThemeLightRb.IsChecked == true ? "浅色" : "深色";
         FinishSummary.Text =
             $"· 默认处理步骤：{steps}\n" +
             $"· 启动自检：{(CfgStartupTestTs.IsOn ? "每次启动先跑测试视频" : "关闭")}\n" +
-            $"· 处理报告：{(ReportEnabledTs.IsOn ? "开" : "关")}，保存目录：{ReportDirBox.Text}\n" +
-            $"· 默认主题：{theme}\n\n点击下方按钮启动 Easy4K，即可开始正式使用。";
+            $"· 配置文件(HTML报告)：{(ReportEnabledTs.IsOn ? "生成" : "不生成")}，保存目录：{ReportDirBox.Text}\n" +
+            $"· 默认主题：{SelectedThemeName}\n\n点击下方按钮启动 Easy4K，即可开始正式使用。";
     }
 
     private void OnFinishLaunch(object sender, RoutedEventArgs e)
@@ -283,8 +318,13 @@ public sealed partial class WelcomeWindow : Window
         _finished = true;
 
         var reportDir = string.IsNullOrWhiteSpace(ReportDirBox.Text) ? "Reports" : ReportDirBox.Text.Trim();
-        var theme = ThemeSystemRb.IsChecked == true ? "system"
-            : ThemeLightRb.IsChecked == true ? "light" : "dark";
+        var theme = SelectedThemeName switch
+        {
+            "浅色" => "light",
+            "深色" => "dark",
+            "亚克力" => "acrylic",
+            _ => "system"
+        };
 
         _vm.ApplyWelcomeConfig(
             split: CfgSplitCb.IsChecked == true,

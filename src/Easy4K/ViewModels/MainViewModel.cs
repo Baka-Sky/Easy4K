@@ -1087,6 +1087,11 @@ public partial class MainViewModel : ObservableObject
                     : "";
                 ProgressDetail = $"测试中{suffix}";
             }
+            else if (IsAutoTest)
+            {
+                // 自动测试：阶段文字前带用例名，方便 GUI 实时知道当前在测哪个模型
+                ProgressDetail = $"[自动测试 {_autoTestIndex}/{_autoTestCount} {_autoTestCaseName}] {p.DetailText}";
+            }
             else
             {
                 ProgressDetail = p.DetailText;
