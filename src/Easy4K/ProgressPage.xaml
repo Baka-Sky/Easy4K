@@ -112,6 +112,8 @@
                             <TextBlock Text="{x:Bind Vm.GpuUsageText, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold" FontSize="14"/>
                         </Grid>
                     </StackPanel>
+                    <Button x:Name="SelfTestSkipBtn" Content="跳过自检" Click="OnSkipSelfTest" FontSize="12"
+                            Visibility="Collapsed" HorizontalAlignment="Stretch" Style="{StaticResource GlassButton}"/>
                     <Button Content="停止" Click="OnStop" IsEnabled="{x:Bind Vm.CanStop, Mode=OneWay}" HorizontalAlignment="Stretch" Style="{StaticResource GlassButton}"/>
                     <Button x:Name="PauseBtn" Content="暂停" Click="OnPauseToggle" FontSize="12"
                             IsEnabled="{x:Bind Vm.IsProcessing, Mode=OneWay}" HorizontalAlignment="Stretch" Style="{StaticResource GlassButton}"/>

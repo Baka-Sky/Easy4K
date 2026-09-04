@@ -67,6 +67,8 @@ public sealed partial class MainWindow : Window
                 NavButtons.Visibility = Visibility.Collapsed;
                 CleanTempMenuItem.IsEnabled = true; // 处理结束恢复清理菜单
                 NavigateToHome();
+                // 正式处理完成 → 自动生成 HTML 报告（选项/命令/测试帧/中间帧抽帧），随后弹完成窗体
+                Vm.TryGenerateReport(r.OutputPath, r.StepsText, r.Elapsed);
                 _ = ShowCompletionDialogAsync(r);
             });
         };
@@ -81,6 +83,16 @@ public sealed partial class MainWindow : Window
                 if (p.Total > 0) ThinProgressBar.Value = p.Percent;
             });
         };
+
+        // 启动自检结束（成功/失败/被跳过）→ 无需额外弹窗，直接衔接正式主界面
+        Vm.StartupSelfTestFinished += ok => DispatcherQueue.TryEnqueue(() =>
+        {
+            NavButtons.Visibility = Visibility.Collapsed;
+            CleanTempMenuItem.IsEnabled = true;
+            ThinProgressBar.Visibility = Visibility.Collapsed;
+            NavigateToHome();
+            Vm.Logger.Info(ok ? "启动自检通过，已衔接正式界面" : "启动自检跳过/未通过，仍可正常处理");
+        });
 
         // 清理临时文件：主页进度条显示清理进度（不定进度转圈，避免 0→100→0 跳变抽搐；不切换进行中页）
         Vm.PropertyChanged += (s, e) => DispatcherQueue.TryEnqueue(() =>

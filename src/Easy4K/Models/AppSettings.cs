@@ -38,6 +38,29 @@ public sealed class AppSettings
     public string Language { get; set; } = "zh-CN";
     public string Theme { get; set; } = "system";
 
+    // ===================== 首次运行向导 / 启动自检 =====================
+    /// <summary>首次运行欢迎向导是否已完成（协议/硬件声明/报告目录/主题等均已配置）</summary>
+    public bool SetupCompleted { get; set; }
+
+    /// <summary>每次启动是否先用 Res 里的 1 秒测试视频按保存的默认步骤跑一遍自检，通过后再进入正式界面</summary>
+    public bool StartupSelfTest { get; set; } = true;
+
+    // ===================== 处理完成 HTML 报告 =====================
+    /// <summary>处理完成后是否自动生成 HTML 报告（记录本次选项/命令/抽帧）</summary>
+    public bool ReportEnabled { get; set; } = true;
+    /// <summary>报告保存目录（相对运行根，支持绝对路径），空时默认 Reports</summary>
+    public string ReportDir { get; set; } = "Reports";
+    /// <summary>报告生成后是否自动用默认浏览器打开</summary>
+    public bool ReportAutoOpen { get; set; } = true;
+
+    // ===================== "保存当前设置为默认"时的默认步骤（启动自检按此执行） =====================
+    public bool DefaultSplitFrames { get; set; } = true;
+    public bool DefaultSuperResolution { get; set; } = true;
+    public bool DefaultInterpolation { get; set; } = true;
+    public bool DefaultMergeVideo { get; set; } = true;
+    public bool DefaultMergeAudio { get; set; } = true;
+    public bool DefaultSdrToHdr { get; set; }
+
     /// <summary>本地版本号（从 appsettings.json 读取，仅用于显示与更新对比，不写死默认值）</summary>
     public string Version { get; set; } = "";
 }

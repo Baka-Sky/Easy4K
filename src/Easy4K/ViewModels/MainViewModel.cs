@@ -113,7 +113,23 @@ public partial class MainViewModel : ObservableObject
         {
             _dispatcherQueue.TryEnqueue(() => { CpuUsage = cpu; GpuUsage = gpu; });
         };
+
+        // 恢复"保存的默认步骤"（与启动自检同一来源；向导或主界面保存后下次启动即恢复勾选）
+        RestoreDefaultStepsFromConfig();
     }
+
+    /// <summary>用 appsettings 里的默认步骤恢复主界面勾选状态（直接写字段，构造期不触发联动逻辑/日志）。</summary>
+#pragma warning disable MVVMTK0034
+    private void RestoreDefaultStepsFromConfig()
+    {
+        _splitFrames = _app.DefaultSplitFrames;
+        _superResolution = _app.DefaultSuperResolution;
+        _interpolation = _app.DefaultInterpolation;
+        _mergeVideo = _app.DefaultMergeVideo;
+        _mergeAudio = _app.DefaultMergeAudio;
+        _sdrToHdr = _app.DefaultSdrToHdr;
+    }
+#pragma warning restore MVVMTK0034
 
     // ===================== 路径 =====================
     [ObservableProperty]
@@ -1063,7 +1079,18 @@ public partial class MainViewModel : ObservableObject
             }
 
             ProgressPercent = p.Percent;
-            ProgressDetail = p.DetailText;
+            // 启动自检时无论什么阶段（拆帧/超分/补帧/合并）一律显示"测试中"，避免泄露具体内部阶段
+            if (IsStartupSelfTest)
+            {
+                var suffix = p.Total > 0
+                    ? (p.PercentDisplay ? $" {p.Current}%" : $" 第{p.Current}帧/共{p.Total}帧")
+                    : "";
+                ProgressDetail = $"测试中{suffix}";
+            }
+            else
+            {
+                ProgressDetail = p.DetailText;
+            }
             Stage = p.Stage;
             // 合并/HDR/音频阶段不产生新帧：自动关闭预览并禁用预览开关，避免预览停在旧画面
             var blockPreview = p.Stage is ProcessStage.Merging or ProcessStage.HdrConverting or ProcessStage.AddingAudio;
@@ -1527,6 +1554,13 @@ public partial class MainViewModel : ObservableObject
         _app.DefaultIfEngine = IfEngine;
         _app.DefaultSrScale = SrScale;
         _app.DefaultIfMultiplier = IfMultiplier;
+        // 同步保存当前勾选的步骤作为"默认步骤"（首次向导自检 / 下次勾选恢复按此执行）
+        _app.DefaultSplitFrames = SplitFrames;
+        _app.DefaultSuperResolution = SuperResolution;
+        _app.DefaultInterpolation = Interpolation;
+        _app.DefaultMergeVideo = MergeVideo;
+        _app.DefaultMergeAudio = MergeAudio;
+        _app.DefaultSdrToHdr = SdrToHdr;
         _settings.Save(_app, _pathConfig);
     }
 }

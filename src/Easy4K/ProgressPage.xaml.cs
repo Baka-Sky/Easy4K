@@ -37,6 +37,7 @@ public sealed partial class ProgressPage : Page
         Vm.CleanRequested += OnCleanRequested;
         Vm.Logger.EntryAdded += OnLogEntryAdded;
         Vm.PropertyChanged += OnVmPropertyChanged;
+        SelfTestSkipBtn.Visibility = Vm.IsStartupSelfTest ? Visibility.Visible : Visibility.Collapsed;
         UpdatePauseButton();
     }
 
@@ -76,6 +77,8 @@ public sealed partial class ProgressPage : Page
             _previewSeq++;
             PreviewHint.Visibility = Visibility.Visible;
         }
+        if (e.PropertyName == nameof(Vm.IsStartupSelfTest))
+            SelfTestSkipBtn.Visibility = Vm.IsStartupSelfTest ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>预览开关变化时更新提示文字可见性（PreviewImage 的可见性由 x:Bind 控制）。</summary>
@@ -185,6 +188,13 @@ public sealed partial class ProgressPage : Page
     private void OnStop(object sender, RoutedEventArgs e) => Vm.Stop();
     private void OnCopyLog(object sender, RoutedEventArgs e) => Vm.CopyLog();
     private void OnClearLog(object sender, RoutedEventArgs e) { Vm.ClearLog(); CommandLogBox.Text = ""; }
+
+    /// <summary>跳过启动自检（仅自检模式可见）。直接停止当前测试链路即可，自检收尾逻辑会回主页。</summary>
+    private void OnSkipSelfTest(object sender, RoutedEventArgs e)
+    {
+        Vm.Logger.Warn("用户选择跳过启动自检");
+        Vm.Stop();
+    }
 
     /// <summary>暂停/继续切换（立即挂起或恢复当前工具进程）</summary>
     private void OnPauseToggle(object sender, RoutedEventArgs e)
