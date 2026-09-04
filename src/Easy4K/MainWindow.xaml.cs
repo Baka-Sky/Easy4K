@@ -84,16 +84,6 @@ public sealed partial class MainWindow : Window
             });
         };
 
-        // 启动自检结束（成功/失败/被跳过）→ 无需额外弹窗，直接衔接正式主界面
-        Vm.StartupSelfTestFinished += ok => DispatcherQueue.TryEnqueue(() =>
-        {
-            NavButtons.Visibility = Visibility.Collapsed;
-            CleanTempMenuItem.IsEnabled = true;
-            ThinProgressBar.Visibility = Visibility.Collapsed;
-            NavigateToHome();
-            Vm.Logger.Info(ok ? "启动自检通过，已衔接正式界面" : "启动自检跳过/未通过，仍可正常处理");
-        });
-
         // 自动测试结束 → 回主页并展示结果
         Vm.AutoTestFinished += ok => DispatcherQueue.TryEnqueue(() =>
         {
@@ -208,6 +198,18 @@ public sealed partial class MainWindow : Window
             RootFrame.Navigate(typeof(ProgressPage));
         ThinProgressBar.Visibility = Visibility.Collapsed;
     }
+
+    /// <summary>处理前测试未通过（已取消正式处理）后调用：隐藏导航按钮、启用清理菜单并回主页。</summary>
+    public void HideNavAndGoHome()
+    {
+        NavButtons.Visibility = Visibility.Collapsed;
+        CleanTempMenuItem.IsEnabled = true;
+        ThinProgressBar.Visibility = Visibility.Collapsed;
+        NavigateToHome();
+    }
+
+    /// <summary>主窗口内容根（供弹窗指定 XamlRoot，避免页面卸载后引用失效）。</summary>
+    public Microsoft.UI.Xaml.XamlRoot WindowContentRoot => RootFrame.XamlRoot;
 
     private void OnNavHome(object sender, RoutedEventArgs e) => NavigateToHome();
     private void OnNavProgress(object sender, RoutedEventArgs e) => NavigateToProgress();

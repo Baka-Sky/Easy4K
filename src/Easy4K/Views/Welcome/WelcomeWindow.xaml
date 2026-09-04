@@ -126,7 +126,7 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel MaxWidth="600" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" Padding="0,16">
                         <TextBlock Text="配置软件" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,4"/>
-                        <TextBlock Text="选择软件默认启用的处理步骤。启动时软件会先用一段 1 秒测试视频按这里的默认步骤自检，通过后再进入正式使用。"
+                        <TextBlock Text="选择软件默认启用的处理步骤。每次点“开始处理”前，软件会先用一段 1 秒测试视频自动验证勾选的流程能否正常跑通：通过后自动清理测试临时文件，再接着处理你的视频；验证失败会弹出错误提示并取消本次处理。"
                                    HorizontalAlignment="Center" Opacity="0.7" TextAlignment="Center" TextWrapping="Wrap" Margin="0,0,0,4"/>
                         <TextBlock Text="高级功能选择" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,6,0,0"/>
                         <Border Background="{ThemeResource CardBgBrush}" BorderBrush="{ThemeResource CardBorderBrush}"
@@ -139,7 +139,7 @@
                                 <CheckBox x:Name="CfgAudioCb" Content="嵌入原音频"/>
                             </StackPanel>
                         </Border>
-                        <ToggleSwitch x:Name="CfgStartupTestTs" Header="每次启动先跑测试视频自检" OnContent="开启" OffContent="关闭" IsOn="True"/>
+                        <ToggleSwitch x:Name="CfgStartupTestTs" Header="每次开始处理前先用测试视频验证流程" OnContent="开启" OffContent="关闭" IsOn="True"/>
                         <ToggleSwitch x:Name="CfgReportTs" OnContent="生成" OffContent="不生成"
                                       ToolTipService.ToolTip="勾选开关后，每次正式处理完成都会生成一份 HTML 报告；选择“不生成”则不写任何报告文件，相当于完全不生成配置文件。">
                             <ToggleSwitch.Header>

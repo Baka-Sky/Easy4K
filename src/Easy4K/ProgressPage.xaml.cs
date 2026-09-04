@@ -189,11 +189,10 @@ public sealed partial class ProgressPage : Page
     private void OnCopyLog(object sender, RoutedEventArgs e) => Vm.CopyLog();
     private void OnClearLog(object sender, RoutedEventArgs e) { Vm.ClearLog(); CommandLogBox.Text = ""; }
 
-    /// <summary>跳过启动自检（仅自检模式可见）。直接停止当前测试链路即可，自检收尾逻辑会回主页。</summary>
+    /// <summary>跳过处理前测试（仅测试阶段可见）：停止测试，但随后仍会开始正式处理。</summary>
     private void OnSkipSelfTest(object sender, RoutedEventArgs e)
     {
-        Vm.Logger.Warn("用户选择跳过启动自检");
-        Vm.Stop();
+        Vm.RequestSkipPreTest();
     }
 
     /// <summary>暂停/继续切换（立即挂起或恢复当前工具进程）</summary>

@@ -116,7 +116,7 @@ public partial class MainViewModel : ObservableObject
             _dispatcherQueue.TryEnqueue(() => { CpuUsage = cpu; GpuUsage = gpu; });
         };
 
-        // 恢复"保存的默认步骤"（与启动自检同一来源；向导或主界面保存后下次启动即恢复勾选）
+        // 恢复"保存的默认步骤"（向导或主界面"保存当前设置为默认"后，下次启动即恢复勾选）
         RestoreDefaultStepsFromConfig();
     }
 
@@ -290,7 +290,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _noReport;
 
-    /// <summary>勾选=每次启动跳过自动测试(自检)（反相存入配置 StartupSelfTest，下次启动生效）</summary>
+    /// <summary>勾选=跳过处理前测试（反相存入配置 StartupSelfTest；勾选后点开始处理不再先跑测试视频验证）</summary>
     [ObservableProperty]
     private bool _skipStartupSelfTest;
 
@@ -362,8 +362,8 @@ public partial class MainViewModel : ObservableObject
     {
         _app.StartupSelfTest = !value; // 跳过测试 = 关掉 StartupSelfTest；向导第4步开关与此共享同一字段
         _settings.Save(_app, _pathConfig);
-        _logger.Info(value ? "已勾选跳过测试：下次启动不再自动跑测试视频自检"
-                           : "已取消：下次启动将自动跑测试视频自检（可在进行中页跳过）");
+        _logger.Info(value ? "已勾选跳过测试：开始处理时不再先用 1 秒测试视频验证流程，直接处理"
+                           : "已取消：每次开始处理前先用 1 秒测试视频验证勾选流程，通过后再处理正式视频");
     }
 
     partial void OnThreadCountChanged(int value)
@@ -1105,7 +1105,7 @@ public partial class MainViewModel : ObservableObject
             }
 
             ProgressPercent = p.Percent;
-            // 启动自检时无论什么阶段（拆帧/超分/补帧/合并）一律显示"测试中"，避免泄露具体内部阶段
+            // 处理前测试时无论什么阶段（拆帧/超分/补帧/合并）一律显示"测试中"，避免泄露具体内部阶段
             if (IsStartupSelfTest)
             {
                 var suffix = p.Total > 0

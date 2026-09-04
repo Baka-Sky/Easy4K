@@ -315,7 +315,7 @@ public sealed partial class WelcomeWindow : Window
 
         FinishSummary.Text =
             $"· 默认处理步骤：{steps}\n" +
-            $"· 启动自检：{(CfgStartupTestTs.IsOn ? "每次启动先跑测试视频" : "关闭")}\n" +
+            $"· 处理前测试：{(CfgStartupTestTs.IsOn ? "每次开始处理前先用 1 秒测试视频验证勾选流程" : "关闭（直接处理不测试）")}\n" +
             $"· 配置文件(HTML报告)：{(ReportEnabledTs.IsOn ? "生成" : "不生成")}，保存目录：{ReportDirBox.Text}\n" +
             $"· 默认主题：{SelectedThemeName}\n\n点击下方按钮启动 Easy4K，即可开始正式使用。";
     }

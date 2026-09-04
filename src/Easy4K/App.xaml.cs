@@ -83,7 +83,7 @@ public partial class App : Application
 
         Services = new MainViewModel(logger, settingsSvc, tools, env, videoDet, orch, runner, app, toolCfg);
 
-        // 软件内自测命令行模式（不弹 OOBE、不启动自动自检）
+        // 软件内自测命令行模式（不弹 OOBE、不自动跑处理前测试/自动测试）
         var cmdLine = Environment.GetCommandLineArgs();
         var selftestCli = false;
         var autoTestCli = false;
@@ -129,48 +129,29 @@ public partial class App : Application
             var wizard = new WelcomeWindow(Services, settingsSvc, app, toolCfg);
             wizard.Completed += () =>
             {
-                OpenMainWindow(startupSelfTest: true, isCliSelftest: selftestCli);
+                OpenMainWindow();
             };
             _window = wizard;
             wizard.Activate();
             return;
         }
 
-        OpenMainWindow(startupSelfTest: !selftestCli && !autoTestCli, isCliSelftest: selftestCli);
+        OpenMainWindow();
         if (autoTestCli)
             _ = RunAutoTestDelayedAsync(autoTestFull);
     }
 
-    /// <summary>创建并显示正式主窗口；非命令行模式且配置开启时，显示后自动衔接"启动自检 → 正式界面"。</summary>
-    private void OpenMainWindow(bool startupSelfTest, bool isCliSelftest)
+    /// <summary>创建并显示正式主窗口。
+    /// 处理前测试不再在启动时执行：只在用户点击"开始处理"且未勾选"跳过测试"时，用 1 秒测试视频验证勾选流程。</summary>
+    private void OpenMainWindow()
     {
         if (_window is MainWindow) return; // 已打开
         MainWindow = new MainWindow();
         _window = MainWindow;
         MainWindow.Activate();
-
-        // 每次启动先跑一遍测试视频自检（进行中页可手动跳过），跑完直接衔接正式处理，不额外弹"完成"
-        if (startupSelfTest && Services.StartupSelfTestEnabled)
-        {
-            _ = RunStartupSelfTestDelayedAsync();
-        }
     }
 
-    /// <summary>延迟到主窗口/页面加载完成后再跑启动自检，保证 UI 线程与 RootFrame 就绪。</summary>
-    private static async Task RunStartupSelfTestDelayedAsync()
-    {
-        try
-        {
-            await Task.Delay(1200);
-            await Services.RunStartupSelfTestAsync();
-        }
-        catch (Exception ex)
-        {
-            File.AppendAllText(CrashLogPath, $"[StartupSelfTest @ {DateTime.Now}]\n{ex}\n\n");
-        }
-    }
-
-    /// <summary>延迟到主窗口/页面加载完成后再跑 GUI 全面自动测试（避免与启动自检同时跑）。</summary>
+    /// <summary>延迟到主窗口/页面加载完成后再跑 GUI 全面自动测试（--autotest-all 专用）。</summary>
     private static async Task RunAutoTestDelayedAsync(bool fullMatrix)
     {
         try

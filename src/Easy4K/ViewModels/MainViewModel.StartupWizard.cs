@@ -11,30 +11,48 @@ using Easy4K.Services;
 namespace Easy4K.ViewModels;
 
 /// <summary>
-/// OOBE 欢迎向导 / 启动自检 / HTML 报告的辅助实现（partial 扩展）。
-/// 向导只在首次运行显示；自检每次启动先在 Res 测试视频上跑一遍保存的默认步骤（进度文案统一显示"测试中"），
-/// 跑完才进入正式使用；正式处理完成自动生成 HTML 报告并打开。
+/// OOBE 欢迎向导 / 处理前测试 / HTML 报告的辅助实现（partial 扩展）。
+/// 向导只在首次运行显示；正式处理开始前，软件会先用 Res 的 1 秒测试视频按当前勾选的流程跑一遍
+/// （进度文案统一显示"测试中"），验证能正常启动后再继续处理用户视频，测试残留每次自动清理；
+/// 正式处理完成自动生成 HTML 报告并打开。
 /// </summary>
 public partial class MainViewModel
 {
+    /// <summary>处理前测试结果</summary>
+    public enum PreProcessTestOutcome
+    {
+        /// <summary>测试通过 → 清理残留后继续正式处理</summary>
+        Passed,
+        /// <summary>测试未通过 → 弹报错并取消本次处理</summary>
+        Failed,
+        /// <summary>测试被"跳过测试"按钮跳过 → 仍继续正式处理</summary>
+        Skipped,
+        /// <summary>测试被"停止"取消 → 取消本次处理，不启动正式流程</summary>
+        Canceled
+    }
+
+    /// <summary>用户点击"跳过测试"的请求标记（与"停止"区分：跳过仍继续正式处理，停止则取消整个操作）</summary>
+    private bool _skipPreTestRequested;
+
+    /// <summary>用户点击进行中页的"跳过测试"：停止当前测试，随后仍会开始正式处理。</summary>
+    public void RequestSkipPreTest()
+    {
+        _skipPreTestRequested = true;
+        Stop();
+    }
+
     // ===================== 首次向导状态 =====================
     /// <summary>向导是否已完成（由配置 SetupCompleted 驱动）</summary>
     public bool SetupCompleted => _app.SetupCompleted;
 
-    /// <summary>启动自检开关（配置）</summary>
-    public bool StartupSelfTestEnabled => _app.StartupSelfTest;
-
-    /// <summary>是否正处于启动自检（UI 据此把阶段文字改成"测试中"并显示"跳过自检"按钮）</summary>
+    /// <summary>是否正处于处理前测试（UI 据此把阶段文字显示为"测试中"并显示"跳过测试"按钮）</summary>
     [ObservableProperty] private bool _isStartupSelfTest;
 
     /// <summary>Res 资源目录（exe 旁的 Res，存放 logo/音乐/测试视频）</summary>
     public static string ResDir => Path.Combine(AppContext.BaseDirectory, "Res");
 
-    /// <summary>1 秒启动测试视频路径</summary>
+    /// <summary>1 秒处理前测试视频路径</summary>
     public static string StartupTestVideoPath => Path.Combine(ResDir, "Easy4K_test_1s.mp4");
-
-    /// <summary>启动自检结束事件（主窗口据此隐藏导航、切回主页）</summary>
-    public event Action<bool>? StartupSelfTestFinished;
 
     // ===================== 向导结果持久化 =====================
     /// <summary>应用向导收集到的默认配置并标记向导完成。</summary>
@@ -67,7 +85,7 @@ public partial class MainViewModel
         return Path.Combine(root, dir);
     }
 
-    // ===================== 启动自检 =====================
+    // ===================== 处理前测试 =====================
     /// <summary>确保 Res 里有 1 秒测试视频（缺则用 ffmpeg 生成：testsrc2 彩条 + 440Hz 正弦音，便于验证含音频链路）。</summary>
     public async Task<bool> EnsureStartupTestVideoAsync()
     {
@@ -75,9 +93,9 @@ public partial class MainViewModel
         {
             if (File.Exists(StartupTestVideoPath) && new FileInfo(StartupTestVideoPath).Length > 0) return true;
             Directory.CreateDirectory(ResDir);
-            if (!Tools.FFmpegExists) { _logger.Warn("自检: FFmpeg 未就绪，无法生成测试视频"); return false; }
+            if (!Tools.FFmpegExists) { _logger.Warn("处理前测试: FFmpeg 未就绪，无法生成测试视频"); return false; }
 
-            _logger.Info("自检: 正在生成 1 秒测试视频...");
+            _logger.Info("处理前测试: 正在生成 1 秒测试视频...");
             var psi = new ProcessStartInfo
             {
                 FileName = Tools.FFmpegExe,
@@ -103,68 +121,66 @@ public partial class MainViewModel
         }
         catch (Exception ex)
         {
-            _logger.Error($"自检: 生成测试视频失败 {ex.Message}");
+            _logger.Error($"处理前测试: 生成测试视频失败 {ex.Message}");
             return false;
         }
     }
 
-    /// <summary>运行启动自检：用 Res 测试视频按 appsettings 里保存的默认步骤跑一遍，完成后回主页。
-    /// 自检使用 Res 下独立临时/输出目录，不污染用户正式配置的 Temp/Output，也不改写 appsettings 的目录。
-    /// 自检期间不触发 StartAsync 的缓存校验/完成窗体等交互流程。</summary>
-    public async Task RunStartupSelfTestAsync()
+    /// <summary>处理前测试：每次点击"开始处理"（且未勾选"跳过测试"）时，先用 Res 的 1 秒测试视频
+    /// 把【当前 UI 勾选的整套流程/模型】完整跑一遍，验证能正常启动并跑通后再继续处理正式视频。
+    /// 测试使用 Res 下独立临时/输出目录，不污染用户正式 Temp/Output；无论通过/失败/跳过，
+    /// 结束时都自动删除测试残留。Failed 时调用方应弹报错并取消本次正式处理；
+    /// Skipped 表示被"跳过测试"按钮跳过（仍继续正式处理）；Canceled 表示被"停止"取消（不启动正式流程）。</summary>
+    public async Task<(PreProcessTestOutcome Outcome, string? Reason)> RunPreProcessTestAsync()
     {
-        if (IsProcessing) return;
-        _cts = new CancellationTokenSource();
-        var ok = false;
+        if (IsProcessing) return (PreProcessTestOutcome.Canceled, null);
+        _skipPreTestRequested = false;
+        var outcome = PreProcessTestOutcome.Passed;
+        string? reason = null;
         try
         {
-            _logger.Info("==== 启动自检开始 ====");
+            _logger.Info("==== 处理前测试开始（1 秒测试视频 × 当前勾选流程）====");
             if (!Tools.CoreToolsOk)
             {
-                _logger.Warn("启动自检: 核心工具(FFmpeg/RealESRGAN/RIFE)未就绪，跳过自检直接进入软件");
-                StartupSelfTestFinished?.Invoke(false);
-                return;
+                _logger.Error("处理前测试: 核心工具(FFmpeg/RealESRGAN/RIFE)未就绪");
+                return (PreProcessTestOutcome.Failed, "核心工具(FFmpeg/RealESRGAN/RIFE)未就绪");
             }
             if (!await EnsureStartupTestVideoAsync())
             {
-                _logger.Error("启动自检: 测试视频不可用，跳过自检直接进入软件");
-                StartupSelfTestFinished?.Invoke(false);
-                return;
+                _logger.Error("处理前测试: 1 秒测试视频不可用");
+                return (PreProcessTestOutcome.Failed, "1 秒测试视频不可用或生成失败");
             }
 
             // 探测测试视频
             var info = _videoDetector.Detect(StartupTestVideoPath);
             if (info is null || !info.IsValid)
             {
-                _logger.Error("启动自检: 测试视频检测失败");
-                StartupSelfTestFinished?.Invoke(false);
-                return;
+                _logger.Error("处理前测试: 测试视频探测失败");
+                return (PreProcessTestOutcome.Failed, "1 秒测试视频探测失败");
             }
 
+            var prevShowPreview = ShowPreview;
             var selftestTemp = Path.Combine(ResDir, "selftest_temp");
             var selftestOut = Path.Combine(ResDir, "selftest_out");
             try
             {
-                // 独立临时目录（避免清掉用户之前处理留下的缓存帧）
+                // 独立临时/输出目录：先清上次异常残留，保证每次测试从干净状态开始
                 if (Directory.Exists(selftestTemp)) Directory.Delete(selftestTemp, true);
                 if (Directory.Exists(selftestOut)) Directory.Delete(selftestOut, true);
                 Directory.CreateDirectory(selftestTemp);
                 Directory.CreateDirectory(selftestOut);
 
-                // 按保存的默认步骤勾选本地副本（不改动 UI 勾选状态）
-                var split = _app.DefaultSplitFrames;
-                // 任何后续阶段都需要帧序列：默认未勾拆帧但勾了超分/补帧/合并时强制拆帧，避免自检失败
-                var needFrames = _app.DefaultSuperResolution || _app.DefaultInterpolation || _app.DefaultMergeVideo || _app.DefaultMergeAudio;
-                if (!split && needFrames) split = true;
+                // 与正式处理同一套当前勾选参数，仅把输入换成 1 秒测试视频、目录换成独立目录
+                var needFrames = SuperResolution || Interpolation || MergeVideo || MergeAudio;
                 var options = new ProcessingOptions
                 {
-                    SplitFrames = split,
-                    SuperResolution = _app.DefaultSuperResolution,
-                    Interpolation = _app.DefaultInterpolation,
-                    MergeVideo = _app.DefaultMergeVideo,
-                    MergeAudio = _app.DefaultMergeAudio && info.HasAudio,
-                    SdrToHdr = false, // 自检不跑 HDR
-                    IfEngine = _app.DefaultIfEngine == "Offical" ? "Offical" : "NCNN"
+                    SplitFrames = SplitFrames || needFrames, // 视频测试必须有帧序列：步骤吃帧就强制拆帧
+                    SuperResolution = SuperResolution,
+                    Interpolation = Interpolation,
+                    MergeVideo = MergeVideo,
+                    MergeAudio = MergeAudio && info.HasAudio,
+                    SdrToHdr = SdrToHdr && IsHdrEnabled,
+                    IfEngine = IfEngine
                 };
 
                 var ctx = new ProcessingContext
@@ -175,20 +191,21 @@ public partial class MainViewModel
                     ExternalFramesDir = "",
                     Video = info,
                     Options = options,
-                    SrModel = _app.DefaultSrModel,
-                    SrScale = Math.Clamp(_app.DefaultSrScale, 2, 4),
-                    IfModel = _app.DefaultIfModel,
-                    IfMultiplier = _app.DefaultIfMultiplier,
-                    HdrSaturation = 200,
-                    HdrContrast = 200,
+                    SrModel = SrModel,
+                    SrScale = Math.Clamp(SrScale, 2, 4),
+                    IfModel = IfModel,
+                    IfMultiplier = IfMultiplier,
+                    HdrSaturation = Math.Clamp(HdrSaturation, 0, 200),
+                    HdrContrast = Math.Clamp(HdrContrast, 0, 200),
                     Gpu = _env.Gpu,
                     Settings = _app,
                     Tools = Tools
                 };
 
-                _logger.Info($"启动自检选项: 超分 {ctx.SrModel}×{ctx.SrScale} / 补帧引擎 {ctx.Options.IfEngine} / 模型 {ctx.IfModel}×{ctx.IfMultiplier}");
+                _logger.Info($"处理前测试选项: 超分 {ctx.SrModel}×{ctx.SrScale} / 补帧引擎 {ctx.Options.IfEngine} / 模型 {ctx.IfModel}×{ctx.IfMultiplier}");
 
-                // 驱动进度 UI：与正式处理共用同一进度/预览管线
+                // 复用正式处理的进度/预览管线，阶段文案统一显示"测试中..."
+                _cts = new CancellationTokenSource();
                 IsStartupSelfTest = true;
                 SuppressCompletionDialog = true;
                 IsProcessing = true;
@@ -205,17 +222,34 @@ public partial class MainViewModel
                 {
                     var result = await _orchestratorAssigned.RunAsync(ctx, _cts.Token);
                     Stage = result is null ? ProcessStage.Failed : ProcessStage.Done;
-                    ok = result is not null;
+                    if (result is null)
+                    {
+                        outcome = PreProcessTestOutcome.Failed;
+                        reason = "按当前勾选的流程处理 1 秒测试视频失败，未能正常跑通（请查看日志/命令输出定位，例如模型与显卡不兼容、工具缺失等）";
+                    }
                 }
                 catch (OperationCanceledException)
                 {
-                    _logger.Warn("启动自检被跳过/停止");
+                    var skipped = _skipPreTestRequested;
+                    _skipPreTestRequested = false;
                     Stage = ProcessStage.Stopped;
+                    if (skipped)
+                    {
+                        _logger.Warn("用户选择跳过处理前测试，将直接开始正式处理");
+                        outcome = PreProcessTestOutcome.Skipped;
+                    }
+                    else
+                    {
+                        _logger.Warn("处理前测试被停止，本次处理已取消");
+                        outcome = PreProcessTestOutcome.Canceled;
+                    }
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error($"启动自检异常: {ex.Message}");
+                    _logger.Error($"处理前测试异常: {ex.Message}");
                     Stage = ProcessStage.Failed;
+                    outcome = PreProcessTestOutcome.Failed;
+                    reason = $"处理前测试执行异常：{ex.Message}";
                 }
                 finally
                 {
@@ -230,19 +264,28 @@ public partial class MainViewModel
                 SuppressCompletionDialog = false;
                 IsStartupSelfTest = false;
                 _cts = null;
-                // 清理自检残留
+                // 恢复用户预览偏好，供随后的正式处理使用
+                ShowPreview = prevShowPreview;
+                PreviewBlocked = false;
+                // 自动清理本次测试残留（无论通过/失败/跳过，都会执行）
                 try { if (Directory.Exists(selftestTemp)) Directory.Delete(selftestTemp, true); } catch { }
                 try { if (Directory.Exists(selftestOut)) Directory.Delete(selftestOut, true); } catch { }
             }
 
-            _logger.Info(ok ? "启动自检通过" : "启动自检未通过（仍可尝试正式处理）");
-            StartupSelfTestFinished?.Invoke(ok);
+            _logger.Info(outcome switch
+            {
+                PreProcessTestOutcome.Passed => "处理前测试通过，测试残留已清理，开始正式处理",
+                PreProcessTestOutcome.Failed => "处理前测试未通过，测试残留已清理，取消正式处理",
+                PreProcessTestOutcome.Skipped => "处理前测试被跳过，测试残留已清理，开始正式处理",
+                _ => "处理前测试被停止，测试残留已清理，取消本次处理"
+            });
+            return (outcome, reason);
         }
         catch (Exception ex)
         {
-            _logger.Error($"启动自检异常: {ex.Message}");
+            _logger.Error($"处理前测试异常: {ex.Message}");
             try { _cts = null; } catch { }
-            StartupSelfTestFinished?.Invoke(false);
+            return (PreProcessTestOutcome.Failed, $"处理前测试异常：{ex.Message}");
         }
     }
 

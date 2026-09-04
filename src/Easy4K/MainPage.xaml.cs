@@ -495,7 +495,49 @@ public sealed partial class MainPage : Page
         }
         // 启动前确认（顺序在 VM 内编排）：先临时目录冲突弹窗引导，再 CPU 最终警告；任一被阻断则不启动
         if (!await Vm.ConfirmStartAsync()) return;
+
+        // 处理前测试：输入有效且未勾选"跳过测试"时，先用 1 秒测试视频按当前勾选流程验证能否正常跑通。
+        // 通过/被跳过 → 自动清理测试残留后开始正式处理；未通过 → 弹报错并取消本次处理。
+        bool inputReady;
+        if (Vm.Video is null || !Vm.Video.IsValid) inputReady = false;
+        else if (!Vm.HasExternalFrames && !System.IO.File.Exists(Vm.InputVideo)) inputReady = false;
+        else inputReady = true;
+
+        if (inputReady && !Vm.SkipStartupSelfTest)
+        {
+            var (outcome, reason) = await Vm.RunPreProcessTestAsync();
+            if (outcome == MainViewModel.PreProcessTestOutcome.Failed)
+            {
+                await ShowPreTestFailedAsync(reason);
+                return; // 处理前测试未通过 → 弹报错后取消正式处理
+            }
+            if (outcome == MainViewModel.PreProcessTestOutcome.Canceled)
+            {
+                Vm.Logger.Warn("已取消本次处理（未运行正式流程）");
+                return; // 测试被"停止"取消 → 取消本次处理
+            }
+            // Passed / Skipped → 继续正式处理
+        }
+
         await Vm.StartAsync();
+    }
+
+    /// <summary>处理前测试未通过时的报错弹窗：提示原因并取消本次处理，关闭后回主页。</summary>
+    private async Task ShowPreTestFailedAsync(string? reason)
+    {
+        Vm.Logger.Error("处理前测试未通过，已取消本次正式处理");
+        var dlg = new ContentDialog
+        {
+            Title = "处理前测试未通过",
+            Content = "正式处理开始前，软件先用 1 秒测试视频按你当前勾选的流程验证，但未能正常跑通，已取消本次正式处理。\n\n"
+                      + (string.IsNullOrWhiteSpace(reason) ? "" : $"原因：{reason}\n\n")
+                      + "请查看「进行中」页的命令输出与日志定位问题（例如所选模型不兼容当前显卡、工具未就绪），调整后再试。",
+            CloseButtonText = "知道了",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = App.MainWindow.WindowContentRoot
+        };
+        await dlg.ShowAsync();
+        App.MainWindow.HideNavAndGoHome(); // 失败后留在"进行中"页无意义，关窗即回主页
     }
 
     private async void OnStart(object sender, RoutedEventArgs e) => await StartWithFrameParamsAsync();
