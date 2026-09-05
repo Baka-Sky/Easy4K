@@ -118,10 +118,10 @@ public sealed class ProcessingOrchestrator
             }
             else
             {
-                // 上次拆帧中途结束（意外关闭/被停止）：本次重新开始时提示并清理残留
+                // 上次拆帧未完整结束（中断/被停止）：本次自动清理残留并从该步骤重新开始，属正常恢复
                 if (existing > 0)
                 {
-                    _logger.Warn("此次拆帧遇到了因意外导致关闭，已自动清理并重新启动");
+                    _logger.Warn("检测到上次拆帧未完整结束留下的中间文件，已自动清理，本次从拆帧重新开始");
                     CleanPartialOutput(inputFrames);
                 }
                 _logger.Info($"开始拆帧: {Path.GetFileName(ctx.InputVideo)}");
@@ -169,10 +169,10 @@ public sealed class ProcessingOrchestrator
             }
             else
             {
-                // 上次超分中途结束（意外关闭/被停止）：本次重新开始时提示并清理残留
+                // 上次超分未完整结束（中断/被停止）：本次自动清理残留并从该步骤重新开始，属正常恢复
                 if (existingSr > 0)
                 {
-                    _logger.Warn("此次超分遇到了因意外导致关闭，已自动清理并重新启动");
+                    _logger.Warn("检测到上次超分未完整结束留下的中间文件，已自动清理，本次从超分重新开始");
                     CleanPartialOutput(srFrames);
                 }
                 var safe = ctx.Settings.UseSafeFrameRate;
@@ -241,10 +241,10 @@ public sealed class ProcessingOrchestrator
             }
             else
             {
-                // 上次补帧中途结束（意外关闭/被停止）：本次重新开始时提示并清理残留
+                // 上次补帧未完整结束（中断/被停止）：本次自动清理残留并从该步骤重新开始，属正常恢复
                 if (existingIf > 0)
                 {
-                    _logger.Warn("此次补帧遇到了因意外导致关闭，已自动清理并重新启动");
+                    _logger.Warn("检测到上次补帧未完整结束留下的中间文件，已自动清理，本次从补帧重新开始");
                     CleanPartialOutput(ifFrames);
                 }
 
