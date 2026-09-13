@@ -43,7 +43,7 @@ public sealed class EnvironmentDetector
         {
             list.Add(Check("NVIDIA 驱动", gpu.DriverMajor >= 570, extra: gpu.DriverVersion, required: false,
                 hint: gpu.DriverMajor >= 570 ? "" : "驱动版本需 ≥ 570.0 以支持 NVENC HDR"));
-            list.Add(Check("RTX 显卡", gpu.IsRtx, extra: gpu.IsRtx ? $"RTX {gpu.Series}0 系列" : "非 RTX", required: false,
+            list.Add(Check("RTX 显卡", gpu.IsRtx, extra: gpu.IsRtx ? $"RTX {gpu.Series} 系列" : "非 RTX", required: false,
                 hint: gpu.IsRtx ? "" : "SDR→HDR 需要 RTX 20/30/40/50 系列"));
         }
         return list;

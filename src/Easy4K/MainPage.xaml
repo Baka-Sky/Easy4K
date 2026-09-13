@@ -319,6 +319,8 @@
                             <Button Grid.Column="1" Content="停止 (Ctrl+Shift+S)" Click="OnStop" IsEnabled="{x:Bind Vm.CanStop, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                             <Button Grid.Column="2" Content="清理临时文件" Click="OnCleanTemp" IsEnabled="{x:Bind Vm.CanClean, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                         </Grid>
+                        <TextBlock Text="{x:Bind Vm.CanStartReason, Mode=OneWay}" Foreground="Orange" FontSize="11" TextWrapping="Wrap"
+                                   Visibility="{x:Bind Vm.StartBlockReasonVis, Mode=OneWay}"/>
                         <TextBlock Text="{x:Bind Vm.FinalOutputName, Mode=OneWay}" Opacity="0.6" FontSize="11" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
                 </Border>

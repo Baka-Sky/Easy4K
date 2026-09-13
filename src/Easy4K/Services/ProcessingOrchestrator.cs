@@ -182,7 +182,7 @@ public sealed class ProcessingOrchestrator
                 _logger.Info(cpu
                     ? $"超分开始(CPU): 模型 {ctx.SrModel} ×{ctx.SrScale}（线程 {jThreads}）"
                     : $"超分开始: 模型 {ctx.SrModel} ×{ctx.SrScale}（线程 {jThreads}）");
-                var args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, jThreads, useCpu: cpu);
+                var args = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, jThreads, ctx.Settings.LowerQualityForVram, useCpu: cpu);
                 _logger.Command($"realesrgan-ncnn-vulkan {args}");
                 var exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中", totalFrames,
                     ctx.Tools.RealEsrganExe, args, srFrames, ct);
@@ -192,7 +192,7 @@ public sealed class ProcessingOrchestrator
                 {
                     _logger.Warn("超分不支持 CPU 推理（realesrgan-ncnn 无 CPU 后端），已升级为 GPU 处理");
                     CleanPartialOutput(srFrames);
-                    var cpuFallbackArgs = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, jThreads, useCpu: false);
+                    var cpuFallbackArgs = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, jThreads, ctx.Settings.LowerQualityForVram, useCpu: false);
                     _logger.Command($"realesrgan-ncnn-vulkan {cpuFallbackArgs}（CPU 升级 GPU）");
                     exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中(升级GPU)", totalFrames,
                         ctx.Tools.RealEsrganExe, cpuFallbackArgs, srFrames, ct);
@@ -211,7 +211,7 @@ public sealed class ProcessingOrchestrator
                     {
                         _logger.Warn("检测到显卡错误（Vulkan 设备丢失/显存溢出），自动降级为单线程重试本次超分");
                         CleanPartialOutput(srFrames);
-                        var retryArgs = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, "1:1:1", useCpu: cpu);
+                        var retryArgs = RealEsrganCommandBuilder.Build(inputFrames, srFrames, ctx.SrModel, ctx.SrScale, "1:1:1", ctx.Settings.LowerQualityForVram, useCpu: cpu);
                         _logger.Command($"realesrgan-ncnn-vulkan {retryArgs}（降级单线程重试）");
                         exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中(降级)", totalFrames,
                             ctx.Tools.RealEsrganExe, retryArgs, srFrames, ct);
@@ -306,7 +306,7 @@ public sealed class ProcessingOrchestrator
                     var jThreads = $"1:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}";
                     _fatalGpuError = false;
                     _logger.Info($"补帧开始: 模型 {ctx.IfModel} ×{ifMult} ({ctx.Video.FrameRate:0.##}→{outFps:0.##}fps)（线程 {jThreads}）");
-                    var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, targetFrames, jThreads, useCpu: cpu);
+                    var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, targetFrames, jThreads, ctx.Settings.LowerQualityForVram, useCpu: cpu);
                     _logger.Command($"rife-ncnn-vulkan {args}");
                     var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中", targetFrames,
                         ctx.Tools.RifeExe, args, ifFrames, ct);
@@ -316,7 +316,7 @@ public sealed class ProcessingOrchestrator
                     {
                         _logger.Warn($"模型 {ctx.IfModel} 不被命令行版支持，已因硬件原因回退至 rife-v4.6");
                         CleanPartialOutput(ifFrames);
-                        var args2 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, "rife-v4.6", ctx.IfMultiplier, targetFrames, jThreads, useCpu: cpu);
+                        var args2 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, "rife-v4.6", ctx.IfMultiplier, targetFrames, jThreads, ctx.Settings.LowerQualityForVram, useCpu: cpu);
                         _logger.Command($"rife-ncnn-vulkan {args2}（因硬件原因回退至 rife-v4.6）");
                         exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(因硬件原因回退至v4.6)", targetFrames,
                             ctx.Tools.RifeExe, args2, ifFrames, ct);

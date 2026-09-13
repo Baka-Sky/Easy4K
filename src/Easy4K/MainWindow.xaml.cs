@@ -170,6 +170,20 @@ public sealed partial class MainWindow : Window
             Vm.DialogResult(await dlg.ShowAsync() == ContentDialogResult.Primary);
         });
 
+        // 开始处理被前置校验拦截（如目录不可写）→ 弹窗告知原因，避免主页看不到日志而表现为"点了没反应"
+        Vm.StartFailed += msg => DispatcherQueue.TryEnqueue(async () =>
+        {
+            var dlg = new ContentDialog
+            {
+                Title = "无法开始处理",
+                Content = msg,
+                CloseButtonText = "知道了",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = RootFrame.XamlRoot
+            };
+            await dlg.ShowAsync();
+        });
+
         // 启动时恢复上次保存的主题（light/dark/system/acrylic）
         switch (Vm.SavedTheme)
         {

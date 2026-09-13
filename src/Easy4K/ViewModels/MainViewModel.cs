@@ -48,6 +48,8 @@ public partial class MainViewModel : ObservableObject
     public event Action? CleanRequested;
     /// <summary>启动前 CPU 最终警告（UI 弹窗确认"不建议开启 CPU 处理"；确认后调 DialogResult(true) 继续）</summary>
     public event Action? CpuFinalWarningRequired;
+    /// <summary>开始处理被前置校验拦截（如目录不可写）：主页没有日志区，只写日志会表现为"点了没反应"，需弹窗告知原因</summary>
+    public event Action<string>? StartFailed;
 
     /// <summary>自测/自动化模式下抑制完成弹窗（true 时不弹）</summary>
     public bool SuppressCompletionDialog { get; set; }
@@ -141,6 +143,8 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(HasInputVideo))]
     [NotifyPropertyChangedFor(nameof(ImportFramesEnabled))]
     [NotifyPropertyChangedFor(nameof(CanStart))]
+    [NotifyPropertyChangedFor(nameof(CanStartReason))]
+    [NotifyPropertyChangedFor(nameof(StartBlockReasonVis))]
     private string _inputVideo = "";
 
     /// <summary>是否已选择输入视频（用于互斥与清除按钮可用性）</summary>
@@ -153,6 +157,8 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(SplitFramesLocked))]
     [NotifyPropertyChangedFor(nameof(MergeAudioEnabled))]
     [NotifyPropertyChangedFor(nameof(CanStart))]
+    [NotifyPropertyChangedFor(nameof(CanStartReason))]
+    [NotifyPropertyChangedFor(nameof(StartBlockReasonVis))]
     private string _externalFramesDir = "";
 
     public bool HasExternalFrames => !string.IsNullOrEmpty(ExternalFramesDir);
@@ -172,12 +178,16 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _tempRoot = "";
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStart))]
+    [NotifyPropertyChangedFor(nameof(CanStartReason))]
+    [NotifyPropertyChangedFor(nameof(StartBlockReasonVis))]
     private string _outputRoot = "";
 
     /// <summary>临时目录缓存与当前视频不符且用户未处理（点了取消）→ 阻断启动按钮。
     /// 清理缓存或更换匹配目录后由 RefreshCacheBlock 重新评估解除。</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStart))]
+    [NotifyPropertyChangedFor(nameof(CanStartReason))]
+    [NotifyPropertyChangedFor(nameof(StartBlockReasonVis))]
     [NotifyPropertyChangedFor(nameof(ExtractAudioEnabled))]
     private bool _cacheBlocked;
 
@@ -263,6 +273,8 @@ public partial class MainViewModel : ObservableObject
     // ===================== 运行状态 =====================
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStart))]
+    [NotifyPropertyChangedFor(nameof(CanStartReason))]
+    [NotifyPropertyChangedFor(nameof(StartBlockReasonVis))]
     [NotifyPropertyChangedFor(nameof(CanStop))]
     [NotifyPropertyChangedFor(nameof(CanClean))]
     private bool _isProcessing;
@@ -440,6 +452,8 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(FinalOutputName))]
     [NotifyPropertyChangedFor(nameof(VideoInfoText))]
     [NotifyPropertyChangedFor(nameof(CanStart))]
+    [NotifyPropertyChangedFor(nameof(CanStartReason))]
+    [NotifyPropertyChangedFor(nameof(StartBlockReasonVis))]
     private VideoInfo? _video;
 
     [ObservableProperty]
@@ -493,6 +507,28 @@ public partial class MainViewModel : ObservableObject
         && !string.IsNullOrWhiteSpace(OutputRoot)
         && !string.IsNullOrWhiteSpace(TempRoot)
         && (HasExternalFrames || (Video is not null && Video.IsValid && File.Exists(InputVideo)));
+
+    /// <summary>不能开始处理的原因（可开始时为空串）。主页按钮旁显示，避免"按钮灰了点着没反应却不知道为什么"。</summary>
+    public string CanStartReason
+    {
+        get
+        {
+            if (IsProcessing) return "";
+            if (string.IsNullOrWhiteSpace(TempRoot)) return "请先选择临时目录";
+            if (string.IsNullOrWhiteSpace(OutputRoot)) return "请先选择输出目录";
+            if (HasExternalFrames) return "";
+            if (string.IsNullOrEmpty(InputVideo)) return "请先点「浏览」选择输入视频（帧文件夹则点「导入帧文件夹」）";
+            if (Video is null) return "正在检测视频信息…";
+            if (!Video.IsValid) return "视频信息检测失败：请确认文件可读、FFprobe 可用";
+            if (!File.Exists(InputVideo)) return "输入视频文件不存在";
+            return "";
+        }
+    }
+
+    /// <summary>启动阻断提示可见性（供 x:Bind）</summary>
+    public Microsoft.UI.Xaml.Visibility StartBlockReasonVis
+        => string.IsNullOrEmpty(CanStartReason) ? Microsoft.UI.Xaml.Visibility.Collapsed : Microsoft.UI.Xaml.Visibility.Visible;
+
     /// <summary>拆分音频需基于真实输入视频，帧文件夹模式（无视频文件）时禁用</summary>
     public bool ExtractAudioEnabled => CanStart && !HasExternalFrames;
     public bool CanStop => IsProcessing;
@@ -961,16 +997,45 @@ public partial class MainViewModel : ObservableObject
     /// <summary>UI 弹窗处理结果回调：resolved=true 表示已解决/已确认（继续），false 表示取消（阻断启动）</summary>
     public void DialogResult(bool resolved) => _dialogTcs?.TrySetResult(resolved);
 
+    /// <summary>临时目录下固定使用的三个帧目录（与 ProcessingOrchestrator 保持一致）</summary>
+    private static readonly string[] TempWorkDirs = { "input_frames", "4k_frames", "output_frames" };
+
+    /// <summary>启动前预检：临时目录、输出目录及三个帧子目录均可创建可写。
+    /// 失败返回 false 并给出可操作的原因（路径 + 系统提示 + 建议），避免处理中途才暴露成一行"处理异常"。</summary>
+    private bool TryPrepareDirectories(out string reason)
+    {
+        try
+        {
+            Directory.CreateDirectory(TempRoot);
+            Directory.CreateDirectory(OutputRoot);
+            foreach (var name in TempWorkDirs)
+                Directory.CreateDirectory(Path.Combine(TempRoot, name));
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            reason = $"目录不可用（{ex.Message}）。请检查该目录是否被其他程序占用、权限是否受限（必要时手动删除），或更换临时目录/输出目录后重试；临时目录：{TempRoot}";
+            return false;
+        }
+        reason = "";
+        return true;
+    }
+
     public async Task StartAsync()
     {
         if (IsProcessing) return;
         if (Video is null || !Video.IsValid) { _logger.Error("请先选择有效的输入视频（或导入帧文件夹并填写参数）"); return; }
         if (!HasExternalFrames && !File.Exists(InputVideo)) { _logger.Error("输入视频文件不存在"); return; }
-        if (!Directory.Exists(TempRoot)) Directory.CreateDirectory(TempRoot);
-        if (!Directory.Exists(OutputRoot)) Directory.CreateDirectory(OutputRoot);
 
-        Directory.CreateDirectory(TempRoot);
-        Directory.CreateDirectory(OutputRoot);
+        // 预检目录可写：目录"存在但当前用户无访问权限"时，Directory.Exists 返回 false（跳过清理），
+        // 直到拆帧阶段 CreateDirectory 才抛 "Access to the path ... is denied"，用户只能看到一行模糊的"处理异常"。
+        // 这里提前创建/校验临时与输出目录，失败则给出明确原因并阻止启动。
+        if (!TryPrepareDirectories(out var dirError))
+        {
+            var msg = $"无法启动：{dirError}";
+            _logger.Error(msg);
+            StartFailed?.Invoke(msg);
+            return;
+        }
 
         // 校验临时目录缓存：与当前视频不符则阻止启动并提示（防旧缓存误导跳过步骤/产生错误结果）
         var (cacheStatus, cacheSource) = CheckTempCache(TempRoot);
@@ -1560,7 +1625,7 @@ public partial class MainViewModel : ObservableObject
     public string CheckGpu()
     {
         var g = _env.Gpu;
-        var text = $"显卡: {g.Name}\n显存: {g.VramText}\nNVIDIA: {g.IsNvidia}\nRTX 系列: {(g.IsRtx ? $"RTX {g.Series}0" : "否")}\n驱动: {g.DriverVersion}\n支持 HDR: {g.SupportsHdr}";
+        var text = $"显卡: {g.Name}\n显存: {g.VramText}\nNVIDIA: {g.IsNvidia}\nRTX 系列: {(g.IsRtx ? $"RTX {g.Series} 系列" : "否")}\n驱动: {g.DriverVersion}\n支持 HDR: {g.SupportsHdr}";
         _logger.Info(text);
         return text;
     }

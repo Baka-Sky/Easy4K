@@ -12,7 +12,8 @@ public sealed class GpuInfo
     public int DriverMajor { get; set; }  // 解析后的主版本，570 → 570
 
     public bool SupportsHdr => IsNvidia && IsRtx && Series >= 20;
-    public string VramText => VramMB > 0 ? $"{VramMB} GB" : "未知";
+    /// <summary>显存文本（VramMB 单位是 MB，按 GB 展示：6144MB → "6 GB"）</summary>
+    public string VramText => VramMB > 0 ? $"{VramMB / 1024.0:0.#} GB" : "未知";
 
     /// <summary>RIFE 模型是否需要 8GB+ 显存。规格书：v4.25/v4.26 需要 8GB+；其他 ≥6GB 即可</summary>
     public static bool Requires8Gb(string rifeModel) =>

@@ -14,6 +14,9 @@ public sealed class Logger
 
     public event Action<LogEntry>? EntryAdded;
 
+    /// <summary>日志被清空（供 UI 同步清空日志显示区，避免"日志已清但界面还留着"的跨页不一致）</summary>
+    public event Action? Cleared;
+
     /// <summary>UI 线程调度器（由 ViewModel 注入 DispatcherQueue）。注入后，
     /// 所有日志追加都调度到 UI 线程执行，保证 LogEntries 只在 UI 线程修改，
     /// 避免 ListView 绑定在后台线程收到 CollectionChanged 导致切页/渲染错乱。</summary>
@@ -62,7 +65,15 @@ public sealed class Logger
 
     public void Clear()
     {
-        lock (_lock) { _all.Clear(); LogEntries.Clear(); }
+        lock (_lock) _all.Clear();
+        // UI 集合与通知统一走 UI 线程（与 Add 保持一致），并广播 Cleared 让各页面同步清屏
+        void DoUiClear()
+        {
+            lock (_lock) LogEntries.Clear();
+            Cleared?.Invoke();
+        }
+        if (UiDispatcher is not null) UiDispatcher(DoUiClear);
+        else DoUiClear();
     }
 
     /// <summary>导出全量日志到文件</summary>

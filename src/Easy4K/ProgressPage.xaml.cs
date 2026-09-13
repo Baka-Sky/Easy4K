@@ -13,6 +13,8 @@ public sealed partial class ProgressPage : Page
     private MainViewModel Vm => App.Services;
     private string _lastPreviewPath = "";
     private int _previewSeq;
+    /// <summary>是否已订阅 ViewModel/Logger 事件（Loaded 可能多次触发，重复订阅会让每条日志/进度出现两次）</summary>
+    private bool _subscribed;
 
     public ProgressPage()
     {
@@ -33,20 +35,34 @@ public sealed partial class ProgressPage : Page
             if (CommandLogBox.Text.Length > 0) DispatcherQueue.TryEnqueue(ScrollLogToBottom);
         }
         catch { }
-        Vm.ProgressChanged += OnProgress;
-        Vm.CleanRequested += OnCleanRequested;
-        Vm.Logger.EntryAdded += OnLogEntryAdded;
-        Vm.PropertyChanged += OnVmPropertyChanged;
+        if (!_subscribed)
+        {
+            Vm.ProgressChanged += OnProgress;
+            Vm.CleanRequested += OnCleanRequested;
+            Vm.Logger.EntryAdded += OnLogEntryAdded;
+            Vm.Logger.Cleared += OnLogCleared;
+            Vm.PropertyChanged += OnVmPropertyChanged;
+            _subscribed = true;
+        }
         SelfTestSkipBtn.Visibility = Vm.IsStartupSelfTest ? Visibility.Visible : Visibility.Collapsed;
         UpdatePauseButton();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
+        if (!_subscribed) return;
         Vm.ProgressChanged -= OnProgress;
         Vm.CleanRequested -= OnCleanRequested;
         Vm.Logger.EntryAdded -= OnLogEntryAdded;
+        Vm.Logger.Cleared -= OnLogCleared;
         Vm.PropertyChanged -= OnVmPropertyChanged;
+        _subscribed = false;
+    }
+
+    /// <summary>日志被清空（含 MainPage 的 Ctrl+L）→ 同步清空本页日志框，避免"日志已清但界面还留着"</summary>
+    private void OnLogCleared()
+    {
+        DispatcherQueue.TryEnqueue(() => CommandLogBox.Text = "");
     }
 
     /// <summary>清理临时文件时清空预览图，释放帧文件句柄（否则文件被锁删不掉）</summary>
