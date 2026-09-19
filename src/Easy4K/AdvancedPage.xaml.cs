@@ -40,9 +40,9 @@ public sealed partial class AdvancedPage : Page
 
         _lastConfirmedThreads = Vm.ThreadCount;
 
-        // 帧去重卡片右下角插图：浅色主题用黑版、深色主题用白版（主题变化时换图）
-        Loaded += (_, _) => ApplyDedupArt();
-        ActualThemeChanged += (_, _) => ApplyDedupArt();
+        // 卡片右下角插图（帧去重 / 音频超分）：浅色主题用黑版、深色主题用白版（主题变化时换图）
+        Loaded += (_, _) => ApplyCardArt();
+        ActualThemeChanged += (_, _) => ApplyCardArt();
 
         // 去重模式单选：程序回填时不写回，避免构造期覆盖配置
         _dedupSyncing = true;
@@ -67,29 +67,36 @@ public sealed partial class AdvancedPage : Page
         if (App.MainWindow is not null) await App.MainWindow.ChooseReportFolderAsync();
     }
 
-    /// <summary>帧去重卡片右下角插图：浅色主题用黑版、深色主题用白版；找不到文件就保持隐藏（仅装饰）。
+    /// <summary>两张卡片右下角插图（帧去重 / 音频超分）统一按主题换图：浅色用黑版、深色用白版。</summary>
+    private async void ApplyCardArt()
+    {
+        await LoadThemeArtAsync(DedupArt, "DedupArt");
+        await LoadThemeArtAsync(AudioSrArt, "AudioSrArt");
+    }
+
+    /// <summary>给指定插图加载当前主题对应的那张（文件不存在就保持隐藏，仅装饰用）。
     /// 注意必须 await 解码完成再释放文件流——之前 fire-and-forget + using 会让流在解码中途被关掉，
     /// 表现为"第一次打开有概率不显示"。</summary>
-    private async void ApplyDedupArt()
+    private async Task LoadThemeArtAsync(Image target, string baseName)
     {
         try
         {
-            var file = ActualTheme == ElementTheme.Light ? "DedupArt_black.png" : "DedupArt_white.png";
+            var file = $"{baseName}_{(ActualTheme == ElementTheme.Light ? "black" : "white")}.png";
             var path = Path.Combine(AppContext.BaseDirectory, "Assets", file);
             if (!File.Exists(path))
             {
-                DedupArt.Visibility = Visibility.Collapsed;
+                target.Visibility = Visibility.Collapsed;
                 return;
             }
             var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
             using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 await bmp.SetSourceAsync(fs.AsRandomAccessStream());
-            DedupArt.Source = bmp;
-            DedupArt.Visibility = Visibility.Visible;
+            target.Source = bmp;
+            target.Visibility = Visibility.Visible;
         }
         catch
         {
-            DedupArt.Visibility = Visibility.Collapsed;
+            target.Visibility = Visibility.Collapsed;
         }
     }
 

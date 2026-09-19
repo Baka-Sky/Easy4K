@@ -54,8 +54,8 @@
        Tools sit at I:\Easy4K\Tools and are resolved by ToolPathResolver at runtime. -->
   <ItemGroup>
     <None Include="Assets\**" />
-    <!-- 界面插图要跟到输出目录，XAML 里用 ms-appx:///Assets/... 引用 -->
-    <None Update="Assets\DedupArt_*.png">
+    <!-- 卡片右下角插图（帧去重/音频超分各一黑一白）要跟到输出目录，XAML 里用 ms-appx:///Assets/... 引用 -->
+    <None Update="Assets\*Art_*.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
