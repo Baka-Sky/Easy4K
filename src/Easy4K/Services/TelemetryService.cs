@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using Easy4K.Models;
@@ -19,15 +20,25 @@ public static class TelemetryService
     private const string Password = "jianghao0523";
     private const string Table = "cookie";
 
-    /// <summary>软件启动时间（静态字段随类型首次访问初始化一次，即本次启动时刻）</summary>
-    private static readonly DateTime StartedAt = DateTime.Now;
+    /// <summary>软件启动时间：取本进程的真实启动时刻。
+    /// 注意不能用静态字段缓存 DateTime.Now——静态构造是懒执行的，首次访问发生在"点同意"那一刻，
+    /// 那样记下来的会是点击时间而不是软件启动时间。</summary>
+    private static DateTime StartedAt
+    {
+        get
+        {
+            try { return Process.GetCurrentProcess().StartTime; }
+            catch { return DateTime.Now; }
+        }
+    }
 
-    /// <summary>采集并上报一条记录，返回是否成功；调用方无需处理异常。</summary>
-    public static async Task<bool> TrySendAsync(AppSettings app, Logger logger)
+    /// <summary>采集并上报一条记录，返回是否成功；调用方无需处理异常。
+    /// runOn 由调用方传入（取用户点"开始处理"那一刻实际勾选的功能）。</summary>
+    public static async Task<bool> TrySendAsync(AppSettings app, string runOn, Logger logger)
     {
         try
         {
-            var runOn = DescribeRunOn(app);
+            var startAt = StartedAt;
             var winVer = DescribeWindows();
             var area = DescribeArea();
 
@@ -49,7 +60,7 @@ public static class TelemetryService
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"INSERT INTO `{Table}` (Startdate, Runon, AppVersion, WindowsVersion, Area) " +
                               "VALUES (@start, @runon, @ver, @win, @area)";
-            cmd.Parameters.AddWithValue("@start", StartedAt);
+            cmd.Parameters.AddWithValue("@start", startAt);
             cmd.Parameters.AddWithValue("@runon", runOn);
             cmd.Parameters.AddWithValue("@ver", app.Version);
             cmd.Parameters.AddWithValue("@win", winVer);
@@ -64,22 +75,6 @@ public static class TelemetryService
             logger.Warn($"遥测数据上传失败（不影响使用）: {ex.Message}");
             return false;
         }
-    }
-
-    /// <summary>本次开启的功能清单（取启动时的配置状态，与主页/高级页勾选一致）</summary>
-    private static string DescribeRunOn(AppSettings s)
-    {
-        var parts = new List<string>();
-        if (s.DefaultSplitFrames) parts.Add("拆分");
-        if (s.DefaultSuperResolution) parts.Add("超分");
-        if (s.DefaultInterpolation) parts.Add("补帧");
-        if (s.DedupEnabled) parts.Add(s.DedupMode == "uhd" ? "帧去重(完美)" : "帧去重(性能)");
-        if (s.AudioSrEnabled) parts.Add(s.AudioSrPrecision == "fp32" ? "音频超分(FP32)" : "音频超分(FP16)");
-        if (s.DefaultMergeVideo) parts.Add("合并视频");
-        if (s.DefaultMergeAudio) parts.Add("合并音频");
-        if (s.DefaultSdrToHdr) parts.Add("SDR→HDR");
-        if (s.UseCpuProcessing) parts.Add("CPU处理");
-        return parts.Count == 0 ? "无" : string.Join("，", parts);
     }
 
     /// <summary>Windows 版本：产品名 + 功能更新版本 + 内部版本号（Windows 11 的 ProductName 仍报 Windows 10，按 build ≥ 22000 判定）</summary>

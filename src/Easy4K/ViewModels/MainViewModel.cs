@@ -1172,6 +1172,11 @@ public partial class MainViewModel : ObservableObject
         // 记录本次任务指纹到 cache.json（供临时目录缓存检测，防旧缓存误导）
         WriteCacheInfo();
 
+        // 遥测：用户已同意时，每次真实启动处理都静默上报一条（功能清单取本次实际勾选）。
+        // 放在所有拦截校验之后，被拦下没真正开跑的不计。后台执行，失败只写日志。
+        if (_app.TelemetryConsent == "agreed")
+            _ = TelemetryService.TrySendAsync(_app, DescribeRunOn(), _logger);
+
         _cts = new CancellationTokenSource();
         IsProcessing = true;
         IsPaused = false;
@@ -1802,20 +1807,31 @@ public partial class MainViewModel : ObservableObject
     /// <summary>是否还需要询问遥测同意（用户尚未做出选择时为 true；同意/拒绝后均为 false，不再询问）</summary>
     public bool NeedsTelemetryConsent => string.IsNullOrEmpty(_app.TelemetryConsent);
 
-    /// <summary>记录用户对遥测的选择并落盘：同意则后台静默上报一次（失败只写日志，不影响使用）</summary>
+    /// <summary>记录用户对遥测的选择并落盘。同意后不立即上报，而是从下一次点「开始处理」起每次上报一条</summary>
     public void SetTelemetryConsent(bool agreed)
     {
         _app.TelemetryConsent = agreed ? "agreed" : "declined";
         _settings.Save(_app, _pathConfig);
+        _logger.Info(agreed
+            ? "用户同意上传遥测数据：之后每次开始处理都会静默上报一条匿名记录"
+            : "用户不同意上传遥测数据：不上传任何数据，后续也不再询问");
+    }
 
-        if (!agreed)
-        {
-            _logger.Info("用户不同意上传遥测数据：本次不再上传，后续也不再询问");
-            return;
-        }
-
-        _logger.Info("用户同意上传遥测数据：开始匿名上报");
-        _ = TelemetryService.TrySendAsync(_app, _logger); // 后台执行，不阻塞界面
+    /// <summary>本次实际勾选的功能清单（遥测 Runon 字段）。取运行时勾选而非保存的默认值——
+    /// 用户可能改了勾选但没点"保存当前设置为默认"。</summary>
+    private string DescribeRunOn()
+    {
+        var parts = new List<string>();
+        if (SplitFrames) parts.Add("拆分");
+        if (SuperResolution) parts.Add("超分");
+        if (Interpolation) parts.Add("补帧");
+        if (DedupEnabled) parts.Add(DedupMode == "uhd" ? "帧去重(完美)" : "帧去重(性能)");
+        if (AudioSrEnabled) parts.Add(AudioSrPrecision == "fp32" ? "音频超分(FP32)" : "音频超分(FP16)");
+        if (MergeVideo) parts.Add("合并视频");
+        if (MergeAudio) parts.Add("合并音频");
+        if (SdrToHdr) parts.Add("SDR→HDR");
+        if (_app.UseCpuProcessing) parts.Add("CPU处理");
+        return parts.Count == 0 ? "无" : string.Join("，", parts);
     }
 
     public void SaveSettings()
