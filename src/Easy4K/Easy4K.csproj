@@ -55,23 +55,11 @@
        Tools sit at I:\Easy4K\Tools and are resolved by ToolPathResolver at runtime. -->
   <ItemGroup>
     <!-- Assets 全量跟到输出目录：卡片插图(XAML 用 ms-appx:///Assets/...)、窗口图标 AppIcon.ico、
-         以及 MSIX 打包时 manifest 引用的 StoreLogo/Square150x150Logo/Square44x44Logo/Wide310x150Logo/SplashScreen。
-         MSIX 打包以输出目录为准，漏复制会导致安装后没有应用图标。 -->
+         以及 MSIX manifest 引用的各尺寸图标(StoreLogo 50 / Square44x44 44+88 / Square150x150 150+300 /
+         Wide310x150 310x150+620x300 / SplashScreen 620x300+1240x600 / targetsize 24·48)。
+         图标文件名与尺寸遵循 MSIX 资源规范(基名=scale-100, .scale-200 为 200% 变体)，MSIX 打包以输出目录为准。 -->
     <None Update="Assets\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <!-- manifest 按基名引用图标（MSIX 资源解析规范），源文件是 .scale-200 命名，故再按基名复制一份 -->
-    <None Update="Assets\Square150x150Logo.scale-200.png">
-      <Link>Assets\Square150x150Logo.png</Link>
-    </None>
-    <None Update="Assets\Square44x44Logo.scale-200.png">
-      <Link>Assets\Square44x44Logo.png</Link>
-    </None>
-    <None Update="Assets\Wide310x150Logo.scale-200.png">
-      <Link>Assets\Wide310x150Logo.png</Link>
-    </None>
-    <None Update="Assets\SplashScreen.scale-200.png">
-      <Link>Assets\SplashScreen.png</Link>
     </None>
   </ItemGroup>
 
