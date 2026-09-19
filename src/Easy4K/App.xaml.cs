@@ -16,8 +16,8 @@ public partial class App : Application
     public static MainViewModel Services { get; private set; } = null!;
     public static MainWindow MainWindow { get; private set; } = null!;
 
-    /// <summary>启动崩溃日志路径（exe 旁）</summary>
-    public static string CrashLogPath => Path.Combine(AppContext.BaseDirectory, "crash.log");
+    /// <summary>启动崩溃日志路径（可写根目录：便携版为 exe 旁，MSIX 安装版为 %LOCALAPPDATA%\Easy4K）</summary>
+    public static string CrashLogPath => Path.Combine(AppPaths.WritableRoot, "crash.log");
 
     public App()
     {

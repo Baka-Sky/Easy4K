@@ -585,8 +585,8 @@ public sealed partial class MainWindow : Window
         catch { /* 打不开目录不影响主流程 */ }
     }
 
-    /// <summary>打开 appsettings.json 所在目录（exe 旁边）。</summary>
-    public void OpenConfigFolder() => OpenFolder(AppContext.BaseDirectory);
+    /// <summary>打开 appsettings.json 所在目录（可写根目录）。</summary>
+    public void OpenConfigFolder() => OpenFolder(AppPaths.WritableRoot);
 
     /// <summary>打开临时目录（提取音频等动作的查看入口）。</summary>
     public void OpenTempFolder() => OpenFolder(Vm.TempRoot);

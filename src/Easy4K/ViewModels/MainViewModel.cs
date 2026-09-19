@@ -71,9 +71,8 @@ public partial class MainViewModel : ObservableObject
         // 日志追加调度到 UI 线程，保证 ObservableCollection 只在 UI 线程修改
         _logger.UiDispatcher = action => _dispatcherQueue.TryEnqueue(() => action());
 
-        // 默认路径：从 exe 向上查找 Tools 目录确定项目根目录
-        var baseDir = AppContext.BaseDirectory;
-        var rootDir = FindProjectRoot(baseDir);
+        // 默认路径：可写根目录（便携版=exe 旁；MSIX 安装版=%LOCALAPPDATA%\Easy4K，安装目录只读）
+        var rootDir = AppPaths.WritableRoot;
         _tempRoot = Path.Combine(rootDir, app.TempRoot);
         _outputRoot = Path.Combine(rootDir, app.OutputRoot);
         if (!Directory.Exists(_tempRoot)) Directory.CreateDirectory(_tempRoot);
@@ -1568,12 +1567,12 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>诊断日志：追加写入 exe 目录的 DebugINFO.txt，便于定位清理等后台操作的真实结果。</summary>
+    /// <summary>诊断日志：追加写入可写根目录的 DebugINFO.txt，便于定位清理等后台操作的真实结果。</summary>
     private static void LogDebug(string msg)
     {
         try
         {
-            File.AppendAllText(Path.Combine(AppContext.BaseDirectory, "DebugINFO.txt"),
+            File.AppendAllText(Path.Combine(AppPaths.WritableRoot, "DebugINFO.txt"),
                 $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {msg}\r\n");
         }
         catch { }
@@ -1708,22 +1707,6 @@ public partial class MainViewModel : ObservableObject
         CleanTempIn(dir);
         TempRoot = dir;
         Directory.CreateDirectory(dir);
-    }
-
-    /// <summary>从 startDir 向上查找含 Tools 子目录的项目根目录。</summary>
-    private static string FindProjectRoot(string startDir)
-    {
-        var dir = startDir;
-        for (int i = 0; i < 10; i++)
-        {
-            if (Directory.Exists(Path.Combine(dir, "Tools")))
-                return dir;
-            var parent = Directory.GetParent(dir);
-            if (parent is null) break;
-            dir = parent.FullName;
-        }
-        // 兜底：exe 所在目录
-        return startDir;
     }
 
     public void ClearLog() => _logger.Clear();

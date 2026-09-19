@@ -5,7 +5,7 @@ using Easy4K.Models;
 
 namespace Easy4K.Services;
 
-/// <summary>读写 appsettings.json（运行时写入会落回 exe 目录旁，方便下次启动保留用户改动）</summary>
+/// <summary>读写 appsettings.json（运行时写入落在可写根目录：便携版为 exe 旁，MSIX 安装版为 %LOCALAPPDATA%\Easy4K）</summary>
 public sealed class SettingsService
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -20,8 +20,21 @@ public sealed class SettingsService
 
     public SettingsService()
     {
-        // exe 旁边的 appsettings.json（dotnet build 会把项目内的复制过来）
-        _settingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+        _settingsPath = Path.Combine(AppPaths.WritableRoot, "appsettings.json");
+        // 安装版首次运行：可写目录还没有配置，从安装目录把出厂模板复制过来（安装目录只读，不能就地写）
+        var template = Path.Combine(AppPaths.InstallDir, "appsettings.json");
+        if (!File.Exists(_settingsPath) && File.Exists(template))
+        {
+            try
+            {
+                Directory.CreateDirectory(AppPaths.WritableRoot);
+                File.Copy(template, _settingsPath);
+            }
+            catch
+            {
+                // 复制失败则按下方流程生成默认配置
+            }
+        }
     }
 
     public (AppSettings Settings, ToolPathConfig ToolPaths) Load()

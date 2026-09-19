@@ -48,8 +48,9 @@ public partial class MainViewModel
     /// <summary>是否正处于处理前测试（UI 据此把阶段文字显示为"测试中"并显示"跳过测试"按钮）</summary>
     [ObservableProperty] private bool _isStartupSelfTest;
 
-    /// <summary>Res 资源目录（exe 旁的 Res，存放 logo/音乐/测试视频）</summary>
-    public static string ResDir => Path.Combine(AppContext.BaseDirectory, "Res");
+    /// <summary>Res 工作目录（可写根目录下的 Res，用于生成/存放测试视频与自测中间产物；
+    /// 安装版的安装目录只读，不能往 exe 旁的 Res 里写）</summary>
+    public static string ResDir => Path.Combine(AppPaths.WritableRoot, "Res");
 
     /// <summary>1 秒处理前测试视频路径</summary>
     public static string StartupTestVideoPath => Path.Combine(ResDir, "Easy4K_test_1s.mp4");
@@ -76,13 +77,12 @@ public partial class MainViewModel
         _settings.Save(_app, _pathConfig);
     }
 
-    /// <summary>读取报告输出目录的绝对路径（相对路径基于运行根目录，同 Output/Temp 的解析方式）</summary>
+    /// <summary>读取报告输出目录的绝对路径（相对路径基于可写根目录，同 Output/Temp 的解析方式）</summary>
     public string ResolveReportDir()
     {
         var dir = string.IsNullOrWhiteSpace(_app.ReportDir) ? "Reports" : _app.ReportDir;
         if (Path.IsPathRooted(dir)) return dir;
-        var root = FindProjectRoot(AppContext.BaseDirectory);
-        return Path.Combine(root, dir);
+        return Path.Combine(AppPaths.WritableRoot, dir);
     }
 
     // ===================== 处理前测试 =====================
