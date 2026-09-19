@@ -23,6 +23,8 @@ public sealed partial class MainWindow : Window
     private int _cacheWarnCount;
     /// <summary>亚克力主题材质（作为独立主题选项，与普通主题互斥）</summary>
     private DesktopAcrylicBackdrop? _acrylic;
+    /// <summary>遥测同意弹窗是否已触发（Loaded 可能多次触发，避免重复弹窗）</summary>
+    private bool _telemetryAsked;
 
     public MainWindow()
     {
@@ -221,6 +223,51 @@ public sealed partial class MainWindow : Window
 
         // 启动后异步检查更新（服务器版本高于 config 里的本地版本时弹窗提示）
         _ = CheckUpdateAsync();
+
+        // 首次进入主界面：先询问是否同意上传遥测数据（仅第一次启动；已有选择则静默跳过）
+        RootFrame.Loaded += async (_, _) =>
+        {
+            if (_telemetryAsked) return;
+            _telemetryAsked = true;
+            try
+            {
+                await Task.Delay(400); // 等界面呈现稳定后再弹，避免与启动自检抢焦点
+                await AskTelemetryConsentAsync();
+            }
+            catch (Exception ex)
+            {
+                Vm.Logger.Warn($"遥测同意询问失败（忽略）: {ex.Message}");
+            }
+        };
+    }
+
+    // ===================== 匿名遥测同意（仅首次启动询问一次） =====================
+
+    /// <summary>首次进入主界面时询问是否同意上传遥测数据；同意/拒绝都只问这一次（结果写进 appsettings.json）。</summary>
+    private async Task AskTelemetryConsentAsync()
+    {
+        if (!Vm.NeedsTelemetryConsent) return; // 已选择过 → 不再询问
+
+        var dlg = new ContentDialog
+        {
+            Title = "是否同意上传遥测数据",
+            Content =
+                "为了解 Easy4K 的实际使用情况、改进软件，我们希望收集少量匿名信息并上传到官方服务器。\n\n" +
+                "会收集：\n" +
+                "· 软件启动时间\n" +
+                "· 本次开启的功能（拆分 / 超分 / 补帧 / 帧去重 / 音频超分等）\n" +
+                "· Easy4K 版本号\n" +
+                "· Windows 系统版本\n" +
+                "· 所在地区（仅国家/地区，取自系统区域设置）\n\n" +
+                "不会收集：视频或音频内容、文件名、文件路径、电脑用户名、账号等任何可识别到个人的信息，也不会收集 IP 定位。\n\n" +
+                "数据仅用于统计功能使用情况与系统兼容性，帮助定位问题、改进软件，不用于其他用途。\n\n" +
+                "本提示只在首次启动时出现一次：选择「不同意」同样不会影响任何功能。",
+            PrimaryButtonText = "同意",
+            CloseButtonText = "不同意",
+            DefaultButton = ContentDialogButton.Close, // 默认落在「不同意」，避免误触上传
+            XamlRoot = RootFrame.XamlRoot
+        };
+        Vm.SetTelemetryConsent(await dlg.ShowLocalizedAsync() == ContentDialogResult.Primary);
     }
 
     // ===================== 多语言 =====================

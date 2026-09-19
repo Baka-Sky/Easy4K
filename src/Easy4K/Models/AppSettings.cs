@@ -77,6 +77,10 @@ public sealed class AppSettings
     /// <summary>精度档：fp16 = 低精度性能模式（仅 GPU）；fp32 = 高精度完美模式（CPU/GPU 均可）</summary>
     public string AudioSrPrecision { get; set; } = "fp16";
 
+    // ===================== 匿名遥测 =====================
+    /// <summary>遥测同意状态：空 = 尚未询问（首次进主界面弹一次同意窗）；agreed = 已同意并上报；declined = 已拒绝，不再询问</summary>
+    public string TelemetryConsent { get; set; } = "";
+
     /// <summary>本地版本号（从 appsettings.json 读取，仅用于显示与更新对比，不写死默认值）</summary>
     public string Version { get; set; } = "";
 }

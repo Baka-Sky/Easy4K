@@ -1798,6 +1798,26 @@ public partial class MainViewModel : ObservableObject
         _logger.Info($"界面语言已切换: {Loc.CurrentName}（{Loc.Current}）");
     }
 
+    // ===================== 匿名遥测（仅首次启动询问一次） =====================
+    /// <summary>是否还需要询问遥测同意（用户尚未做出选择时为 true；同意/拒绝后均为 false，不再询问）</summary>
+    public bool NeedsTelemetryConsent => string.IsNullOrEmpty(_app.TelemetryConsent);
+
+    /// <summary>记录用户对遥测的选择并落盘：同意则后台静默上报一次（失败只写日志，不影响使用）</summary>
+    public void SetTelemetryConsent(bool agreed)
+    {
+        _app.TelemetryConsent = agreed ? "agreed" : "declined";
+        _settings.Save(_app, _pathConfig);
+
+        if (!agreed)
+        {
+            _logger.Info("用户不同意上传遥测数据：本次不再上传，后续也不再询问");
+            return;
+        }
+
+        _logger.Info("用户同意上传遥测数据：开始匿名上报");
+        _ = TelemetryService.TrySendAsync(_app, _logger); // 后台执行，不阻塞界面
+    }
+
     public void SaveSettings()
     {
         _app.DefaultSrModel = SrModel;
