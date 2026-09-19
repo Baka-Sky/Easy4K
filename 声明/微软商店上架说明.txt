@@ -239,14 +239,85 @@ HTML 处理报告：记录本次处理参数与结果，可关闭不生成
    ─────────────────────────────────────────────
 
 2) 能力（Capability）声明说明
-   包内声明了两个需要说明用途的能力，提交后在认证阶段可能被要求填写
-   理由，可参考下列表述：
-   · runFullTrust（完全信任）：本应用为桌面工具，需调用随包分发的
-     FFmpeg、Real-ESRGAN、RIFE、NVEncC 等命令行程序完成视频帧处理，
-     并读写用户指定的视频文件与临时目录，故需要完全信任权限。
+   包内声明了两个需要说明用途的能力。提交时若出现「你需要先请求批准
+   才能使用受限功能 runFullTrust」并要求回答下面两个问题，直接粘贴
+   下列英文（推荐，审核团队看英文），中文仅作对照。
+
+   ─────────────────────────────────────────────
+   问题 1：为何需要使用 runFullTrust 功能？
+
+   [英文，直接粘贴]
+   Easy4K is a desktop video-processing application packaged as MSIX.
+   Its core functionality requires launching third-party command-line
+   executables that are shipped inside the package, and reading/writing
+   the user's own video files at any location the user selects:
+
+   - FFmpeg (frame extraction, video muxing, audio embedding)
+   - Real-ESRGAN ncnn-vulkan (AI super-resolution)
+   - rife-ncnn-vulkan and the official PyTorch RIFE implementation
+     (AI frame interpolation)
+   - NVEncC (SDR-to-HDR conversion on NVIDIA RTX GPUs)
+   - A bundled portable Python runtime that runs the PyTorch models
+
+   These operations cannot be performed inside the AppContainer sandbox:
+   they require spawning child processes, direct read/write access to
+   arbitrary user-selected file paths, and access to GPU compute devices
+   (Vulkan / DirectML / CUDA) for local AI inference. No other
+   capability can start external processes or reach the compute devices,
+   therefore full trust is required.
+
+   [中文对照]
+   Easy4K 是以 MSIX 打包的桌面视频处理工具，核心功能需要调用随包
+   分发的第三方命令行程序（FFmpeg / Real-ESRGAN / RIFE / NVEncC /
+   便携 Python），并读写用户自己选择的任意位置的视频文件。这些操作
+   无法在 AppContainer 沙箱内完成：需要启动子进程、直接读写用户
+   指定的任意文件路径、访问 GPU 计算设备（Vulkan / DirectML /
+   CUDA）做本地 AI 推理。没有其他能力可以启动外部进程或访问这些
+   计算设备，因此需要完全信任权限。
+
+   ─────────────────────────────────────────────
+   问题 2：如何在产品中使用该功能？
+
+   [英文，直接粘贴]
+   - All privileged operations are triggered only by an explicit user
+     action: the user picks an input video and an output folder with the
+     standard file/folder pickers and clicks the "Start" button.
+   - Frame images and intermediate files are written only into the
+     working folders chosen by the user (a temporary folder and an
+     output folder, both user-selectable), never into system locations.
+   - The bundled executables are launched as short-lived child
+     processes and are terminated when the processing stage finishes or
+     when the user closes the application. There is no background
+     service, no auto-start, and the app does not modify system
+     settings or install drivers.
+   - All AI inference runs locally on the user's machine. The app does
+     not upload video, audio, file names or file paths. The only
+     network access is an optional anonymous usage statistic (app start
+     time, enabled features, app version, Windows version, and region
+     taken from the system locale). It is requested once on first
+     launch and can be declined without losing any functionality.
+   - The app requests no other restricted capability.
+
+   [中文对照]
+   · 所有特权操作仅在用户明确操作后执行：用户用标准文件/文件夹选择器
+     指定输入视频、临时目录与输出目录，再点击「开始处理」。
+   · 逐帧图片与中间文件只写入用户选择的临时目录与输出目录，不写入
+     系统位置。
+   · 随包工具以短生命周期子进程方式启动，处理阶段结束或用户关闭程序
+     时即被终止；无后台常驻服务、无开机自启、不修改系统设置、不安装
+     驱动。
+   · 所有 AI 推理均在本地完成，不上传视频、音频、文件名或路径；唯一
+     网络访问是可选的匿名统计（软件启动时间、开启的功能、软件版本、
+     Windows 版本、取自系统区域设置的地区），首次启动询问一次，可拒绝
+     且不影响任何功能。
+   · 未申请任何其他受限能力。
+
+   ─────────────────────────────────────────────
+   另一个能力 systemAIModels（若认证阶段提示该能力不受支持，可直接
+   从 Package.appxmanifest 移除后重新打包，不影响任何功能）：
    · systemAIModels：应用在本地调用系统 AI 运行时接口（如系统级
      图像 / 视频处理组件）用于提升处理效率，所有推理均在本地完成，
-     不会上传用户素材。若认证阶段提示该能力不受支持，可移除后再提交。
+     不会上传用户素材。
 
 
 ────────────────────────────────────────────────────────────────────
