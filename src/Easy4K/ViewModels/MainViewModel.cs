@@ -122,6 +122,9 @@ public partial class MainViewModel : ObservableObject
 
         // 恢复"保存的默认步骤"（向导或主界面"保存当前设置为默认"后，下次启动即恢复勾选）
         RestoreDefaultStepsFromConfig();
+
+        // 音频超分：FP16 与 CPU 处理模式的非法组合在启动时自动纠正为 FP32（避免一开就撞墙）
+        ReconcileAudioSrWithCpu();
     }
 
     /// <summary>用 appsettings 里的默认步骤恢复主界面勾选状态（直接写字段，构造期不触发联动逻辑/日志）。</summary>
@@ -132,6 +135,8 @@ public partial class MainViewModel : ObservableObject
         _reportDir = string.IsNullOrWhiteSpace(_app.ReportDir) ? "Reports" : _app.ReportDir;
         _dedupEnabled = _app.DedupEnabled;
         _dedupMode = _app.DedupMode;
+        _audioSrEnabled = _app.AudioSrEnabled;
+        _audioSrPrecision = string.Equals(_app.AudioSrPrecision, "fp32", StringComparison.OrdinalIgnoreCase) ? "fp32" : "fp16";
         _superResolution = _app.DefaultSuperResolution;
         _interpolation = _app.DefaultInterpolation;
         _mergeVideo = _app.DefaultMergeVideo;
@@ -323,6 +328,41 @@ public partial class MainViewModel : ObservableObject
         _app.DedupMode = value;
         _settings.Save(_app, _pathConfig);
     }
+
+    // ===================== 音频超分 AudioSR（高级模式） =====================
+    /// <summary>音频超分开关（开启后音频改由 AudioSR 升到 48kHz，不再走 ffmpeg 重采样）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AudioPipelineLabel))]
+    private bool _audioSrEnabled;
+
+    /// <summary>精度档：fp16=低精度性能模式（仅 GPU，禁 CPU）；fp32=高精度完美模式（CPU/GPU 均可）</summary>
+    [ObservableProperty] private string _audioSrPrecision = "fp16";
+
+    partial void OnAudioSrEnabledChanged(bool value)
+    {
+        _app.AudioSrEnabled = value;
+        _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnAudioSrPrecisionChanged(string value)
+    {
+        _app.AudioSrPrecision = value;
+        _settings.Save(_app, _pathConfig);
+    }
+
+    /// <summary>FP16 + CPU 处理模式是非法组合（CPU 的 fp16 算子又少又慢）：配置恢复/启动预检时把精度降回 fp32。</summary>
+    public bool ReconcileAudioSrWithCpu()
+    {
+        if (!AudioSrEnabled || AudioSrPrecision != "fp16" || !UseCpuProcessing) return false;
+        _logger.Warn("音频超分：配置里 FP16 与 CPU 处理模式冲突，已自动切回 FP32 精度（FP16 在 CPU 上又慢又不准）");
+        AudioSrPrecision = "fp32";
+        return true;
+    }
+
+    /// <summary>主页「音频设置」右侧的链路说明：未开音频超分走 ffmpeg 重采样到 96kHz；开了则由 AudioSR 直出 48kHz。</summary>
+    public string AudioPipelineLabel => AudioSrEnabled
+        ? "FLAC -> AudioSR 48kHz -> PCM 24bit 48kHz"
+        : "FLAC -> PCM 24bit 96kHz";
 
     /// <summary>HDR 参数区可见性（bool → Visibility，供 x:Bind 绑定）</summary>
     public Microsoft.UI.Xaml.Visibility SdrToHdrVis
@@ -1163,7 +1203,10 @@ public partial class MainViewModel : ObservableObject
                 MergeVideo = MergeVideo,
                 MergeAudio = MergeAudio,
                 SdrToHdr = SdrToHdr && IsHdrEnabled,
-                IfEngine = IfEngine
+                IfEngine = IfEngine,
+                // 音频超分：CPU 处理模式下不允许 FP16（UI 已拦截，这里再兜一道，避免配置被外部改动后带病启动）
+                AudioSr = AudioSrEnabled,
+                AudioSrPrecision = AudioSrPrecision == "fp16" && UseCpuProcessing ? "fp32" : AudioSrPrecision
             },
             SrModel = SrModel,
             SrScale = SrScale,
@@ -1230,7 +1273,7 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>根据勾选项生成步骤描述文本（顺序与流水线一致：拆帧 → 帧去重 → 超分 → 补帧 → 合并 → HDR → 音频）</summary>
+    /// <summary>根据勾选项生成步骤描述文本（顺序与流水线一致：拆帧 → 帧去重 → 超分 → 补帧 → 合并 → HDR → 音频超分 → 音频）</summary>
     private string BuildStepsText()
     {
         var parts = new List<string>();
@@ -1240,6 +1283,7 @@ public partial class MainViewModel : ObservableObject
         if (Interpolation) parts.Add($"补帧×{IfMultiplier}");
         if (MergeVideo) parts.Add("合并");
         if (SdrToHdr) parts.Add("HDR");
+        if (AudioSrEnabled) parts.Add($"音频超分({(AudioSrPrecision == "fp16" ? "FP16" : "FP32")})");
         if (MergeAudio) parts.Add("音频");
         return parts.Count > 0 ? string.Join(" → ", parts) : "无";
     }
@@ -1285,7 +1329,7 @@ public partial class MainViewModel : ObservableObject
             }
             Stage = p.Stage;
             // 合并/HDR/音频阶段不产生新帧：自动关闭预览并禁用预览开关，避免预览停在旧画面
-            var blockPreview = p.Stage is ProcessStage.Merging or ProcessStage.HdrConverting or ProcessStage.AddingAudio;
+            var blockPreview = p.Stage is ProcessStage.Merging or ProcessStage.HdrConverting or ProcessStage.AudioSr or ProcessStage.AddingAudio;
             PreviewBlocked = blockPreview;
             if (blockPreview && ShowPreview) ShowPreview = false;
             if (!string.IsNullOrEmpty(p.LatestFramePath))
@@ -1365,6 +1409,7 @@ public partial class MainViewModel : ObservableObject
             if (SuperResolution) parts.Add($"超分×{SrScale}");
             if (Interpolation) parts.Add($"补帧×{IfMultiplier}");
             if (MergeVideo) parts.Add("合并");
+            if (AudioSrEnabled) parts.Add($"音频超分({(AudioSrPrecision == "fp16" ? "FP16" : "FP32")})");
             if (MergeAudio) parts.Add("音频");
             _logger.Info($"自测[{stages}]: {string.Join("+", parts)}");
             await StartAsync();

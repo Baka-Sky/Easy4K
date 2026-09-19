@@ -11,4 +11,8 @@ public sealed class ProcessingOptions
     public bool SdrToHdr { get; set; } = false;
     /// <summary>补帧引擎："NCNN"（rife-ncnn-vulkan）或 "Offical"（PyTorch pkl 模型）</summary>
     public string IfEngine { get; set; } = "NCNN";
+    /// <summary>音频超分（AudioSR）：开启后音频改由 AudioSR 升到 48kHz，不再走 ffmpeg 重采样</summary>
+    public bool AudioSr { get; set; }
+    /// <summary>音频超分精度档：fp16 = 低精度性能模式（禁 CPU）；fp32 = 高精度完美模式</summary>
+    public string AudioSrPrecision { get; set; } = "fp16";
 }

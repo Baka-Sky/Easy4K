@@ -33,13 +33,25 @@ public static class FFmpegCommandBuilder
         return args;
     }
 
-    /// <summary>把音频嵌入到最终视频。BUG-07：-map 0:v:0 -map 1:a:0 顺序正确，PCM 24bit 96kHz。
+    /// <summary>把音频嵌入到最终视频。BUG-07：-map 0:v:0 -map 1:a:0 顺序正确。
+    /// sampleRate：默认 96000（原音轨重采样到 PCM 24bit 96kHz）；开了音频超分时传 48000，
+    /// 直接用 AudioSR 产出的 48kHz WAV，不再让 ffmpeg 重采样。
     /// useGpu：勾选「使FFmpeg尝试使用GPU加速」时加 -hwaccel auto（对 -c:v copy 无实际加速，仅保持"尝试"语义）。</summary>
-    public static string EmbedAudio(string videoPath, string audioPath, string outputPath, bool useGpu = false)
+    public static string EmbedAudio(string videoPath, string audioPath, string outputPath, bool useGpu = false,
+        int sampleRate = 96000)
     {
         var hw = useGpu ? " -hwaccel auto" : "";
         return $"-y{hw} -i \"{videoPath}\" -i \"{audioPath}\" " +
-               $"-c:v copy -c:a pcm_s24le -ar 96000 -ac 2 -map 0:v:0 -map 1:a:0 \"{outputPath}\"";
+               $"-c:v copy -c:a pcm_s24le -ar {sampleRate} -ac 2 -map 0:v:0 -map 1:a:0 \"{outputPath}\"";
+    }
+
+    /// <summary>把任意音轨转成 AudioSR 要求的 PCM WAV（48kHz / float32 / 保持声道数）。
+    /// AudioSR 的驱动只读 WAV，所以 flac/mp3/aac 都要先过这一步。</summary>
+    public static string ToWav48k(string inputAudio, string outputWav)
+    {
+        var dir = Path.GetDirectoryName(outputWav);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        return $"-y -i \"{inputAudio}\" -vn -c:a pcm_f32le -ar 48000 \"{outputWav}\"";
     }
 
     /// <summary>从原视频提取音频为 FLAC（无损，保留原始码率/位深）。

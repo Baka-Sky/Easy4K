@@ -334,6 +334,7 @@ public partial class MainViewModel
         if (MergeVideo) lines.Add("合并视频");
         if (MergeAudio) lines.Add("合并原音频");
         if (SdrToHdr) lines.Add("SDR→HDR 转换");
+        if (AudioSrEnabled) lines.Add($"音频超分：AudioSR {(AudioSrPrecision == "fp16" ? "FP16 低精度性能模式" : "FP32 高精度完美模式")}");
         lines.Add($"线程数：{ThreadCount}");
         if (UseCpuProcessing) lines.Add("CPU 处理模式");
         if (UseSafeFrameRate) lines.Add("安全帧率开启");

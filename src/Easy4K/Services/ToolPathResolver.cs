@@ -27,6 +27,7 @@ public static class ToolPathResolver
         var rifeDir = Path.Combine(toolsRoot, pathConfig.RifeDir);
         var nvDir = Path.Combine(toolsRoot, pathConfig.NvEncDir);
         var officalDir = Path.Combine(toolsRoot, "officalrife");
+        var audioSrDir = Path.Combine(toolsRoot, "AudioSR");
 
         return new ToolPaths
         {
@@ -42,7 +43,11 @@ public static class ToolPathResolver
             OfficalRifeDir = officalDir,
             OfficalRifeRunPy = Path.Combine(officalDir, "run.py"),
             OfficalRifeModelsRoot = Path.Combine(officalDir, "models"),
-            OfficalPythonExe = Path.Combine(officalDir, "python", "python.exe")
+            OfficalPythonExe = Path.Combine(officalDir, "python", "python.exe"),
+            AudioSrDir = audioSrDir,
+            AudioSrScript = Path.Combine(audioSrDir, "audiosr_onnx.py"),
+            AudioSrModelsFp16 = Path.Combine(audioSrDir, "models-fp16"),
+            AudioSrModelsFp32 = Path.Combine(audioSrDir, "models-fp32")
         };
     }
 }

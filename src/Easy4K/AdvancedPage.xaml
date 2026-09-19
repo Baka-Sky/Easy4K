@@ -75,8 +75,40 @@
                         <!-- 卡片右下角插图（随主题切换：浅色用黑版、深色用白版；源码见 AdvancedPage.xaml.cs） -->
                         <Image x:Name="DedupArt" Grid.Column="1"
                                Width="150" HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                               Visibility="Collapsed" AutomationProperties.Name="帧去重插图"/>
+                               Visibility="Collapsed" AutomationProperties.Name="AudioSR 插图"/>
                     </Grid>
+                </Border>
+
+                <!-- 音频超分：把音轨交给 AudioSR 升到 48kHz 高带宽；开启后音频不再走 ffmpeg 重采样 -->
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel Spacing="6">
+                        <Grid ColumnSpacing="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="音频超分" Style="{StaticResource SectionTitle}" Margin="0"/>
+                            <Button Grid.Column="1" HorizontalAlignment="Left"
+                                    Padding="3" Background="Transparent" BorderThickness="0"
+                                    VerticalAlignment="Center" Click="OnAudioSrInfoClick"
+                                    ToolTipService.ToolTip="FP16 低精度性能模式：仅 GPU，速度更快（比 FP32 快约 10%~20%）&#x0a;FP32 高精度完美模式：CPU/GPU 均可，画质基准&#x0a;&#x0a;点击图标查看详细讲解"
+                                    AutomationProperties.Name="音频超分说明">
+                                <FontIcon Glyph="&#xE946;" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </Button>
+                        </Grid>
+
+                        <ToggleSwitch x:Name="AudioSrSwitch" OnContent="已开启" OffContent="已关闭"
+                                      IsOn="{x:Bind Vm.AudioSrEnabled, Mode=TwoWay}" FontSize="12"/>
+
+                        <TextBlock TextWrapping="Wrap" FontSize="10" Opacity="0.6"
+                                   Text="开启后音频不再由 ffmpeg 重采样，改由 AudioSR 升采样到 48kHz 高带宽后再嵌入；只替换音频轨，视频时长与帧率不变。输入视频必须有音频流才生效。"/>
+
+                        <RadioButton x:Name="AudioSrFp16Rb" Content="FP16 低精度性能模式" GroupName="AudioSrPrecision"
+                                     Checked="OnAudioSrPrecisionChecked" FontSize="12"/>
+                        <RadioButton x:Name="AudioSrFp32Rb" Content="FP32 高精度完美模式" GroupName="AudioSrPrecision"
+                                     Checked="OnAudioSrPrecisionChecked" FontSize="12"/>
+                        <TextBlock x:Name="AudioSrHint" FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                    </StackPanel>
                 </Border>
 
                 <!-- 报告：HTML 报告保存目录（排版同主页的临时目录选择） -->

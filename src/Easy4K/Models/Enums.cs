@@ -8,8 +8,10 @@ public enum ProcessStage
     SuperRes,
     Interpolating,
     Merging,
-    AddingAudio,
     HdrConverting,
+    /// <summary>音频超分（AudioSR）</summary>
+    AudioSr,
+    AddingAudio,
     Done,
     Failed,
     Stopped

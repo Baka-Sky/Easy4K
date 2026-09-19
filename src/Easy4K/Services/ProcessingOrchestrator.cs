@@ -462,7 +462,9 @@ public sealed class ProcessingOrchestrator
         }
 
         // ============ 阶段6：合并原音频 ============
-        // 流程：从原视频提取音频 → 合并到当前视频（PCM 2.0 24bit 96kHz）
+        // 流程：从原视频提取音频 → （可选）音频超分升到 48kHz → 合并到当前视频
+        // 未开音频超分：ffmpeg 重采样到 PCM 2.0 24bit 96kHz
+        // 开了音频超分：直接用 AudioSR 产出的 48kHz WAV（不再重采样，音频交给 AudioSR 负责）
         if (ctx.Options.MergeAudio && ctx.Video.HasAudio)
         {
             var audioPath = Path.Combine(tempRoot, "audio.flac").Replace('\\', '/');
@@ -482,10 +484,24 @@ public sealed class ProcessingOrchestrator
 
             if (File.Exists(audioPath))
             {
+                // 音频超分（勾选时）：把音轨升到 48kHz 高带宽，之后直接嵌入，不再让 ffmpeg 重采样
+                var audioToEmbed = audioPath;
+                var embedRate = 96000;
+                if (ctx.Options.AudioSr)
+                {
+                    var srWav = await RunAudioSrAsync(ctx, audioPath, tempRoot, ct);
+                    if (srWav is not null)
+                    {
+                        audioToEmbed = srWav;
+                        embedRate = 48000;
+                    }
+                }
+
                 var audioEmbedded = Path.Combine(tempRoot, "audio_embedded.mkv").Replace('\\', '/');
-                _logger.Info("合并原音频到新视频 (PCM 2.0 24bit 96kHz)");
+                _logger.Info($"合并原音频到新视频 (PCM 2.0 24bit {embedRate / 1000}kHz"
+                    + (embedRate == 48000 ? "，音频超分直出，未重采样)" : ")"));
                 var useGpu = ctx.Settings.UseGpuAcceleration;
-                var args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioPath, audioEmbedded, useGpu);
+                var args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioToEmbed, audioEmbedded, useGpu, embedRate);
                 _logger.Command($"ffmpeg {args}");
                 var exit = await RunStageAsync(ProcessStage.AddingAudio, "合并原音频",
                     ctx.Tools.FFmpegExe, args, ct);
@@ -498,7 +514,7 @@ public sealed class ProcessingOrchestrator
                     if (useGpu)
                     {
                         _logger.Warn("GPU 加速合并原音频失败，自动回退重试");
-                        args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioPath, audioEmbedded, false);
+                        args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioToEmbed, audioEmbedded, false, embedRate);
                         _logger.Command($"ffmpeg {args}");
                         exit = await RunStageAsync(ProcessStage.AddingAudio, "合并原音频(已回退)",
                             ctx.Tools.FFmpegExe, args, ct);
@@ -540,6 +556,14 @@ public sealed class ProcessingOrchestrator
 
     private static readonly Regex FfmpegFrameRe = new(@"frame=\s*(\d+)", RegexOptions.Compiled);
     private static readonly Regex NvencPercentRe = new(@"(\d+(?:\.\d+)?)\s*%", RegexOptions.Compiled);
+    /// <summary>AudioSR 驱动的进度行形如 "[AudioSR] 进度 42%  窗口 3/7 ..."</summary>
+    private static readonly Regex AudioSrPercentRe = new(@"进度\s*(\d+)\s*%", RegexOptions.Compiled);
+
+    private static long? ParseAudioSrPercent(string line)
+    {
+        var m = AudioSrPercentRe.Match(line);
+        return m.Success && long.TryParse(m.Groups[1].Value, out var v) ? Math.Clamp(v, 0, 100) : null;
+    }
 
     private static long? ParseFfmpegFrame(string line)
     {
@@ -775,6 +799,86 @@ public sealed class ProcessingOrchestrator
             ct: ct);
         lock (captured) _lastStderr = captured.ToString();
         return exit;
+    }
+
+    // ===================== 音频超分（阶段5.5） =====================
+
+    /// <summary>音频超分（AudioSR）：把已提取的音轨转成 48k WAV → 跑 audiosr_onnx.py → 返回升采样后的 48kHz WAV。
+    /// 任一前置条件不满足（脚本/权重包缺失、fp16 撞 CPU）或推理失败时返回 null，
+    /// 由调用方回退到原音轨 + ffmpeg 重采样，保证主链路不因音频超分而失败。</summary>
+    private async Task<string?> RunAudioSrAsync(ProcessingContext ctx, string inputAudio, string tempRoot, CancellationToken ct)
+    {
+        var precision = string.Equals(ctx.Options.AudioSrPrecision, "fp16", StringComparison.OrdinalIgnoreCase) ? "fp16" : "fp32";
+        var packText = precision == "fp16" ? "FP16 低精度性能模式" : "FP32 高精度完美模式";
+        // 进度文字带模式标注，避免运行中看不出跑的是哪一档
+        var stageLabel = precision == "fp16" ? "音频超分中(FP16)" : "音频超分中(FP32)";
+
+        if (!ctx.Tools.AudioSrScriptExists)
+        {
+            _logger.Warn($"音频超分跳过：未找到驱动脚本 {ctx.Tools.AudioSrScript}");
+            return null;
+        }
+        if (!ctx.Tools.AudioSrPackExists(precision))
+        {
+            _logger.Warn($"音频超分跳过：{packText} 的权重包不完整（{ctx.Tools.AudioSrModelsFor(precision)}）");
+            return null;
+        }
+        // fp16 在 CPU 上又少又慢：UI 已拦截，这里再兜一道（防配置文件被外部改动）
+        if (precision == "fp16" && ctx.Settings.UseCpuProcessing)
+        {
+            _logger.Error("音频超分跳过：FP16 精度禁止与 CPU 处理模式同时使用（CPU 的 fp16 算子又少又慢），请改用 FP32 精度");
+            return null;
+        }
+
+        try
+        {
+            var modelsDir = ctx.Tools.AudioSrModelsFor(precision);
+            var inWav = Path.Combine(tempRoot, "audiosr_in_48k.wav").Replace('\\', '/');
+            var outWav = Path.Combine(tempRoot, "audiosr_out_48k.wav").Replace('\\', '/');
+
+            _logger.Info($"音频超分开始（{packText}）：AudioSR 升采样到 48kHz");
+            // 先宣告阶段：AudioSR 要跑完第一个窗口才吐进度（单个窗口可能几十秒），
+            // 不先发一条的话进度条上方会一直停在上一阶段的文案（如"合并中"）上
+            ProgressChanged?.Invoke(new ProcessProgress
+            {
+                Stage = ProcessStage.AudioSr,
+                StageText = stageLabel,
+                Current = 0,
+                Total = 100,
+                PercentDisplay = true
+            });
+            var convArgs = FFmpegCommandBuilder.ToWav48k(inputAudio, inWav);
+            _logger.Command($"ffmpeg {convArgs}");
+            var convExit = await RunStageAsync(ProcessStage.AudioSr, stageLabel, ctx.Tools.FFmpegExe, convArgs, ct);
+            if (convExit != 0 || !File.Exists(inWav))
+            {
+                _logger.Warn("音频超分跳过：音轨转 48k WAV 失败");
+                return null;
+            }
+
+            var py = File.Exists(ctx.Tools.OfficalPythonExe) ? ctx.Tools.OfficalPythonExe : "python";
+            var args = AudioSrCommandBuilder.Build(ctx.Tools.AudioSrScript, inWav, outWav, modelsDir, ctx.Settings.UseCpuProcessing);
+            _logger.Command($"python {args}");
+            var exit = await RunStageWithProgress(ProcessStage.AudioSr, stageLabel, 100,
+                py, args, ParseAudioSrPercent, null, ct, percentDisplay: true);
+            if (exit != 0 || !File.Exists(outWav))
+            {
+                _logger.Warn(exit == 0
+                    ? "音频超分失败：未产出 48kHz WAV，本次回退原音轨"
+                    : $"音频超分失败（退出码 {exit}），本次回退原音轨");
+                return null;
+            }
+
+            var sizeMb = new FileInfo(outWav).Length / 1024.0 / 1024.0;
+            _logger.Success($"音频超分完成（{packText}）：48kHz WAV {sizeMb:F1} MB，随后按 48kHz 直接嵌入");
+            return outWav;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warn($"音频超分异常，本次回退原音轨：{ex.Message}");
+            return null;
+        }
     }
 
     // ===================== 帧去重（阶段1.5）与回填 =====================

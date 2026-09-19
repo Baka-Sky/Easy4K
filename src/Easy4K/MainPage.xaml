@@ -225,7 +225,7 @@
                             </Grid.ColumnDefinitions>
                             <Button   Grid.Column="0" Content="提取音频" Click="OnExtractAudio" IsEnabled="{x:Bind Vm.ExtractAudioEnabled, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                             <TextBlock Grid.Column="1" Text="{x:Bind Vm.ExtractedAudioPath, Mode=OneWay}" VerticalAlignment="Center" IsTextSelectionEnabled="True" Opacity="0.6" TextTrimming="CharacterEllipsis" FontSize="11" FontFamily="Segoe UI Medium"/>
-                            <TextBlock Grid.Column="2" Text="FLAC -> PCM 24bit 96kHz" VerticalAlignment="Center" Opacity="0.6" FontSize="11" FontFamily="Segoe UI Medium"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind Vm.AudioPipelineLabel, Mode=OneWay}" VerticalAlignment="Center" Opacity="0.6" FontSize="11" FontFamily="Segoe UI Medium"/>
                         </Grid>
                         <CheckBox Content="将原音频合并进新视频 (处理结束时自动提取并合并)" IsChecked="{x:Bind Vm.MergeAudio, Mode=TwoWay}" IsEnabled="{x:Bind Vm.MergeAudioEnabled, Mode=OneWay}" FontSize="12"/>
                     </StackPanel>

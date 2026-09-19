@@ -71,6 +71,12 @@ public sealed class AppSettings
     /// <summary>去重模式：performance = 像素差粗筛 + dHash 细筛；uhd = 再加降采样 SSIM 与块运动一致性精判</summary>
     public string DedupMode { get; set; } = "performance";
 
+    // ===================== 音频超分 AudioSR（高级模式） =====================
+    /// <summary>音频超分开关：开启后音频不再由 ffmpeg 重采样，改由 AudioSR 升到 48kHz 后再嵌入</summary>
+    public bool AudioSrEnabled { get; set; }
+    /// <summary>精度档：fp16 = 低精度性能模式（仅 GPU）；fp32 = 高精度完美模式（CPU/GPU 均可）</summary>
+    public string AudioSrPrecision { get; set; } = "fp16";
+
     /// <summary>本地版本号（从 appsettings.json 读取，仅用于显示与更新对比，不写死默认值）</summary>
     public string Version { get; set; } = "";
 }

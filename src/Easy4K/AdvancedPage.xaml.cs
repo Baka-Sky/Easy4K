@@ -50,6 +50,9 @@ public sealed partial class AdvancedPage : Page
         DedupUhdRb.IsChecked = Vm.DedupMode == "uhd";
         _dedupSyncing = false;
 
+        // 音频超分精度单选：同样在程序回填时抑制事件
+        SyncAudioSrFromVm();
+
         Loaded += (_, _) =>
         {
             Vm.PropertyChanged += OnVmPropertyChanged;
@@ -143,6 +146,136 @@ public sealed partial class AdvancedPage : Page
         await dlg.ShowLocalizedAsync();
     }
 
+    // ===================== 音频超分（AudioSR） =====================
+
+    /// <summary>程序回填音频超分精度单选时抑制事件</summary>
+    private bool _audioSrSyncing;
+
+    /// <summary>FP16 冲突弹窗是否已打开（防止重复弹）</summary>
+    private bool _audioSrDialogOpen;
+
+    /// <summary>FP16 权重包是否可用（缺失时 FP16 单选置灰）</summary>
+    private bool AudioSrFp16Available => Vm.Tools.AudioSrFp16Exists;
+
+    /// <summary>按 VM 回填音频超分单选与提示（程序赋值，不触发写回）</summary>
+    private void SyncAudioSrFromVm()
+    {
+        _audioSrSyncing = true;
+        AudioSrFp16Rb.IsEnabled = AudioSrFp16Available;
+        AudioSrFp16Rb.IsChecked = Vm.AudioSrPrecision == "fp16";
+        AudioSrFp32Rb.IsChecked = Vm.AudioSrPrecision != "fp16";
+        _audioSrSyncing = false;
+        UpdateAudioSrHint();
+    }
+
+    /// <summary>卡片底部动态提示：脚本/权重包缺失、或 FP16 撞上 CPU 处理模式时给出可执行说明。</summary>
+    private void UpdateAudioSrHint()
+    {
+        AudioSrFp16Rb.IsEnabled = AudioSrFp16Available;
+        if (!Vm.Tools.AudioSrScriptExists)
+            AudioSrHint.Text = "未找到 Tools\\AudioSR\\audiosr_onnx.py，音频超分无法启用。";
+        else if (!AudioSrFp16Available)
+            AudioSrHint.Text = "未检测到 FP16 权重包（Tools\\AudioSR\\models-fp16），该选项不可用；请放入权重包或改用 FP32。";
+        else if (Vm.UseCpuProcessing)
+            AudioSrHint.Text = "已开启 CPU 处理模式：FP16 在 CPU 上算子又少又慢，此状态下禁止选择 FP16，精度已锁定在 FP32。";
+        else
+            AudioSrHint.Text = "FP16 必须跑在显卡上（DirectML），若显卡不可用脚本会直接报错，不会退回 CPU；追求画质请用 FP32。";
+    }
+
+    /// <summary>把音频超分精度强制回退到 FP32（单选与 VM 同步，且不触发写回事件）。</summary>
+    private void RevertAudioSrToFp32()
+    {
+        _audioSrSyncing = true;
+        AudioSrFp32Rb.IsChecked = true;
+        _audioSrSyncing = false;
+        if (Vm.AudioSrPrecision != "fp32") Vm.AudioSrPrecision = "fp32";
+        UpdateAudioSrHint();
+    }
+
+    /// <summary>精度单选：选 FP16 时校验权重包与 CPU 处理模式；FP16 与 CPU 互斥，冲突时弹窗告知并禁止开启 FP16。</summary>
+    private async void OnAudioSrPrecisionChecked(object sender, RoutedEventArgs e)
+    {
+        if (_audioSrSyncing) return;
+        var wantFp16 = AudioSrFp16Rb.IsChecked == true;
+
+        if (wantFp16 && !AudioSrFp16Available)
+        {
+            RevertAudioSrToFp32();
+            return;
+        }
+
+        // 核心规则：FP16 严禁与 CPU 处理模式共用（CPU 的 fp16 算子又少又慢，官方明确不建议）
+        if (wantFp16 && Vm.UseCpuProcessing)
+        {
+            if (_audioSrDialogOpen) return;
+            _audioSrDialogOpen = true;
+            try
+            {
+                var dlg = new ContentDialog
+                {
+                    Title = "FP16 不能与 CPU 处理模式共用",
+                    Content = "FP16 低精度性能模式必须跑在显卡上。CPU 的 fp16 算子覆盖极少，官方明确不建议，" +
+                              "实测会明显变慢且精度更差。\n\n" +
+                              "当前已勾选「使用CPU处理所有模型」，因此禁止开启 FP16。\n\n" +
+                              "要用 FP16：请先取消「使用CPU处理所有模型」；\n" +
+                              "要继续用 CPU：请选 FP32 高精度完美模式。",
+                    PrimaryButtonText = "改用 FP32",
+                    CloseButtonText = "知道了",
+                    DefaultButton = ContentDialogButton.Primary,
+                    XamlRoot = XamlRoot
+                };
+                await dlg.ShowLocalizedAsync();
+            }
+            finally { _audioSrDialogOpen = false; }
+
+            // 不论用户点哪个按钮都不允许 FP16 生效
+            RevertAudioSrToFp32();
+            return;
+        }
+
+        Vm.AudioSrPrecision = wantFp16 ? "fp16" : "fp32";
+        UpdateAudioSrHint();
+    }
+
+    /// <summary>ⓘ 提示：AudioSR 是什么、两档精度的差别、为什么 FP16 不能用 CPU。</summary>
+    private async void OnAudioSrInfoClick(object sender, RoutedEventArgs e)
+    {
+        var dlg = new ContentDialog
+        {
+            Title = "音频超分：两档精度",
+            Content = new ScrollViewer
+            {
+                MaxHeight = 420,
+                Content = new TextBlock
+                {
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 12,
+                    Text =
+                        "用途：把低码率/带宽受限的音轨升采样成 48kHz 高带宽音频（AudioSR，扩散模型 + 声码器重建高频）。" +
+                        "开启后音频不再由 ffmpeg 重采样，而是交给 AudioSR 负责；只替换音频轨，视频时长、帧率、画面完全不变，" +
+                        "所以成品时长与音频不能对不上的问题不会出现。输入视频必须有音频流才生效。\n\n" +
+                        "【处理链路】\n" +
+                        "提取音轨 → 转 48kHz WAV → 频谱判定真实带宽 → 官方算法低通 → 分窗 DDIM(50 步, CFG 3.5) 推理 → " +
+                        "mel/波形低频段回填（低音用回原音频，保证不跑调）→ 写出 48kHz 24bit WAV → 直接嵌入（PCM 24bit 48kHz）。\n\n" +
+                        "【FP16 低精度性能模式】\n" +
+                        "权重以半精度存放（1.26 GiB），体积约为 FP32 的一半、显存占用更小，实测速度比 FP32 快约 10%~20%，" +
+                        "官方实测相对 FP32 的保真度为 59.4 dB SI-SDR（差异在 0.5 峰值下最大 0.0007，基本听不出）。\n" +
+                        "严禁使用 CPU：CPU 执行器支持的 fp16 算子极少，且已有的那些往往更慢，官方直接写明「CPU 请用 FP32 包」。" +
+                        "因此只要勾选了「使用CPU处理所有模型」，这里就禁止选 FP16；如果显卡不可用，脚本会直接报错退出，不会偷偷退回 CPU。\n\n" +
+                        "【FP32 高精度完美模式】\n" +
+                        "官方原始精度（2.51 GiB），画质基准，CPU 与 GPU 都能跑；显卡不可用时自动回退 CPU 兜底（只是慢）。\n" +
+                        "追求最高还原度、或显卡不支持 DirectML 时选这个。\n\n" +
+                        "【失败与回退】\n" +
+                        "任何一步失败（权重包缺失、显卡不可用、推理报错）都只影响音频：本次会自动回退成原音轨 + ffmpeg 重采样，" +
+                        "视频处理结果照常产出，不会让整条流水线失败。"
+                }
+            },
+            CloseButtonText = "关闭",
+            XamlRoot = XamlRoot
+        };
+        await dlg.ShowLocalizedAsync();
+    }
+
     /// <summary>CPU 处理模式开启/关闭时，禁用/启用安全帧率、降低画质、GPU加速三个选项。</summary>
     private void UpdateCpuDependentCheckBoxes()
     {
@@ -155,12 +288,23 @@ public sealed partial class AdvancedPage : Page
     /// <summary>VM 属性兜底：CPU 处理模式变化时同步勾选状态与联动禁用。</summary>
     private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(Vm.AudioSrPrecision))
+        {
+            // 精度被程序侧改动（如启动时的 FP16/CPU 冲突纠正）→ 单选跟着走
+            if ((AudioSrFp16Rb.IsChecked == true) != (Vm.AudioSrPrecision == "fp16")) SyncAudioSrFromVm();
+            else UpdateAudioSrHint();
+            return;
+        }
         if (e.PropertyName != nameof(Vm.UseCpuProcessing)) return;
 
         UpdateCpuDependentCheckBoxes();
         // 程序侧同步勾选状态（如用户拒绝弹窗回退取消勾选时联动；程序设值不弹窗）
         if (CpuProcessingCb.IsChecked != Vm.UseCpuProcessing)
             CpuProcessingCb.IsChecked = Vm.UseCpuProcessing;
+
+        // CPU 与 FP16 互斥：CPU 被打开而当前是 FP16 时，强制切回 FP32（绝不让非法组合生效）
+        if (Vm.UseCpuProcessing && Vm.AudioSrPrecision == "fp16") RevertAudioSrToFp32();
+        else UpdateAudioSrHint();
     }
 
     /// <summary>线程滑块变化：调到 1:8:8（8）及以上时弹窗确认（会话内只弹一次），
@@ -254,7 +398,11 @@ public sealed partial class AdvancedPage : Page
             {
                 Title = "不建议开启 CPU 处理",
                 Content = "开启后所有模型（超分/补帧）将使用 CPU 推理，处理速度会大幅下降（可能比 GPU 慢 10 倍以上）。\n\n" +
-                          "仅在显卡不可用（驱动故障/设备丢失）或不稳定时才建议开启。确定要继续吗？",
+                          "仅在显卡不可用（驱动故障/设备丢失）或不稳定时才建议开启。确定要继续吗？"
+                          + (Vm.AudioSrPrecision == "fp16"
+                              ? "\n\n注意：音频超分的 FP16 模式不能与 CPU 共用（CPU 的 fp16 算子又少又慢），"
+                                + "开启 CPU 后会把音频超分自动切回 FP32 高精度完美模式。"
+                              : ""),
                 PrimaryButtonText = "继续开启",
                 CloseButtonText = "取消",
                 DefaultButton = ContentDialogButton.Close, // 默认取消更安全
@@ -265,6 +413,8 @@ public sealed partial class AdvancedPage : Page
             {
                 // 确认开启 → 写回 VM（触发联动：取消勾选安全帧率/降低画质/GPU加速并禁用，保存 config）
                 Vm.UseCpuProcessing = true;
+                // FP16 与 CPU 互斥：一并把精度切回 FP32，避免出现非法组合
+                if (Vm.AudioSrPrecision == "fp16") RevertAudioSrToFp32();
             }
             else
             {
