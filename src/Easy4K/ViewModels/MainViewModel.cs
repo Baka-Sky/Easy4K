@@ -1448,8 +1448,10 @@ public partial class MainViewModel : ObservableObject
     public string CleanTempIn(string dir)
     {
         // 软件产生的全部中间产物名（不含输出视频）
-        string[] tempDirs = { "input_frames", "4k_frames", "output_frames" };
-        string[] tempFiles = { "audio.flac", "temp_video.mkv", "hdr_video.mkv", "audio_embedded.mkv", "cache.json" };
+        string[] tempDirs = { "input_frames", "4k_frames", "output_frames",
+                              "expanded_frames", "input_frames_dedup_removed" };
+        string[] tempFiles = { "audio.flac", "temp_video.mkv", "hdr_video.mkv", "audio_embedded.mkv", "cache.json",
+                               "dedup_map.json", "audiosr_in_48k.wav", "audiosr_out_48k.wav", "audiosr_out_48k.wav.partial.wav" };
 
         try
         {
@@ -1498,8 +1500,10 @@ public partial class MainViewModel : ObservableObject
         _logger.Info($"开始强制清理临时目录: {dir}");
         LogDebug($"CLEAN START dir={dir}");
 
-        string[] tempDirs = { "input_frames", "4k_frames", "output_frames" };
-        string[] tempFiles = { "audio.flac", "temp_video.mkv", "hdr_video.mkv", "audio_embedded.mkv", "cache.json" };
+        string[] tempDirs = { "input_frames", "4k_frames", "output_frames",
+                              "expanded_frames", "input_frames_dedup_removed" };
+        string[] tempFiles = { "audio.flac", "temp_video.mkv", "hdr_video.mkv", "audio_embedded.mkv", "cache.json",
+                               "dedup_map.json", "audiosr_in_48k.wav", "audiosr_out_48k.wav", "audiosr_out_48k.wav.partial.wav" };
 
         IsCleaning = true;
         CleanProgressPercent = 0;

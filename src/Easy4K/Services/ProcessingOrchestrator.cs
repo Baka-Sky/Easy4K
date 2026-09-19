@@ -461,11 +461,17 @@ public sealed class ProcessingOrchestrator
             }
         }
 
-        // ============ 阶段6：合并原音频 ============
-        // 流程：从原视频提取音频 → （可选）音频超分升到 48kHz → 合并到当前视频
-        // 未开音频超分：ffmpeg 重采样到 PCM 2.0 24bit 96kHz
-        // 开了音频超分：直接用 AudioSR 产出的 48kHz WAV（不再重采样，音频交给 AudioSR 负责）
-        if (ctx.Options.MergeAudio && ctx.Video.HasAudio)
+        // ============ 阶段6：音频（音频超分 / 合并原音频） ============
+        // 提取原音轨 →（可选）音频超分升到 48kHz → 按「合并原音频」决定去向：
+        //   勾选：嵌入当前视频，用 AudioSR 的 48kHz 直出（未开超分则 ffmpeg 重采样到 96kHz）
+        //   未勾选：不碰视频，超分结果作为单独的 48kHz WAV 落到输出目录
+        var nameBaseAudio = string.IsNullOrEmpty(ctx.InputVideo)
+            ? Path.GetFileName(ctx.ExternalFramesDir.TrimEnd('/', '\\'))
+            : Path.GetFileNameWithoutExtension(ctx.InputVideo);
+        // 未勾选「合并进视频」时音频超分的独立 WAV 产物（未勾选合并视频时它就是本次的成品）
+        string? standaloneAudioWav = null;
+
+        if ((ctx.Options.MergeAudio || ctx.Options.AudioSr) && ctx.Video.HasAudio)
         {
             var audioPath = Path.Combine(tempRoot, "audio.flac").Replace('\\', '/');
             // 若未提前拆分音频，则现在提取
@@ -478,61 +484,79 @@ public sealed class ProcessingOrchestrator
                     ctx.Tools.FFmpegExe, exArgs, ct);
                 if (exExit != 0 || !File.Exists(audioPath))
                 {
-                    _logger.Warn("音频提取失败，跳过合并原音频");
+                    _logger.Warn(ctx.Options.MergeAudio ? "音频提取失败，跳过合并原音频" : "音频提取失败，跳过音频超分");
                 }
             }
 
             if (File.Exists(audioPath))
             {
-                // 音频超分（勾选时）：把音轨升到 48kHz 高带宽，之后直接嵌入，不再让 ffmpeg 重采样
-                var audioToEmbed = audioPath;
-                var embedRate = 96000;
-                if (ctx.Options.AudioSr)
+                // 音频超分（勾选时）：把音轨升到 48kHz 高带宽
+                var srWav = ctx.Options.AudioSr ? await RunAudioSrAsync(ctx, audioPath, tempRoot, ct) : null;
+
+                if (!ctx.Options.MergeAudio)
                 {
-                    var srWav = await RunAudioSrAsync(ctx, audioPath, tempRoot, ct);
+                    // 未勾选「将原音频合并进新视频」：只把超分结果作为独立 WAV 输出，不动视频
                     if (srWav is not null)
                     {
-                        audioToEmbed = srWav;
-                        embedRate = 48000;
+                        Directory.CreateDirectory(ctx.OutputRoot);
+                        var wavOut = Path.Combine(ctx.OutputRoot, $"{nameBaseAudio}_AudioSR_48kHz.wav").Replace('\\', '/');
+                        File.Copy(srWav, wavOut, overwrite: true);
+                        standaloneAudioWav = wavOut;
+                        _logger.Success($"音频超分结果已单独输出（未勾选合并进视频）: {wavOut}");
                     }
                 }
-
-                var audioEmbedded = Path.Combine(tempRoot, "audio_embedded.mkv").Replace('\\', '/');
-                _logger.Info($"合并原音频到新视频 (PCM 2.0 24bit {embedRate / 1000}kHz"
-                    + (embedRate == 48000 ? "，音频超分直出，未重采样)" : ")"));
-                var useGpu = ctx.Settings.UseGpuAcceleration;
-                var args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioToEmbed, audioEmbedded, useGpu, embedRate);
-                _logger.Command($"ffmpeg {args}");
-                var exit = await RunStageAsync(ProcessStage.AddingAudio, "合并原音频",
-                    ctx.Tools.FFmpegExe, args, ct);
-                // -hwaccel auto 静默回退：硬件加速未生效时明确提示
-                if (exit == 0 && useGpu && ContainsHwAccelFailure(_lastStderr))
-                    _logger.Warn("GPU 加速未生效，本次合并原音频实际使用 CPU 处理");
-                if (exit != 0)
+                else
                 {
-                    // GPU 尝试失败 → 回退无 -hwaccel 重试一次
-                    if (useGpu)
+                    var audioToEmbed = srWav ?? audioPath;
+                    var embedRate = srWav is not null ? 48000 : 96000;
+                    var audioEmbedded = Path.Combine(tempRoot, "audio_embedded.mkv").Replace('\\', '/');
+                    _logger.Info($"合并原音频到新视频 (PCM 2.0 24bit {embedRate / 1000}kHz"
+                        + (embedRate == 48000 ? "，音频超分直出，未重采样)" : ")"));
+                    var useGpu = ctx.Settings.UseGpuAcceleration;
+                    var args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioToEmbed, audioEmbedded, useGpu, embedRate);
+                    _logger.Command($"ffmpeg {args}");
+                    var exit = await RunStageAsync(ProcessStage.AddingAudio, "合并原音频",
+                        ctx.Tools.FFmpegExe, args, ct);
+                    // -hwaccel auto 静默回退：硬件加速未生效时明确提示
+                    if (exit == 0 && useGpu && ContainsHwAccelFailure(_lastStderr))
+                        _logger.Warn("GPU 加速未生效，本次合并原音频实际使用 CPU 处理");
+                    if (exit != 0)
                     {
-                        _logger.Warn("GPU 加速合并原音频失败，自动回退重试");
-                        args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioToEmbed, audioEmbedded, false, embedRate);
-                        _logger.Command($"ffmpeg {args}");
-                        exit = await RunStageAsync(ProcessStage.AddingAudio, "合并原音频(已回退)",
-                            ctx.Tools.FFmpegExe, args, ct);
+                        // GPU 尝试失败 → 回退无 -hwaccel 重试一次
+                        if (useGpu)
+                        {
+                            _logger.Warn("GPU 加速合并原音频失败，自动回退重试");
+                            args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioToEmbed, audioEmbedded, false, embedRate);
+                            _logger.Command($"ffmpeg {args}");
+                            exit = await RunStageAsync(ProcessStage.AddingAudio, "合并原音频(已回退)",
+                                ctx.Tools.FFmpegExe, args, ct);
+                        }
+                        if (exit != 0) return Fail("合并原音频失败");
                     }
-                    if (exit != 0) return Fail("合并原音频失败");
+                    _logger.Success("合并原音频完成");
+                    currentVideo = audioEmbedded;
                 }
-                _logger.Success("合并原音频完成");
-                currentVideo = audioEmbedded;
             }
         }
         else if (ctx.Options.MergeAudio && !ctx.Video.HasAudio)
         {
             _logger.Warn("输入视频无音频流，跳过合并原音频");
         }
+        else if (ctx.Options.AudioSr && !ctx.Video.HasAudio)
+        {
+            _logger.Warn("输入视频无音频流，跳过音频超分");
+        }
 
         // 未勾选合并视频时无最终视频，跳过输出步骤（中间帧保留在 Temp）
         if (!ctx.Options.MergeVideo)
         {
+            if (standaloneAudioWav is not null)
+            {
+                // 只跑音频超分（不合并视频）：本次成品就是那个 WAV，作为结果返回给完成窗/报告
+                _logger.Warn("未勾选合并视频：本次不产出成品视频，成品为音频超分结果");
+                ProgressChanged?.Invoke(new ProcessProgress { Stage = ProcessStage.Done, StageText = "完成（仅音频超分）" });
+                return standaloneAudioWav;
+            }
             _logger.Warn("未勾选合并视频：本次不产出成品视频（中间帧保留在临时目录），处理到此结束");
             ProgressChanged?.Invoke(new ProcessProgress { Stage = ProcessStage.Done, StageText = "完成（未勾选合并，无成品输出）" });
             return tempVideo;
@@ -870,7 +894,7 @@ public sealed class ProcessingOrchestrator
             }
 
             var sizeMb = new FileInfo(outWav).Length / 1024.0 / 1024.0;
-            _logger.Success($"音频超分完成（{packText}）：48kHz WAV {sizeMb:F1} MB，随后按 48kHz 直接嵌入");
+            _logger.Success($"音频超分完成（{packText}）：48kHz WAV {sizeMb:F1} MB");
             return outWav;
         }
         catch (OperationCanceledException) { throw; }

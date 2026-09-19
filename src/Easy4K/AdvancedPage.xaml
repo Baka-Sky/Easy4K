@@ -106,7 +106,7 @@
                                           IsOn="{x:Bind Vm.AudioSrEnabled, Mode=TwoWay}" FontSize="12"/>
 
                             <TextBlock TextWrapping="Wrap" FontSize="10" Opacity="0.6"
-                                       Text="开启后音频不再由 ffmpeg 重采样，改由 AudioSR 升采样到 48kHz 高带宽后再嵌入；只替换音频轨，视频时长与帧率不变。输入视频必须有音频流才生效。"/>
+                                       Text="开启后音频不再由 ffmpeg 重采样，改由 AudioSR 升采样到 48kHz 高带宽。勾选主页「将原音频合并进新视频」时替换视频音轨（时长与帧率不变）；未勾选则不动视频，单独输出一份 48kHz WAV。输入视频必须有音频流才生效。"/>
 
                             <RadioButton x:Name="AudioSrFp16Rb" Content="FP16 低精度性能模式" GroupName="AudioSrPrecision"
                                          Checked="OnAudioSrPrecisionChecked" FontSize="12"/>
