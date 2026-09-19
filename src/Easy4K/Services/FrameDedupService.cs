@@ -15,6 +15,12 @@ public static class FrameDedupService
     /// <summary>单像素差异阈值（论文建议 10）：超过该值才算"这个像素变了"</summary>
     private const int PixelThreshold = 10;
 
+    /// <summary>细块边长 = min(宽,高) / 该值。1080p 下约 33×33 像素，约 1900 块。</summary>
+    private const int BlockDiv = 32;
+
+    /// <summary>粗块 = 该值 × 该值 个细块（1080p 下约 132×132 像素）</summary>
+    private const int CoarseGroup = 4;
+
     /// <summary>判决参数。阈值取自论文建议值；完美模式整体收紧一档以压低误删。</summary>
     public sealed record Options(
         string Mode,
@@ -24,17 +30,25 @@ public static class FrameDedupService
         int MinRunLength,
         double QrThreshold,
         double FlowThreshold,
-        double FlowVarThreshold)
+        double FlowVarThreshold,
+        double BlockMadThreshold,
+        double CoarseBlockMadThreshold)
     {
         /// <summary>按模式名取参数（performance / uhd）。
         /// 光流阈值取论文建议值 τ_flow=0.5、τ_var=0.1；QR 阈值因归一化修正后重新标定为 1.0 灰阶
         /// （论文的 0.05 对应的是 D_Mink/(K·B) 那套归一化，与这里量纲不同，不能直接照搬）。
         /// 标定依据：1080p 动画 MV 3600 帧、566 个候选帧对，QR 距离分布 P25 0.016 / P50 0.532 /
         /// P75 1.479 / P90 2.136 / max 4.53；阈值从 0.5 扫到 5.0 灰阶，最终判重帧数恒为 102 帧不变，
-        /// 差别只在送进光流的对数（τ=1.0 可省掉约 1/3 光流调用），所以取下限附近、按"只挡明显不同的帧对"取值。</summary>
+        /// 差别只在送进光流的对数（τ=1.0 可省掉约 1/3 光流调用），所以取下限附近、按"只挡明显不同的帧对"取值。
+        ///
+        /// 分块局部阈值的来由（这是第 1 阶唯一的可靠判据，见 Judge 注释）：
+        /// 在 1080p 静止+编码噪声素材（752 帧）上实测，
+        /// "全局 MAD ≤ 0.1" 的 209 对里有 23.4% 存在块内平均差 ≥ 2.0（最高 24、该块 59% 像素都变了）的真实局部运动；
+        /// 而真正雷同的帧对，33×33 块内平均差中位仅 0.70。故细块取 2.0，分离度约 3 倍。
+        /// 粗块 1.0 是兜"大范围但幅度小的变化"（渐变/慢摇），实测只在 3/751 对上额外生效，几乎无副作用。</summary>
         public static Options FromMode(string? mode) => mode == "uhd"
-            ? new Options("uhd", 1.0, 0.006, 4, 3, 1.0, 0.5, 0.1)
-            : new Options("performance", 2.0, 0.01, 5, 3, 1.0, 0.5, 0.1);
+            ? new Options("uhd", 1.0, 0.006, 4, 3, 1.0, 0.5, 0.1, 2.0, 1.0)
+            : new Options("performance", 2.0, 0.01, 5, 3, 1.0, 0.5, 0.1, 2.0, 1.0);
     }
 
     /// <summary>判决所处阶（用于统计各阶淘汰量与进度文本）</summary>
@@ -91,23 +105,79 @@ public static class FrameDedupService
         if (pixels <= 0 || a.Length < pixels * 4 || b.Length < pixels * 4)
             return (false, 0, 64, double.MaxValue, 0, 0, Stage.PixelDiff);
 
-        // ============ 第 1 阶：像素差粗筛（灰度化 + 平均绝对差 + 变化像素比） ============
+        // ============ 第 1 阶：像素差粗筛（全局 + 两级分块局部） ============
+        // 全局平均差 MAD 与变化像素比例只能反映"整幅画面都变了"：1080p 里一个只占画面 0.05% 的元素在动，
+        // 全局 MAD 只有 0.02~0.1、变化像素占比不到 0.01%，会被彻底平均掉；8×8 的 dHash 更是完全无感。
+        // 实测（1080p 静止+噪声素材）：被判"全局几乎无变化"的帧对里，23.4% 其实存在块内平均差高达 24 的
+        // 真实局部运动；而真正雷同的帧对，块内平均差中位仅 0.70。所以这一阶必须按块看局部：
+        //   细块（≈1/32 边长）：任何一块的平均差 ≥ τ_block → 有小范围真实运动，判为不同
+        //   粗块（4×4 细块）：任何一组的平均差 ≥ τ_coarse → 大范围小幅变化（渐变/慢摇），判为不同
+        // 只多两趟很小的数组遍历，不多扫一遍像素。
+        var bs = Math.Max(8, Math.Min(width, height) / BlockDiv);
+        var cols = (width + bs - 1) / bs;
+        var rows = (height + bs - 1) / bs;
+        var blockSum = new double[rows * cols];
+        var blockPixels = new int[rows * cols];
+
         double sum = 0;
         var changed = 0;
-        for (int i = 0, p = 0; i < pixels; i++, p += 4)
+        for (var by = 0; by < rows; by++)
         {
-            // BGRA 布局：p+2=R, p+1=G, p=B（ITU-R BT.601 灰度权重）
-            var ga = (a[p + 2] * 299 + a[p + 1] * 587 + a[p] * 114) / 1000;
-            var gb = (b[p + 2] * 299 + b[p + 1] * 587 + b[p] * 114) / 1000;
-            var d = Math.Abs(ga - gb);
-            sum += d;
-            if (d > PixelThreshold) changed++;
+            var y0 = by * bs;
+            var y1 = Math.Min(y0 + bs, height);
+            for (var bx = 0; bx < cols; bx++)
+            {
+                var x0 = bx * bs;
+                var x1 = Math.Min(x0 + bs, width);
+                double bsum = 0;
+                var bn = 0;
+                for (var y = y0; y < y1; y++)
+                {
+                    var rowBase = y * width;
+                    for (var x = x0; x < x1; x++)
+                    {
+                        var p = (rowBase + x) * 4;
+                        // BGRA 布局：p+2=R, p+1=G, p=B（ITU-R BT.601 灰度权重）
+                        var ga = (a[p + 2] * 299 + a[p + 1] * 587 + a[p] * 114) / 1000;
+                        var gb = (b[p + 2] * 299 + b[p + 1] * 587 + b[p] * 114) / 1000;
+                        var d = Math.Abs(ga - gb);
+                        sum += d;
+                        if (d > PixelThreshold) changed++;
+                        bsum += d;
+                        bn++;
+                    }
+                }
+                blockSum[by * cols + bx] = bsum;
+                blockPixels[by * cols + bx] = bn;
+            }
         }
 
         var mad = sum / pixels;
         var ratio = (double)changed / pixels;
         if (mad > opt.MadThreshold || ratio > opt.RatioThreshold)
-            return (false, mad, 64, double.MaxValue, 0, 0, Stage.PixelDiff); // 明显不同，直接保留
+            return (false, mad, 64, double.MaxValue, 0, 0, Stage.PixelDiff); // 整幅都变了，直接保留
+
+        // 细块：小范围真实运动
+        for (var bi = 0; bi < blockSum.Length; bi++)
+            if (blockPixels[bi] > 0 && blockSum[bi] / blockPixels[bi] >= opt.BlockMadThreshold)
+                return (false, mad, 64, double.MaxValue, 0, 0, Stage.PixelDiff);
+
+        // 粗块：大范围小幅变化
+        for (var by = 0; by + CoarseGroup <= rows; by += CoarseGroup)
+            for (var bx = 0; bx + CoarseGroup <= cols; bx += CoarseGroup)
+            {
+                double cs = 0;
+                var cn = 0;
+                for (var y = by; y < by + CoarseGroup; y++)
+                    for (var x = bx; x < bx + CoarseGroup; x++)
+                    {
+                        var bi = y * cols + x;
+                        cs += blockSum[bi];
+                        cn += blockPixels[bi];
+                    }
+                if (cn > 0 && cs / cn >= opt.CoarseBlockMadThreshold)
+                    return (false, mad, 64, double.MaxValue, 0, 0, Stage.PixelDiff);
+            }
 
         // ============ 第 2 阶：dHash 细筛（9×8 灰度水平差分 → 64bit → 汉明距离） ============
         var hamming = HammingDistance(DHash(a, width, height), DHash(b, width, height));

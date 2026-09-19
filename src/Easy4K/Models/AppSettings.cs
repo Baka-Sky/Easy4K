@@ -68,7 +68,7 @@ public sealed class AppSettings
     // ===================== 帧去重（高级模式） =====================
     /// <summary>相邻帧去重开关：开启后在超分/补帧前剔除重复帧，处理完按索引表回填，成品时长与音频不变</summary>
     public bool DedupEnabled { get; set; }
-    /// <summary>去重模式：performance = 像素差粗筛 + dHash 细筛；uhd = 再加降采样 SSIM 与块运动一致性精判</summary>
+    /// <summary>去重模式：performance = 像素差（全局+分块局部）+ dHash 细筛；uhd = 再加 QR 分解精判与 Farnebäck 光流终判</summary>
     public string DedupMode { get; set; } = "performance";
 
     // ===================== 音频超分 AudioSR（高级模式） =====================
