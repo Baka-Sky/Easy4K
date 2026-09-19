@@ -9,11 +9,11 @@
   IgnorableNamespaces="uap rescap systemai">
 
   <Identity
-    Name="D9AB8D42-631E-4637-A835-E302AE21ACE6"
-    Publisher="CN=AppPublisher"
+    Name="WellsJiang.Easy4K"
+    Publisher="CN=2E0B1BB6-EB54-446B-B641-48F45953E99B"
     Version="2.0.0.0" />
 
-  <mp:PhoneIdentity PhoneProductId="D9AB8D42-631E-4637-A835-E302AE21ACE6" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
+  <mp:PhoneIdentity PhoneProductId="2E0B1BB6-EB54-446B-B641-48F45953E99B" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
     <DisplayName>Easy4K</DisplayName>
