@@ -623,7 +623,11 @@ public sealed partial class MainWindow : Window
     private static string HelpText =>
         "1. 选择输入视频\n2. 自动检测分辨率/帧率\n3. 勾选要执行的处理（超分/补帧/合并/音频/HDR）\n" +
         "4. 选择模型与倍率（超分倍率会自动过滤可用模型）\n5. 点击开始处理\n\n" +
-        "处理流程：拆帧 → 超分 → 补帧 → 合并 → 嵌入音频 → HDR 转换";
+        "处理流程：拆帧 → 帧去重 → 超分 → 补帧 → 合并视频 → SDR→HDR → 音频超分 → 嵌入音频\n\n" +
+        "【高级】页可开启两项额外能力（默认关闭）：\n" +
+        "· 帧去重：超分/补帧前剔除与上一帧重复的画面，处理完按索引表回填，成品时长、帧率与音频不变；\n" +
+        "· 音频超分：AudioSR 把音轨升到 48kHz 高带宽，勾选「将原音频合并进新视频」时替换视频音轨，\n" +
+        "  未勾选则单独输出一份 48kHz WAV。";
 
     /// <summary>快捷键正文</summary>
     private static string ShortcutsText =>
@@ -633,17 +637,20 @@ public sealed partial class MainWindow : Window
     /// <summary>关于正文（含免责声明）</summary>
     private string AboutText =>
         $"Easy4K v{Vm.Version} - 一键视频超分补帧工具\n\n基于 WinUI 3 / Windows App SDK\n" +
-        "Real-ESRGAN-ncnn-Vulkan / RIFE-ncnn-Vulkan / Offical RIFE (PyTorch) / NVEncC / FFmpeg\n\n" +
-        "补帧引擎：NCNN（Vulkan 全 GPU）/ Offical（官方 PyTorch pkl 模型，NVIDIA CUDA 自动加速）\n\n" +
+        "Real-ESRGAN-ncnn-Vulkan / RIFE-ncnn-Vulkan / Offical RIFE (PyTorch) / AudioSR (ONNX) /\n" +
+        "NVEncC / FFmpeg\n\n" +
+        "补帧引擎：NCNN（Vulkan 全 GPU）/ Offical（官方 PyTorch pkl 模型，NVIDIA CUDA 自动加速）\n" +
+        "附加能力（「高级」页，默认关闭）：帧去重（自研四阶级联判决：像素差+分块局部 / dHash / QR 分解 /\n" +
+        "Farnebäck 稠密光流）/ 音频超分（AudioSR，48kHz 高带宽重建，FP16 性能模式与 FP32 完美模式）\n\n" +
         "========== 免责声明 ==========\n\n" +
         "1. 本软件以\"现状\"（AS-IS）提供，开发者不对其正确性、可靠性、完整性及适用性作任何明示或暗示保证。\n\n" +
-        "2. 使用本软件及所调用第三方工具（FFmpeg/Real-ESRGAN/RIFE/NVEncC）产生的一切后果，包括但不限于：\n" +
+        "2. 使用本软件及所调用第三方工具（FFmpeg/Real-ESRGAN/RIFE/AudioSR/NVEncC）产生的一切后果，包括但不限于：\n" +
         "   处理结果错误、文件损坏或丢失、硬件故障或损坏、系统崩溃或不稳定、数据泄露、时间与经济损失，\n" +
         "   均由使用者自行承担，开发者概不负责。\n\n" +
         "3. 软件运行时会调用系统全部 CPU/GPU 资源，可能导致设备高负载、发热、降频甚至崩溃，请自行评估风险。\n\n" +
-        "4. 输出的视频内容之版权、合法性与用途由使用者自行负责，请勿用于任何非法用途或侵犯他人权益的场景。\n\n" +
+        "4. 输出的视频/音频内容之版权、合法性与用途由使用者自行负责，请勿用于任何非法用途或侵犯他人权益的场景。\n\n" +
         "5. 第三方工具受其各自许可证约束（FFmpeg: LGPL/GPL；Real-ESRGAN: BSD-3；RIFE: 见其项目许可；\n" +
-        "   NVEncC: MIT 等），使用前请自行查阅并遵守。\n\n" +
+        "   AudioSR 及其 ONNX 权重: MIT；onnxruntime: MIT；NVEncC: MIT 等），使用前请自行查阅并遵守。\n\n" +
         "6. 开发者不承诺修复任何缺陷，不提供任何形式的售后服务与技术支持。\n\n" +
         "7. 使用本软件即表示已阅读并同意以上全部条款；不同意请立即停止使用并删除本软件。";
 

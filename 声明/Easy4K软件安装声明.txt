@@ -1,5 +1,6 @@
 ════════════════════════════════════════════════════════════════════
                       Easy4K 软件安装及使用声明
+                        （适用于 Easy4K v2.0.0）
 ════════════════════════════════════════════════════════════════════
 
 本声明由甲方（软件提供方：Easy4K 软件项目组）与乙方（安装并使用
@@ -56,6 +57,24 @@
    (10) RIFE 官方实现（vs-rife / SVFI）
        版权：HolyWu、SVFI 及各自贡献者；许可：MIT
        用途：官方 PyTorch pkl 模型（2.3 / 4.6~4.26 / RPR v7）
+   (11) AudioSR（音频超分辨率）
+       版权：haoheliu 及贡献者；许可：MIT
+       用途：音频超分（扩散模型 + 声码器重建高频，把音轨升采样到
+       48kHz；"高级"页可开关，默认关闭）
+   (12) AudioSR ONNX 权重包（port-audiosr-onnx 社区移植）
+       版权：原模型作者及移植者；许可：随包 manifest.json 标注 MIT
+       用途：DirectML / CPU 上的 AudioSR 推理权重（fp16 / fp32 两档）
+   (13) ONNX Runtime 与 DirectML 执行提供器
+       版权：Microsoft Corporation；许可：MIT
+       用途：AudioSR 的 ONNX 推理运行时（GPU 优先，fp32 可回退 CPU）
+   (14) NumPy / SciPy
+       版权：NumPy、SciPy 项目组；许可：BSD-3-Clause
+       用途：AudioSR 驱动脚本的信号处理（重采样、滤波、STFT）
+
+── 说明 ──
+"帧去重"（四阶级联判决：像素差与分块局部检查 / dHash / QR 分解 /
+Farnebäck 稠密光流）为本软件自行实现，不依赖 OpenCV 等第三方库，
+其实现思路参考公开发表的视频帧去重论文，算法与代码版权归甲方。
 
 请您保留本软件及其组件中的全部版权、许可与署名信息，不得删除
 或篡改。
