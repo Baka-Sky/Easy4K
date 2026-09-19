@@ -9,7 +9,7 @@ public sealed class AppSettings
 
     public string DefaultSrModel { get; set; } = "realesr-animevideov3";
     public string DefaultIfModel { get; set; } = "rife-v4.6";
-    /// <summary>手动"保存当前设置为默认"时记录的补帧引擎（NCNN / Offical）；仅显式保存才生效，启动默认仍 NCNN</summary>
+    /// <summary>补帧引擎（NCNN / Offical）；切换即时写入，启动按此恢复</summary>
     public string DefaultIfEngine { get; set; } = "NCNN";
     public int DefaultSrScale { get; set; } = 2;
     public int DefaultIfMultiplier { get; set; } = 2;
@@ -37,6 +37,10 @@ public sealed class AppSettings
 
     public string Language { get; set; } = "zh-CN";
     public string Theme { get; set; } = "system";
+    /// <summary>图片背景主题（theme=image）使用的背景图路径，空 = 未选择（退化为普通亚克力）</summary>
+    public string BackgroundImage { get; set; } = "";
+    /// <summary>图片背景主题中覆盖在背景图上的亚克力浓度（0-100，越大越糊/越暗、文字越清晰）</summary>
+    public int BackdropAcrylicPercent { get; set; } = 45;
 
     // ===================== 首次运行向导 / 启动自检 =====================
     /// <summary>首次运行欢迎向导是否已完成（协议/硬件声明/报告目录/主题等均已配置）</summary>
@@ -60,6 +64,12 @@ public sealed class AppSettings
     public bool DefaultMergeVideo { get; set; } = true;
     public bool DefaultMergeAudio { get; set; } = true;
     public bool DefaultSdrToHdr { get; set; }
+
+    // ===================== 帧去重（高级模式） =====================
+    /// <summary>相邻帧去重开关：开启后在超分/补帧前剔除重复帧，处理完按索引表回填，成品时长与音频不变</summary>
+    public bool DedupEnabled { get; set; }
+    /// <summary>去重模式：performance = 像素差粗筛 + dHash 细筛；uhd = 再加降采样 SSIM 与块运动一致性精判</summary>
+    public string DedupMode { get; set; } = "performance";
 
     /// <summary>本地版本号（从 appsettings.json 读取，仅用于显示与更新对比，不写死默认值）</summary>
     public string Version { get; set; } = "";

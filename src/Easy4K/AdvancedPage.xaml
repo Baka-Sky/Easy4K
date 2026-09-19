@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="Easy4K.AdvancedPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Page.Resources>
+        <ResourceDictionary>
+            <!-- 与主界面保持一致的卡片样式 -->
+            <Style x:Key="CardBorder" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource CardBgBrush}"/>
+                <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CornerRadius" Value="8"/>
+                <Setter Property="Padding" Value="16"/>
+            </Style>
+            <Style x:Key="SectionTitle" TargetType="TextBlock">
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="FontSize" Value="14"/>
+                <Setter Property="Margin" Value="0,0,0,8"/>
+            </Style>
+            <Style x:Key="FieldLabel" TargetType="TextBlock">
+                <Setter Property="VerticalAlignment" Value="Center"/>
+                <Setter Property="MinWidth" Value="80"/>
+                <Setter Property="FontFamily" Value="Segoe UI Medium"/>
+                <Setter Property="Margin" Value="0,0,8,0"/>
+            </Style>
+        </ResourceDictionary>
+    </Page.Resources>
+
+    <Grid Padding="16,0,16,16">
+        <ScrollViewer Padding="0,8,0,0" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="10">
+
+                <TextBlock Text="高级" FontSize="20" FontWeight="Bold" Margin="0,2,0,4"/>
+
+                <!-- 帧去重：超分/补帧前剔除重复帧，省计算量（合并前按索引表回填，时长与音频不变） -->
+                <Border Style="{StaticResource CardBorder}">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="6">
+                            <Grid ColumnSpacing="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="帧去重" Style="{StaticResource SectionTitle}" Margin="0"/>
+                            <Button Grid.Column="1" HorizontalAlignment="Left"
+                                    Padding="3" Background="Transparent" BorderThickness="0"
+                                    VerticalAlignment="Center" Click="OnDedupInfoClick"
+                                    ToolTipService.ToolTip="性能模式：像素差粗筛 + dHash 细筛&#x0a;完美模式：再加 QR 分解精判 + Farnebäck 光流终判&#x0a;&#x0a;点击图标查看详细讲解"
+                                    AutomationProperties.Name="帧去重说明">
+                                <FontIcon Glyph="&#xE946;" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </Button>
+                        </Grid>
+
+                        <ToggleSwitch x:Name="DedupSwitch" OnContent="已开启" OffContent="已关闭"
+                                      IsOn="{x:Bind Vm.DedupEnabled, Mode=TwoWay}" FontSize="12"/>
+
+                        <TextBlock TextWrapping="Wrap" FontSize="10" Opacity="0.6"
+                                   Text="在超分/补帧前剔除与上一帧重复的画面，处理完按索引表回填，成品时长、帧率与音频均不变；重复帧越多省得越多（动画「一拍二/三」通常可省 30%~50% 的超分/补帧耗时）。"/>
+
+                        <RadioButton x:Name="DedupPerfRb" Content="Performance Mode 性能模式" GroupName="DedupMode"
+                                     Checked="OnDedupModeChecked" FontSize="12"/>
+                        <RadioButton x:Name="DedupUhdRb" Content="UHD Mode 完美模式" GroupName="DedupMode"
+                                     Checked="OnDedupModeChecked" FontSize="12"/>
+                        </StackPanel>
+
+                        <!-- 卡片右下角插图（随主题切换：浅色用黑版、深色用白版；源码见 AdvancedPage.xaml.cs） -->
+                        <Image x:Name="DedupArt" Grid.Column="1"
+                               Width="150" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                               Visibility="Collapsed" AutomationProperties.Name="帧去重插图"/>
+                    </Grid>
+                </Border>
+
+                <!-- 报告：HTML 报告保存目录（排版同主页的临时目录选择） -->
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="报告" Style="{StaticResource SectionTitle}"/>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="80"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="报告目录" Style="{StaticResource FieldLabel}"/>
+                            <TextBox  Grid.Column="1" Text="{x:Bind Vm.ReportDir, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="HTML 报告文件保存目录" Style="{StaticResource GlassTextBox}"/>
+                            <Button   Grid.Column="2" Content="浏览" Click="OnBrowseReportDir" Style="{StaticResource GlassButton}"/>
+                        </Grid>
+                        <TextBlock Text="处理完成后生成的 HTML 报告（选项/命令/抽帧）保存在这里；可填绝对路径，留空按 Reports。" FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- 高级性能选项（原主界面同名区块整体移入） -->
+                <Border Style="{StaticResource CardBorder}" BorderBrush="Orange" Background="{ThemeResource WarnBgBrush}">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="高级性能选项" Style="{StaticResource SectionTitle}"/>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Slider Grid.Column="0" Minimum="1" Maximum="32" StepFrequency="1" TickFrequency="1"
+                                    Value="{x:Bind Vm.ThreadCount, Mode=TwoWay}"
+                                    ValueChanged="OnThreadSliderValueChanged"
+                                    HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="1" Text="{x:Bind Vm.ThreadLabel, Mode=OneWay}"
+                                       VerticalAlignment="Center" FontSize="12" MinWidth="70" TextAlignment="Right"/>
+                        </Grid>
+                        <TextBlock Text="处理线程（NCNN: -j 1:x:x / Offical: torch 线程 x），范围 1 ~ 32，默认 2"
+                                   FontSize="10" Opacity="0.6"/>
+                        <TextBlock Text="{x:Bind Vm.ThreadWarnText, Mode=OneWay}" Foreground="Orange"
+                                   FontSize="11" TextWrapping="Wrap" Visibility="{x:Bind Vm.ThreadWarnVis, Mode=OneWay}"/>
+                        <CheckBox x:Name="SkipStartupSelfTestCb" Content="跳过测试（每次点开始处理不再先用 1 秒测试视频验证勾选流程，直接处理）"
+                                  IsChecked="{x:Bind Vm.SkipStartupSelfTest, Mode=TwoWay}" FontSize="12"/>
+                        <CheckBox x:Name="SafeFrameRateCb" Content="开启安全帧率 (NCNN/Offical 遇到设备丢失/显存/内存溢出时强制停止)" IsChecked="{x:Bind Vm.UseSafeFrameRate, Mode=TwoWay}" FontSize="12"/>
+                        <CheckBox x:Name="LowerQualityCb" Content="降低部分画质以降低显存/内存占用 (-u：NCNN UHD / Offical FP16，可与安全帧率共存)" IsChecked="{x:Bind Vm.LowerQualityForVram, Mode=TwoWay}" FontSize="12"/>
+                        <CheckBox x:Name="GpuAccelerationCb" Content="使FFmpeg尝试使用GPU 加速 (拆帧解码 -hwaccel / 合并帧 GPU 编码器优先，失败自动回退 CPU)" IsChecked="{x:Bind Vm.UseGpuAcceleration, Mode=TwoWay}" FontSize="12"/>
+                        <CheckBox x:Name="CpuProcessingCb" Content="使用CPU处理所有模型 (超分/补帧 NCNN -g -1、Offical 强制 CPU；注意：超分无 CPU 后端会自动升级为 GPU、SDR→HDR 固定用 NVIDIA GPU；速度很慢，仅在 GPU 不可用/不稳定时建议开启)"
+                                  Checked="OnUseCpuProcessingChecked"
+                                  Unchecked="OnUseCpuProcessingUnchecked"
+                                  FontSize="12"/>
+                        <CheckBox x:Name="NoReportCb" Content="不生成配置文件（处理完成后不再生成 HTML 报告文件）"
+                                  IsChecked="{x:Bind Vm.NoReport, Mode=TwoWay}" FontSize="12"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="关于高级模式" Style="{StaticResource SectionTitle}"/>
+                        <TextBlock TextWrapping="Wrap" FontSize="11" Opacity="0.7"
+                                   Text="标准模式下这些选项不显示；此处的改动会立即写入 appsettings.json，下次启动保持。切回标准模式点上方「标准模式」即可。"/>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

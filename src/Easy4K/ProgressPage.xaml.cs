@@ -202,13 +202,26 @@ public sealed partial class ProgressPage : Page
     }
 
     private void OnStop(object sender, RoutedEventArgs e) => Vm.Stop();
-    private void OnCopyLog(object sender, RoutedEventArgs e) => Vm.CopyLog();
+
+    /// <summary>复制日志：剪贴板操作没有可见反馈 → 通知条确认条数，并给一个顺手清空的入口。</summary>
+    private void OnCopyLog(object sender, RoutedEventArgs e)
+    {
+        var count = Vm.Logs.Count;
+        Vm.CopyLog();
+        if (count > 0)
+            App.MainWindow?.ShowNotice("日志已复制到剪贴板", $"共 {count} 条，可直接粘贴到问题反馈里。",
+                "清空日志", () => { Vm.ClearLog(); CommandLogBox.Text = ""; });
+        else
+            App.MainWindow?.ShowNotice("日志为空", "当前没有可复制的内容。");
+    }
+
     private void OnClearLog(object sender, RoutedEventArgs e) { Vm.ClearLog(); CommandLogBox.Text = ""; }
 
     /// <summary>跳过处理前测试（仅测试阶段可见）：停止测试，但随后仍会开始正式处理。</summary>
     private void OnSkipSelfTest(object sender, RoutedEventArgs e)
     {
         Vm.RequestSkipPreTest();
+        App.MainWindow?.ShowNotice("已请求跳过测试", "当前测试会在几秒内停止，随后直接按当前勾选开始正式处理。");
     }
 
     /// <summary>暂停/继续切换（立即挂起或恢复当前工具进程）</summary>

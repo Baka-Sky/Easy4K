@@ -12,10 +12,21 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
+
+        <!-- 图片背景主题：整窗铺满背景图（含标题栏区域），上覆一层应用内亚克力（模糊+着色）。
+             默认隐藏，仅 theme=image 时由 ApplyBackdropImage 打开；未选图时只剩亚克力遮罩，
+             底下仍是系统亚克力 backdrop，不会出现"空背景"。 -->
+        <Image x:Name="BackdropImage" Grid.Row="0" Grid.RowSpan="2"
+               Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center"
+               Visibility="Collapsed" IsHitTestVisible="False"/>
+        <Border x:Name="BackdropOverlay" Grid.Row="0" Grid.RowSpan="2"
+                Visibility="Collapsed" IsHitTestVisible="False">
+            <Border.Background>
+                <AcrylicBrush TintColor="#1C1C1C" TintOpacity="0.45" FallbackColor="#991C1C1C"/>
+            </Border.Background>
+        </Border>
 
         <!-- 标题栏 -->
         <Grid x:Name="AppTitleBar" Grid.Row="0" Height="40" Padding="12,0,8,0">
@@ -25,52 +36,41 @@
             </StackPanel>
         </Grid>
 
-        <!-- 顶栏：菜单栏 + 主页/进行中导航按钮（与"帮助"平齐） -->
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
+        <!-- 自适应导航：宽窗口用顶栏（Top），窄窗口收成左侧最小化（LeftMinimal）。
+             导航项：主页 / 高级 / 进行中（仅处理期间出现）；最右侧齿轮进入设置页。 -->
+        <NavigationView x:Name="RootNav" Grid.Row="1"
+                        PaneDisplayMode="Top"
+                        IsSettingsVisible="True"
+                        IsBackButtonVisible="Collapsed"
+                        IsPaneToggleButtonVisible="True"
+                        IsTitleBarAutoPaddingEnabled="False"
+                        SelectionFollowsFocus="Disabled"
+                        SelectionChanged="OnRootNavSelectionChanged"
+                        ItemInvoked="OnRootNavItemInvoked">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="主页" Tag="ez"/>
+                <NavigationViewItem Content="高级" Tag="adv"/>
+                <!-- 进行中：仅处理期间出现 -->
+                <NavigationViewItem x:Name="ProgressNavItem" Content="进行中" Tag="progress" Visibility="Collapsed"/>
+            </NavigationView.MenuItems>
 
-            <MenuBar Grid.Column="0">
-                <MenuBarItem Title="文件">
-                    <MenuFlyoutItem Text="打开视频 (Ctrl+O)" Click="OnOpenVideoMenu"/>
-                    <MenuFlyoutItem Text="选择临时目录..." Click="OnChooseTempMenu"/>
-                    <MenuFlyoutItem Text="选择输出目录..." Click="OnChooseOutputMenu"/>
-                    <MenuFlyoutSeparator/>
-                    <MenuFlyoutItem Text="退出 (Alt+F4)" Click="OnExitMenu"/>
-                </MenuBarItem>
-                <MenuBarItem Title="工具">
-                    <MenuFlyoutItem Text="检查环境" Click="OnCheckEnvMenu"/>
-                    <MenuFlyoutItem Text="检查显卡" Click="OnCheckGpuMenu"/>
-                    <MenuFlyoutSeparator/>
-                    <MenuFlyoutItem x:Name="CleanTempMenuItem" Text="清理临时文件" Click="OnCleanTempMenu"/>
-                </MenuBarItem>
-                <MenuBarItem Title="设置">
-                    <MenuFlyoutItem Text="浅色主题" Click="OnThemeLight"/>
-                    <MenuFlyoutItem Text="深色主题" Click="OnThemeDark"/>
-                    <MenuFlyoutItem Text="跟随系统" Click="OnThemeSystem"/>
-                    <MenuFlyoutItem Text="亚克力" Click="OnThemeAcrylic"/>
-                    <MenuFlyoutSeparator/>
-                    <MenuFlyoutItem Text="保存当前设置为默认" Click="OnSaveSettingsMenu"/>
-                </MenuBarItem>
-                <MenuBarItem Title="帮助">
-                    <MenuFlyoutItem Text="使用说明 (F1)" Click="OnHelpMenu"/>
-                    <MenuFlyoutItem Text="快捷键" Click="OnShortcutsMenu"/>
-                    <MenuFlyoutSeparator/>
-                    <MenuFlyoutItem Text="关于 Easy4K" Click="OnAboutMenu"/>
-                </MenuBarItem>
-            </MenuBar>
+            <Grid>
+                <!-- 纯进度条（贴缝，未启动时隐藏，进行页自动隐藏） -->
+                <ProgressBar x:Name="ThinProgressBar" Height="3" Minimum="0" Maximum="100" Value="0"
+                             VerticalAlignment="Top" Visibility="Collapsed"/>
+                <Frame x:Name="RootFrame"/>
+            </Grid>
+        </NavigationView>
 
-            <StackPanel x:Name="NavButtons" Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="Collapsed">
-                <Button x:Name="HomeNavBtn" Content="主页" Click="OnNavHome" FontSize="12" Padding="12,4" Style="{StaticResource GlassButton}"/>
-                <Button x:Name="ProgressNavBtn" Content="进行中" Click="OnNavProgress" FontSize="12" Padding="12,4" Style="{StaticResource GlassButton}"/>
-            </StackPanel>
-        </Grid>
-
-        <!-- 纯进度条（贴缝，未启动时隐藏，进行页自动隐藏） -->
-        <ProgressBar x:Name="ThinProgressBar" Grid.Row="2" Height="3" Minimum="0" Maximum="100" Value="0" Visibility="Collapsed"/>
-
-        <Frame x:Name="RootFrame" Grid.Row="3"/>
+        <!-- 非目标式通知条（TeachingTip 不设 Target → 显示在窗口底部居中，不遮挡内容）。
+             用于"点了有动作、但界面上看不到反馈"的按钮：提取音频 / 保存默认设置 / 复制日志 / 清除输入等。
+             标题、正文、动作按钮由 MainWindow.ShowNotice 动态指定，点击动作按钮回到触发页面继续操作。 -->
+        <TeachingTip x:Name="NoticeTip" Grid.Row="0" Grid.RowSpan="2"
+                     IsOpen="False"
+                     PreferredPlacement="Bottom"
+                     IsLightDismissEnabled="True"
+                     CloseButtonContent="知道了"
+                     ActionButtonClick="OnNoticeTipAction"
+                     Closed="OnNoticeTipClosed"/>
     </Grid>
 </Window>

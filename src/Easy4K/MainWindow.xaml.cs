@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Easy4K.Models;
+using Easy4K.Services;
 using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -53,8 +54,7 @@ public sealed partial class MainWindow : Window
         {
             DispatcherQueue.TryEnqueue(() =>
             {
-                NavButtons.Visibility = Visibility.Visible;
-                CleanTempMenuItem.IsEnabled = false; // 处理中禁止清理（菜单入口同样禁用）
+                ProgressNavItem.Visibility = Visibility.Visible;
                 NavigateToProgress();
             });
         };
@@ -64,8 +64,7 @@ public sealed partial class MainWindow : Window
         {
             DispatcherQueue.TryEnqueue(() =>
             {
-                NavButtons.Visibility = Visibility.Collapsed;
-                CleanTempMenuItem.IsEnabled = true; // 处理结束恢复清理菜单
+                ProgressNavItem.Visibility = Visibility.Collapsed;
                 NavigateToHome();
                 // 正式处理完成 → 自动生成 HTML 报告（选项/命令/测试帧/中间帧抽帧），随后弹完成窗体
                 Vm.TryGenerateReport(r.OutputPath, r.StepsText, r.Elapsed);
@@ -87,8 +86,7 @@ public sealed partial class MainWindow : Window
         // 自动测试结束 → 回主页并展示结果
         Vm.AutoTestFinished += ok => DispatcherQueue.TryEnqueue(() =>
         {
-            NavButtons.Visibility = Visibility.Collapsed;
-            CleanTempMenuItem.IsEnabled = true;
+            ProgressNavItem.Visibility = Visibility.Collapsed;
             ThinProgressBar.Visibility = Visibility.Collapsed;
             NavigateToHome();
             Vm.ProgressDetail = ok ? "自动测试全部通过，总结见日志" : "自动测试结束（有失败项），详见日志/总结文件";
@@ -104,6 +102,14 @@ public sealed partial class MainWindow : Window
                 ThinProgressBar.Visibility = (Vm.IsCleaning || Vm.IsProcessing) ? Visibility.Visible : Visibility.Collapsed;
                 if (!Vm.IsCleaning && !Vm.IsProcessing)
                     ThinProgressBar.IsIndeterminate = false; // 恢复定值进度供处理使用
+            }
+            else if (e.PropertyName == nameof(Vm.BackgroundImage) && Vm.SavedTheme == "image")
+            {
+                ApplyBackdropImage(); // 图片背景主题下换图立即生效
+            }
+            else if (e.PropertyName == nameof(Vm.BackdropAcrylicPercent) && Vm.SavedTheme == "image")
+            {
+                ApplyBackdropOpacity(); // 拖动浓度条立即生效
             }
         });
 
@@ -132,7 +138,7 @@ public sealed partial class MainWindow : Window
                     DefaultButton = ContentDialogButton.Primary,
                     XamlRoot = RootFrame.XamlRoot
                 };
-                var r = await dlg.ShowAsync();
+                var r = await dlg.ShowLocalizedAsync();
                 if (r == ContentDialogResult.Primary)
                 {
                     await PickTempFolderAsync();
@@ -167,7 +173,7 @@ public sealed partial class MainWindow : Window
                 DefaultButton = ContentDialogButton.Close,
                 XamlRoot = RootFrame.XamlRoot
             };
-            Vm.DialogResult(await dlg.ShowAsync() == ContentDialogResult.Primary);
+            Vm.DialogResult(await dlg.ShowLocalizedAsync() == ContentDialogResult.Primary);
         });
 
         // 开始处理被前置校验拦截（如目录不可写）→ 弹窗告知原因，避免主页看不到日志而表现为"点了没反应"
@@ -181,19 +187,49 @@ public sealed partial class MainWindow : Window
                 DefaultButton = ContentDialogButton.Close,
                 XamlRoot = RootFrame.XamlRoot
             };
-            await dlg.ShowAsync();
+            await dlg.ShowLocalizedAsync();
         });
 
-        // 启动时恢复上次保存的主题（light/dark/system/acrylic）
+        // 启动时恢复上次保存的主题（light/dark/system/acrylic/image）
         switch (Vm.SavedTheme)
         {
             case "light": SetTheme(ElementTheme.Light); break;
             case "dark": SetTheme(ElementTheme.Dark); break;
             case "acrylic": SetAcrylicTheme(); break;
+            case "image": SetImageBackdropTheme(); break;
         }
+
+        // 导航：默认选中第 1 项（主页）；随窗口宽度在顶栏/左侧最小化之间自适应
+        if (RootNav.MenuItems.Count > 0) RootNav.SelectedItem = RootNav.MenuItems[0];
+        RootNav.SizeChanged += (_, e) => UpdatePaneDisplayMode(e.NewSize.Width);
+        UpdatePaneDisplayMode(RootNav.ActualWidth);
+
+        // 多语言：界面加载完/切页/切语言时重新本地化（语言在设置页切换）
+        // 注意：Frame.Navigated 触发时新页面的可视树往往还没构建，直接遍历会什么都扫不到
+        //（表现为"切到另一个页面就变回中文"），所以再挂一次该页面的 Loaded。
+        Loc.LanguageChanged += () => DispatcherQueue.TryEnqueue(ApplyLocalization);
+        RootFrame.Navigated += (_, e) =>
+        {
+            if (e.Content is FrameworkElement page)
+                page.Loaded += (s, _) =>
+                {
+                    if (s is DependencyObject loaded) Loc.LocalizeTree(loaded);
+                };
+            DispatcherQueue.TryEnqueue(ApplyLocalization);
+        };
+        DispatcherQueue.TryEnqueue(ApplyLocalization);
 
         // 启动后异步检查更新（服务器版本高于 config 里的本地版本时弹窗提示）
         _ = CheckUpdateAsync();
+    }
+
+    // ===================== 多语言 =====================
+
+    /// <summary>把窗口内（含导航栏、当前页面）的中文文案替换成当前语言译文。语言在设置页切换。</summary>
+    private void ApplyLocalization()
+    {
+        Loc.LocalizeNavView(RootNav); // 顶栏导航项：窄窗口下不在可视树里，按数据翻译
+        if (Content is DependencyObject root) Loc.LocalizeTree(root);
     }
 
     // ===================== 导航 =====================
@@ -202,22 +238,24 @@ public sealed partial class MainWindow : Window
     {
         if (RootFrame.CurrentSourcePageType != typeof(MainPage))
             RootFrame.Navigate(typeof(MainPage));
+        SyncNavSelection("ez"); // 主页 = EZ Mode，导航高亮同步回来
         // 未启动处理时不显示进度条；处理中手动回主页才显示全局进度
         ThinProgressBar.Visibility = Vm.IsProcessing ? Visibility.Visible : Visibility.Collapsed;
     }
 
     public void NavigateToProgress()
     {
+        ProgressNavItem.Visibility = Visibility.Visible; // 「进行中」只在处理期间存在，进页面前确保可见
         if (RootFrame.CurrentSourcePageType != typeof(ProgressPage))
             RootFrame.Navigate(typeof(ProgressPage));
+        SyncNavSelection("progress"); // 导航高亮移到「进行中」
         ThinProgressBar.Visibility = Visibility.Collapsed;
     }
 
-    /// <summary>处理前测试未通过（已取消正式处理）后调用：隐藏导航按钮、启用清理菜单并回主页。</summary>
+    /// <summary>处理前测试未通过（已取消正式处理）后调用：隐藏「进行中」导航项并回主页。</summary>
     public void HideNavAndGoHome()
     {
-        NavButtons.Visibility = Visibility.Collapsed;
-        CleanTempMenuItem.IsEnabled = true;
+        ProgressNavItem.Visibility = Visibility.Collapsed;
         ThinProgressBar.Visibility = Visibility.Collapsed;
         NavigateToHome();
     }
@@ -225,8 +263,55 @@ public sealed partial class MainWindow : Window
     /// <summary>主窗口内容根（供弹窗指定 XamlRoot，避免页面卸载后引用失效）。</summary>
     public Microsoft.UI.Xaml.XamlRoot WindowContentRoot => RootFrame.XamlRoot;
 
-    private void OnNavHome(object sender, RoutedEventArgs e) => NavigateToHome();
-    private void OnNavProgress(object sender, RoutedEventArgs e) => NavigateToProgress();
+    // ===================== 自适应导航（主页 / 高级 / 进行中 / 齿轮设置） =====================
+
+    /// <summary>程序设置导航选中项时抑制 SelectionChanged，避免与页面导航互相触发。</summary>
+    private bool _suppressNavChange;
+
+    /// <summary>参考 WinUI 导航指南：宽窗口用顶栏（Top），窄窗口收成左侧最小化（LeftMinimal）。</summary>
+    private void UpdatePaneDisplayMode(double width)
+    {
+        var mode = width >= 1000 ? NavigationViewPaneDisplayMode.Top : NavigationViewPaneDisplayMode.LeftMinimal;
+        if (RootNav.PaneDisplayMode != mode) RootNav.PaneDisplayMode = mode;
+    }
+
+    /// <summary>顶栏切换：主页 ↔ 高级 ↔ 进行中。</summary>
+    private void OnRootNavSelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    {
+        if (_suppressNavChange) return;
+        if (args.SelectedItem is not NavigationViewItem item) return;
+
+        var tag = item.Tag as string;
+        if (tag == "ez" && RootFrame.CurrentSourcePageType != typeof(MainPage))
+            RootFrame.Navigate(typeof(MainPage));
+        else if (tag == "adv" && RootFrame.CurrentSourcePageType != typeof(AdvancedPage))
+            RootFrame.Navigate(typeof(AdvancedPage));
+        else if (tag == "progress" && RootFrame.CurrentSourcePageType != typeof(ProgressPage))
+            RootFrame.Navigate(typeof(ProgressPage));
+
+        ThinProgressBar.Visibility = Vm.IsProcessing && RootFrame.CurrentSourcePageType != typeof(ProgressPage)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    /// <summary>齿轮（设置项）不在 MenuItems 里，只能通过 ItemInvoked 捕获。</summary>
+    private void OnRootNavItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
+    {
+        if (!args.IsSettingsInvoked) return;
+        if (RootFrame.CurrentSourcePageType != typeof(SettingsPage))
+            RootFrame.Navigate(typeof(SettingsPage));
+        ThinProgressBar.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>把导航选中项同步到指定项（返回主页等场景调用）。</summary>
+    private void SyncNavSelection(string tag)
+    {
+        _suppressNavChange = true;
+        foreach (var obj in RootNav.MenuItems)
+            if (obj is NavigationViewItem item && (item.Tag as string) == tag)
+                RootNav.SelectedItem = item;
+        _suppressNavChange = false;
+    }
 
     // ===================== 完成弹窗 =====================
 
@@ -268,7 +353,7 @@ public sealed partial class MainWindow : Window
             DefaultButton = ContentDialogButton.Primary
         };
 
-        var result = await dlg.ShowAsync();
+        var result = await dlg.ShowLocalizedAsync();
         if (result == ContentDialogResult.Primary)
         {
             // 后台清理（主页顶部进度条显示清理进度，不阻塞 UI）
@@ -311,7 +396,7 @@ public sealed partial class MainWindow : Window
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootFrame.XamlRoot
         };
-        var result = await dlg.ShowAsync();
+        var result = await dlg.ShowLocalizedAsync();
         if (result != ContentDialogResult.Primary) return; // 取消 → 继续处理
 
         // 确认关闭：停止任务 + 强杀工具进程（防止残留占用 GPU/文件）
@@ -384,7 +469,7 @@ public sealed partial class MainWindow : Window
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = RootFrame.XamlRoot
             };
-            var r = await dlg.ShowAsync();
+            var r = await dlg.ShowLocalizedAsync();
             if (r == ContentDialogResult.Primary)
             {
                 Vm.AcceptTempRoot(folder.Path);
@@ -401,11 +486,99 @@ public sealed partial class MainWindow : Window
         InitializeWithWindow.Initialize(picker, hwnd);
     }
 
-    // ===================== 工具 / 设置 / 帮助 =====================
+    // ===================== 供设置页调用的公开入口 =====================
 
-    private void OnCheckEnvMenu(object sender, RoutedEventArgs e) => ShowDialog("环境检测", Vm.CheckEnvironment());
-    private void OnCheckGpuMenu(object sender, RoutedEventArgs e) => ShowDialog("显卡检测", Vm.CheckGpu());
-    private async void OnCleanTempMenu(object sender, RoutedEventArgs e) => await ConfirmCleanTempAsync();
+    public async Task OpenVideoAsync() => await PickVideoAsync();
+
+    public async Task ChooseTempFolderAsync() => await PickTempFolderAsync();
+
+    public async Task ChooseOutputFolderAsync() => await PickFolderAsync(p => Vm.SetOutputRoot(p));
+
+    /// <summary>选择 HTML 报告保存目录（供「高级」页调用）</summary>
+    public async Task ChooseReportFolderAsync() => await PickFolderAsync(p => Vm.ReportDir = p);
+
+    public async Task CleanTempAsync() => await ConfirmCleanTempAsync();
+
+    /// <summary>底部通知条当前挂起的动作（用户点"动作按钮"时执行；重开/关闭即清空）</summary>
+    private Action? _noticeAction;
+
+    /// <summary>弹一条非目标式通知条（窗口底部居中，不遮挡内容、不打断操作）。
+    /// 给"点了有动作但界面无反馈"的按钮用：actionText 非空时带一个动作按钮（如"重新选择视频""打开临时目录"），
+    /// 点击后执行 action 回到触发处继续操作；不传 actionText 则只有"知道了"。</summary>
+    public void ShowNotice(string title, string message, string? actionText = null, Action? action = null)
+    {
+        NoticeTip.Title = title;
+        NoticeTip.Subtitle = message;
+        NoticeTip.ActionButtonContent = actionText; // null → 不显示动作按钮
+        _noticeAction = actionText is null ? null : action;
+
+        // 已显示时只替换内容（同一时刻只留最新一条），避免先关后开同帧内弹不出来
+        if (!NoticeTip.IsOpen) NoticeTip.IsOpen = true;
+    }
+
+    private void OnNoticeTipAction(TeachingTip sender, object args)
+    {
+        var action = _noticeAction;
+        _noticeAction = null;
+        sender.IsOpen = false;
+        action?.Invoke();
+    }
+
+    private void OnNoticeTipClosed(TeachingTip sender, TeachingTipClosedEventArgs args) => _noticeAction = null;
+
+    /// <summary>用资源管理器打开目录（通知条动作按钮用）。</summary>
+    private static void OpenFolder(string path)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !System.IO.Directory.Exists(path)) return;
+            Process.Start(new ProcessStartInfo { FileName = "explorer.exe", Arguments = $"\"{path}\"", UseShellExecute = true });
+        }
+        catch { /* 打不开目录不影响主流程 */ }
+    }
+
+    /// <summary>打开 appsettings.json 所在目录（exe 旁边）。</summary>
+    public void OpenConfigFolder() => OpenFolder(AppContext.BaseDirectory);
+
+    /// <summary>打开临时目录（提取音频等动作的查看入口）。</summary>
+    public void OpenTempFolder() => OpenFolder(Vm.TempRoot);
+
+    public Task ShowInfoDialogAsync(string title, string content)
+    {
+        ShowDialog(title, content);
+        return Task.CompletedTask;
+    }
+
+    public Task ShowHelpAsync()
+    {
+        ShowDialog("使用说明", HelpText);
+        return Task.CompletedTask;
+    }
+
+    public Task ShowShortcutsAsync()
+    {
+        ShowDialog("快捷键", ShortcutsText);
+        return Task.CompletedTask;
+    }
+
+    public Task ShowAboutAsync()
+    {
+        ShowDialog($"关于 Easy4K v{Vm.Version}", AboutText);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>按设置页选中的主题串应用主题（light / dark / system / acrylic / image）。</summary>
+    public void ApplyThemeFromSettings(string theme)
+    {
+        switch (theme)
+        {
+            case "light": SetTheme(ElementTheme.Light); break;
+            case "dark": SetTheme(ElementTheme.Dark); break;
+            case "acrylic": SetAcrylicTheme(); break;
+            case "image": SetImageBackdropTheme(); break;
+            default: SetTheme(ElementTheme.Default); break;
+        }
+    }
 
     /// <summary>清理临时文件：双重警告确认，全部确认才执行，结果走日志。
     /// 处理进行中禁止清理（主页按钮已禁用，此处兜底拦截菜单等入口）。</summary>
@@ -426,7 +599,7 @@ public sealed partial class MainWindow : Window
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootFrame.XamlRoot
         };
-        if (await first.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await first.ShowLocalizedAsync() != ContentDialogResult.Primary) return;
 
         var second = new ContentDialog
         {
@@ -437,29 +610,28 @@ public sealed partial class MainWindow : Window
             DefaultButton = ContentDialogButton.Close, // 第二次默认取消更安全
             XamlRoot = RootFrame.XamlRoot
         };
-        if (await second.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await second.ShowLocalizedAsync() != ContentDialogResult.Primary) return;
 
-        await Vm.CleanTempInAsync(Vm.TempRoot); // 后台清理，主页进度条显示进度
+        var msg = await Vm.CleanTempInAsync(Vm.TempRoot); // 后台清理，主页进度条显示进度
         // 清理后重新评估：cache.json 已删除则解除启动阻断
         Vm.RefreshCacheBlock();
+        ShowNotice(msg.Contains("无法删除") ? "清理完成，但有项目未能删除" : "临时文件已清理",
+            msg, "打开临时目录", OpenTempFolder);
     }
 
-    private void OnThemeLight(object sender, RoutedEventArgs e) => SetTheme(ElementTheme.Light);
-    private void OnThemeDark(object sender, RoutedEventArgs e) => SetTheme(ElementTheme.Dark);
-    private void OnThemeSystem(object sender, RoutedEventArgs e) => SetTheme(ElementTheme.Default);
-    private void OnThemeAcrylic(object sender, RoutedEventArgs e) => SetAcrylicTheme();
-    private void OnSaveSettingsMenu(object sender, RoutedEventArgs e) { Vm.SaveSettings(); Vm.Logger.Info("设置已保存"); }
-
-    private void OnHelpMenu(object sender, RoutedEventArgs e) => ShowDialog("使用说明",
+    /// <summary>使用说明正文</summary>
+    private static string HelpText =>
         "1. 选择输入视频\n2. 自动检测分辨率/帧率\n3. 勾选要执行的处理（超分/补帧/合并/音频/HDR）\n" +
         "4. 选择模型与倍率（超分倍率会自动过滤可用模型）\n5. 点击开始处理\n\n" +
-        "处理流程：拆帧 → 超分 → 补帧 → 合并 → 嵌入音频 → HDR 转换");
+        "处理流程：拆帧 → 超分 → 补帧 → 合并 → 嵌入音频 → HDR 转换";
 
-    private void OnShortcutsMenu(object sender, RoutedEventArgs e) => ShowDialog("快捷键",
+    /// <summary>快捷键正文</summary>
+    private static string ShortcutsText =>
         "Ctrl+O       打开视频\nCtrl+S        开始处理\nCtrl+Shift+S  停止处理\n" +
-        "Ctrl+L        清空日志\nF1            帮助\nAlt+F4        退出");
+        "Ctrl+L        清空日志\nF1            帮助\nAlt+F4        退出";
 
-    private void OnAboutMenu(object sender, RoutedEventArgs e) => ShowDialog($"关于 Easy4K v{Vm.Version}",
+    /// <summary>关于正文（含免责声明）</summary>
+    private string AboutText =>
         $"Easy4K v{Vm.Version} - 一键视频超分补帧工具\n\n基于 WinUI 3 / Windows App SDK\n" +
         "Real-ESRGAN-ncnn-Vulkan / RIFE-ncnn-Vulkan / Offical RIFE (PyTorch) / NVEncC / FFmpeg\n\n" +
         "补帧引擎：NCNN（Vulkan 全 GPU）/ Offical（官方 PyTorch pkl 模型，NVIDIA CUDA 自动加速）\n\n" +
@@ -473,7 +645,7 @@ public sealed partial class MainWindow : Window
         "5. 第三方工具受其各自许可证约束（FFmpeg: LGPL/GPL；Real-ESRGAN: BSD-3；RIFE: 见其项目许可；\n" +
         "   NVEncC: MIT 等），使用前请自行查阅并遵守。\n\n" +
         "6. 开发者不承诺修复任何缺陷，不提供任何形式的售后服务与技术支持。\n\n" +
-        "7. 使用本软件即表示已阅读并同意以上全部条款；不同意请立即停止使用并删除本软件。");
+        "7. 使用本软件即表示已阅读并同意以上全部条款；不同意请立即停止使用并删除本软件。";
 
     private async void ShowDialog(string title, string content)
     {
@@ -495,13 +667,15 @@ public sealed partial class MainWindow : Window
             CloseButtonText = "关闭",
             XamlRoot = RootFrame.XamlRoot
         };
-        await dlg.ShowAsync();
+        await dlg.ShowLocalizedAsync();
     }
 
     /// <summary>普通主题：移除亚克力材质，恢复纯色主题背景，并持久化主题选择。</summary>
     private void SetTheme(ElementTheme theme)
     {
         SystemBackdrop = null; // 亚克力是独立主题选项，切回普通主题时移除
+        HideBackdropLayers();  // 图片背景层只在图片主题显示
+        SetNavPaneTransparent(false);
         RootFrame.RequestedTheme = theme;
         Vm.SetThemeMode(theme switch
         {
@@ -517,6 +691,8 @@ public sealed partial class MainWindow : Window
     {
         _acrylic ??= new DesktopAcrylicBackdrop();
         SystemBackdrop = _acrylic;
+        HideBackdropLayers();
+        SetNavPaneTransparent(false);
         // 亚克力颜色跟随系统主题，内容也切回跟随系统保持一致
         RootFrame.RequestedTheme = ElementTheme.Default;
         Vm.SetThemeMode("acrylic");
@@ -524,6 +700,83 @@ public sealed partial class MainWindow : Window
         if (!new Windows.UI.ViewManagement.UISettings().AdvancedEffectsEnabled)
             Vm.Logger.Warn("系统已关闭「透明度效果」，亚克力回退为纯色背景。请到 设置→个性化→颜色→透明度效果 开启后重新选择亚克力。");
         Vm.Logger.Info("主题切换为: 亚克力");
+    }
+
+    /// <summary>图片背景主题：在亚克力之上再铺一层背景图，图片上覆盖应用内亚克力（模糊+着色）。
+    /// 内容固定用深色主题，保证图片再怎么亮，卡片与文字都有足够对比度。</summary>
+    private void SetImageBackdropTheme()
+    {
+        // 未选图时整窗只剩这层系统亚克力，不会出现"空背景"
+        _acrylic ??= new DesktopAcrylicBackdrop();
+        SystemBackdrop = _acrylic;
+        RootFrame.RequestedTheme = ElementTheme.Dark;
+        SetNavPaneTransparent(true); // 去掉 NavigationView 自带的内容层灰色底，否则导航栏下方会多出一块灰面板
+        Vm.SetThemeMode("image");
+        ApplyBackdropOpacity();
+        ApplyBackdropImage();
+        Vm.Logger.Info(string.IsNullOrWhiteSpace(Vm.BackgroundImage)
+            ? "主题切换为: 图片背景（尚未选择背景图，当前等同亚克力）"
+            : $"主题切换为: 图片背景（{Vm.BackgroundImage}）");
+    }
+
+    /// <summary>刷新背景图层：图片存在才显示图片（不存在则只有亚克力遮罩），遮罩始终显示保证文字可读。
+    /// 路径是边输入边同步的，读不到就当没选图，不刷日志。</summary>
+    private void ApplyBackdropImage()
+    {
+        var path = Vm.BackgroundImage;
+        var loaded = false;
+        if (!string.IsNullOrWhiteSpace(path) && System.IO.File.Exists(path))
+        {
+            try
+            {
+                BackdropImage.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(path));
+                loaded = true;
+            }
+            catch (Exception ex)
+            {
+                Vm.Logger.Warn($"背景图片加载失败: {ex.Message}");
+            }
+        }
+
+        BackdropImage.Visibility = loaded ? Visibility.Visible : Visibility.Collapsed;
+        BackdropOverlay.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>图片背景主题下把 NavigationView 自带的内容层/窗格底色改成透明。
+    /// 官方模板在顶部模式下会给内容区铺一层 LayerFillColorDefaultBrush（半透明灰），
+    /// 叠在背景图上就是导航栏下方那块"多余灰面板"；清掉后图片才能整片透出来。
+    /// 只在图片主题生效，其它主题保持 WinUI 默认观感。</summary>
+    private void SetNavPaneTransparent(bool on)
+    {
+        string[] keys =
+        {
+            "NavigationViewContentBackground",
+            "NavigationViewTopPaneBackground",
+            "NavigationViewDefaultPaneBackground",
+            "NavigationViewExpandedPaneBackground"
+        };
+        foreach (var key in keys)
+        {
+            if (on) RootNav.Resources[key] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            else RootNav.Resources.Remove(key);
+        }
+    }
+
+    /// <summary>把"亚克力浓度"拖动条的值（0-100）应用到覆盖层的 AcrylicBrush：
+    /// TintOpacity = 浓度，FallbackColor 用同浓度 alpha（系统关闭透明度效果时按纯色半透明着色）。</summary>
+    private void ApplyBackdropOpacity()
+    {
+        if (BackdropOverlay.Background is not AcrylicBrush brush) return;
+        var percent = Math.Clamp(Vm.BackdropAcrylicPercent, 0, 100);
+        brush.TintOpacity = percent / 100.0;
+        brush.FallbackColor = Windows.UI.Color.FromArgb((byte)(percent * 255 / 100), 0x1C, 0x1C, 0x1C);
+    }
+
+    /// <summary>隐藏图片背景层（切到其它主题时调用）。</summary>
+    private void HideBackdropLayers()
+    {
+        BackdropImage.Visibility = Visibility.Collapsed;
+        BackdropOverlay.Visibility = Visibility.Collapsed;
     }
 
     // ===================== 版本检查 / 更新提示 =====================
@@ -620,7 +873,7 @@ public sealed partial class MainWindow : Window
             XamlRoot = RootFrame.XamlRoot
         };
 
-        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await dlg.ShowLocalizedAsync() != ContentDialogResult.Primary) return;
 
         // 是 → 获取更新链接并用默认浏览器打开
         var url = await FetchTextAsync(UpdateAppUrl);

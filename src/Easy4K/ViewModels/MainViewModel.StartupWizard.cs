@@ -328,6 +328,7 @@ public partial class MainViewModel
     {
         var lines = new List<string>();
         if (SplitFrames) lines.Add("拆分帧");
+        if (DedupEnabled) lines.Add($"帧去重：{(DedupMode == "uhd" ? "UHD Mode 完美模式" : "Performance Mode 性能模式")}");
         if (SuperResolution) lines.Add($"超分辨率：{SrModel} ×{SrScale}");
         if (Interpolation) lines.Add($"补帧：引擎 {IfEngine}，模型 {IfModel} ×{IfMultiplier}");
         if (MergeVideo) lines.Add("合并视频");

@@ -58,6 +58,16 @@ public sealed class ProcessingOrchestrator
             return null;
         }
 
+        // 只勾了拆帧时不产出成品：以前这种情况会在几秒内"完成"并弹完成窗，看起来像"跑了 0 秒"。
+        // 这里提前用警告说明，避免误判成失败/无响应。
+        if (!ctx.Options.SuperResolution && !ctx.Options.Interpolation && !ctx.Options.MergeVideo)
+        {
+            _logger.Warn("当前只勾选了「拆帧」：不会执行超分/补帧/合并，也不会产出成品视频；如需成品请勾选「合并视频」。");
+        }
+
+        // 续跑兜底：上次已去重则 input_frames 里只剩保留帧，拆帧的"够不够"判断要按保留数比
+        var cachedDedupKept = ctx.Settings.DedupEnabled ? TryReadDedupKept(tempRoot) : 0;
+
         // BUG-09：NCNN 的 v2/v3 老模型不支持 -n 自定义帧数，仅支持 2 倍补帧；Offical 引擎不受限
         var oldNcnnModel = ctx.Options.IfEngine != "Offical"
             && ctx.IfModel.StartsWith("rife-v", StringComparison.OrdinalIgnoreCase)
@@ -111,7 +121,7 @@ public sealed class ProcessingOrchestrator
         else if (ctx.Options.SplitFrames)
         {
             var existing = CountFrames(inputFrames);
-            if (existing >= totalFrames)
+            if (existing >= (cachedDedupKept > 0 ? cachedDedupKept : totalFrames))
             {
                 // 上次已拆好帧，跳过拆帧（崩溃重跑不从头）
                 _logger.Info($"当前[拆帧]已完成 自动跳过此步骤");
@@ -158,11 +168,21 @@ public sealed class ProcessingOrchestrator
             }
         }
 
+        // ============ 阶段1.5：帧去重（高级模式开关） ============
+        // 剔除与上一帧重复的画面 → 超分/补帧只算保留帧；合并前按 map 回填，时长与帧率不变。
+        var dedupKept = 0; // 0 = 未启用/未生效
+        if (ctx.Settings.DedupEnabled)
+            dedupKept = await RunDedupAsync(ctx, tempRoot, inputFrames, totalFrames, ct);
+
+        // 去重生效后：超分应产出 kept 帧、补帧应产出 kept×倍率 帧（都是回填前的数量）
+        var srTarget = dedupKept > 0 ? dedupKept : totalFrames;
+        var ifTarget = dedupKept > 0 ? dedupKept * ifMult : targetFrames;
+
         // ============ 阶段2：超分 ============
         if (ctx.Options.SuperResolution)
         {
             var existingSr = CountFrames(srFrames);
-            if (existingSr >= totalFrames)
+            if (existingSr >= srTarget)
             {
                 // 上次已超分完成，跳过（崩溃重跑不从头）
                 _logger.Info($"当前[超分]已完成 自动跳过此步骤");
@@ -234,7 +254,7 @@ public sealed class ProcessingOrchestrator
         if (ctx.Options.Interpolation)
         {
             var existingIf = CountFrames(ifFrames);
-            if (existingIf >= targetFrames)
+            if (existingIf >= ifTarget)
             {
                 // 上次已补帧完成，跳过（崩溃重跑不从头）
                 _logger.Info($"当前[补帧]已完成 自动跳过此步骤");
@@ -264,7 +284,7 @@ public sealed class ProcessingOrchestrator
                     var oArgs = OfficalRifeCommandBuilder.Build(ctx.Tools.OfficalRifeRunPy, inputDirForIf, ifFrames, modelDir,
                         ctx.IfMultiplier, threads, ctx.Settings.LowerQualityForVram, ctx.Settings.UseCpuProcessing);
                     _logger.Command($"python {oArgs}");
-                    var oExit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(Offical)", targetFrames,
+                    var oExit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(Offical)", ifTarget,
                         py, oArgs, ifFrames, ct, forcedCpu: cpu);
                     if (oExit != 0)
                     {
@@ -283,7 +303,7 @@ public sealed class ProcessingOrchestrator
                             var retryArgs = OfficalRifeCommandBuilder.Build(ctx.Tools.OfficalRifeRunPy, inputDirForIf, ifFrames, modelDir,
                                 ctx.IfMultiplier, 1, ctx.Settings.LowerQualityForVram, ctx.Settings.UseCpuProcessing);
                             _logger.Command($"python {retryArgs}（降级单线程重试）");
-                            oExit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(Offical降级)", targetFrames,
+                            oExit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(Offical降级)", ifTarget,
                                 py, retryArgs, ifFrames, ct, forcedCpu: cpu);
                             if (oExit != 0)
                             {
@@ -306,9 +326,12 @@ public sealed class ProcessingOrchestrator
                     var jThreads = $"1:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}";
                     _fatalGpuError = false;
                     _logger.Info($"补帧开始: 模型 {ctx.IfModel} ×{ifMult} ({ctx.Video.FrameRate:0.##}→{outFps:0.##}fps)（线程 {jThreads}）");
-                    var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, targetFrames, jThreads, ctx.Settings.LowerQualityForVram, useCpu: cpu);
+                    // -n 是"输出总帧数"：去重生效时输入目录只剩保留帧，必须按 保留帧×倍率 传，
+                    // 否则 RIFE 会把比例放大到 原帧数×倍率/保留帧数，且回填时按倍率取块会全部错位。
+                    // ifTarget 恰好就是这个值（未去重时等于 原帧数×倍率）。
+                    var args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, ifTarget, jThreads, ctx.Settings.LowerQualityForVram, useCpu: cpu);
                     _logger.Command($"rife-ncnn-vulkan {args}");
-                    var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中", targetFrames,
+                    var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中", ifTarget,
                         ctx.Tools.RifeExe, args, ifFrames, ct);
 
                     // BUG-04：rife-v4.25/v4.26 命令行版会报 "layer MemoryData not exists" → 回退 v4.6
@@ -316,9 +339,9 @@ public sealed class ProcessingOrchestrator
                     {
                         _logger.Warn($"模型 {ctx.IfModel} 不被命令行版支持，已因硬件原因回退至 rife-v4.6");
                         CleanPartialOutput(ifFrames);
-                        var args2 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, "rife-v4.6", ctx.IfMultiplier, targetFrames, jThreads, ctx.Settings.LowerQualityForVram, useCpu: cpu);
-                        _logger.Command($"rife-ncnn-vulkan {args2}（因硬件原因回退至 rife-v4.6）");
-                        exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(因硬件原因回退至v4.6)", targetFrames,
+                        var args2 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, "rife-v4.6", ctx.IfMultiplier, ifTarget, jThreads, ctx.Settings.LowerQualityForVram, useCpu: cpu);
+                        _logger.Command($"rife-ncnn-vulkan {args2}（因硬件原因回退至v4.6）");
+                        exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(因硬件原因回退至v4.6)", ifTarget,
                             ctx.Tools.RifeExe, args2, ifFrames, ct);
                     }
                     if (exit != 0)
@@ -335,9 +358,9 @@ public sealed class ProcessingOrchestrator
                         {
                             _logger.Warn("检测到显卡错误（Vulkan 设备丢失/显存溢出），自动降级为单线程重试本次补帧");
                             CleanPartialOutput(ifFrames);
-                            var retryArgs = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, targetFrames, "1:1:1", ctx.Settings.LowerQualityForVram, useCpu: cpu);
+                            var retryArgs = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, ifTarget, "1:1:1", ctx.Settings.LowerQualityForVram, useCpu: cpu);
                             _logger.Command($"rife-ncnn-vulkan {retryArgs}（降级单线程重试）");
-                            exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(降级)", targetFrames,
+                            exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(降级)", ifTarget,
                                 ctx.Tools.RifeExe, retryArgs, ifFrames, ct);
                             if (exit != 0)
                             {
@@ -360,6 +383,17 @@ public sealed class ProcessingOrchestrator
         if (ctx.Options.MergeVideo)
         {
             var framesForMerge = ctx.Options.Interpolation ? ifFrames : (ctx.Options.SuperResolution ? srFrames : inputFrames);
+
+            // 帧去重回填：把保留帧按索引表展开成与原始帧数一致的完整序列（复制），时长/帧率/音频保持不变
+            if (dedupKept > 0)
+            {
+                var expandedDir = Path.Combine(tempRoot, "expanded_frames").Replace('\\', '/');
+                // 补帧时每个保留帧在补帧结果里占 ifMult 帧，回填要整块搬（见 TryExpandDedupFramesAsync）
+                var expandMult = ctx.Options.Interpolation ? ifMult : 1;
+                if (await TryExpandDedupFramesAsync(tempRoot, framesForMerge, expandedDir, expandMult, ct))
+                    framesForMerge = expandedDir;
+            }
+
             var fpsForMerge = ctx.Options.Interpolation ? outFps : ctx.Video.FrameRate;
             var total = ctx.Options.Interpolation ? targetFrames : totalFrames;
             // 勾选「使FFmpeg尝试使用GPU加速」→ GPU 编码优先（NVIDIA NVENC → AMD AMF → Intel QSV），失败自动回退 CPU libx265
@@ -410,6 +444,9 @@ public sealed class ProcessingOrchestrator
             }
             else
             {
+                // CPU 处理模式管不到这里：NVEncC 的 --vpp-ngx-truehdr 只能跑在 NVIDIA GPU 上
+                if (ctx.Settings.UseCpuProcessing)
+                    _logger.Warn("SDR→HDR 由 NVEncC 的 GPU 滤镜完成，没有 CPU 路径：CPU 处理模式对该步骤不生效");
                 // HDR 先于音频合并：NVEncC 只处理视频流，输出中间文件，音频随后嵌入
                 var hdrVideo = Path.Combine(tempRoot, "hdr_video.mkv").Replace('\\', '/');
                 _logger.Info($"HDR 转换开始: saturation={ctx.HdrSaturation}, contrast={ctx.HdrContrast}");
@@ -480,8 +517,8 @@ public sealed class ProcessingOrchestrator
         // 未勾选合并视频时无最终视频，跳过输出步骤（中间帧保留在 Temp）
         if (!ctx.Options.MergeVideo)
         {
-            _logger.Info("未勾选合并视频，跳过最终视频输出（中间帧保留在临时目录）");
-            ProgressChanged?.Invoke(new ProcessProgress { Stage = ProcessStage.Done, StageText = "完成" });
+            _logger.Warn("未勾选合并视频：本次不产出成品视频（中间帧保留在临时目录），处理到此结束");
+            ProgressChanged?.Invoke(new ProcessProgress { Stage = ProcessStage.Done, StageText = "完成（未勾选合并，无成品输出）" });
             return tempVideo;
         }
 
@@ -738,6 +775,207 @@ public sealed class ProcessingOrchestrator
             ct: ct);
         lock (captured) _lastStderr = captured.ToString();
         return exit;
+    }
+
+    // ===================== 帧去重（阶段1.5）与回填 =====================
+
+    /// <summary>去重结果映射文件（放临时目录，供回填与续跑复用）</summary>
+    private static string DedupMapPath(string tempRoot) => Path.Combine(tempRoot, "dedup_map.json");
+
+    /// <summary>读取已存在的去重保留帧数（无文件返回 0）。用于拆帧阶段的续跑判断。</summary>
+    private static int TryReadDedupKept(string tempRoot)
+    {
+        try
+        {
+            var p = DedupMapPath(tempRoot);
+            if (!File.Exists(p)) return 0;
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(p));
+            return doc.RootElement.TryGetProperty("keptCount", out var v) ? v.GetInt32() : 0;
+        }
+        catch { return 0; }
+    }
+
+    /// <summary>阶段1.5：相邻帧去重。判为重复的帧移到 input_frames_dedup_removed（不真删），
+    /// 写 dedup_map.json（keptCount + 回填位置表）。返回保留帧数；未生效返回 0。</summary>
+    private async Task<int> RunDedupAsync(ProcessingContext ctx, string tempRoot, string inputFrames, long totalFrames, CancellationToken ct)
+    {
+        try
+        {
+            var kept = CountFrames(inputFrames);
+
+            // 续跑：map 已存在且与实际保留帧数一致 → 直接复用，不重复分析
+            var cached = TryReadDedupKept(tempRoot);
+            if (cached > 0 && cached == kept)
+            {
+                _logger.Info($"帧去重：复用已有结果（保留 {cached} / {totalFrames} 帧）");
+                return cached;
+            }
+
+            // 拆帧结果不完整时不做（避免把不完整序列当成完整序列去重）
+            if (kept < totalFrames)
+            {
+                _logger.Warn($"帧去重跳过：拆帧结果不完整（{kept}/{totalFrames} 帧）");
+                return 0;
+            }
+
+            var modeText = ctx.Settings.DedupMode == "uhd" ? "UHD Mode 完美模式" : "Performance Mode 性能模式";
+            _logger.Info($"帧去重开始（{modeText}）：共 {kept} 帧");
+            var modeShort = ctx.Settings.DedupMode == "uhd" ? "完美" : "性能";
+
+            var opt = FrameDedupService.Options.FromMode(ctx.Settings.DedupMode);
+            var removedDir = Path.Combine(tempRoot, "input_frames_dedup_removed");
+            Directory.CreateDirectory(removedDir);
+
+            // 进度文本形如：帧去重(性能) 判决阶段(dHash) 去重365帧 69%（69% 由 DetailText 拼上）
+            string DedupText(string phase, int dup) => $"帧去重({modeShort}) {phase} 去重{dup}帧";
+
+            var result = await FrameDedupService.AnalyzeAsync(inputFrames, opt, pr =>
+                ProgressChanged?.Invoke(new ProcessProgress
+                {
+                    Stage = ProcessStage.Splitting,
+                    StageText = DedupText(pr.Phase, pr.DuplicateCount),
+                    Current = pr.Done,
+                    Total = pr.Total,
+                    PercentDisplay = true,
+                    // 预览框显示"被标记为重复"的帧，新出现标记帧时自动刷新
+                    LatestFramePath = pr.MarkedFramePath
+                }), ct);
+
+            // 重复帧移出 input_frames（保留在 removed 目录，便于排查/回退）
+            ProgressChanged?.Invoke(new ProcessProgress
+            {
+                Stage = ProcessStage.Splitting,
+                StageText = DedupText("搬移重复帧", result.DuplicateCount),
+                Current = result.Total,
+                Total = result.Total,
+                PercentDisplay = true
+            });
+            foreach (var d in result.Decisions)
+            {
+                if (!d.Duplicate) continue;
+                var src = Path.Combine(inputFrames, $"{d.Index:D8}.png");
+                if (!File.Exists(src)) continue;
+                var dst = Path.Combine(removedDir, $"{d.Index:D8}.png");
+                if (File.Exists(dst)) File.Delete(dst);
+                File.Move(src, dst);
+            }
+
+            // 回填位置表：第 k 个输出槽位应取"保留序列"里的第几帧（1 基）
+            var expandPos = new List<int>(result.Total);
+            var seenKept = 0;
+            foreach (var d in result.Decisions)
+            {
+                if (!d.Duplicate) seenKept++;
+                expandPos.Add(Math.Max(1, seenKept));
+            }
+
+            var keptNow = CountFrames(inputFrames);
+            File.WriteAllText(DedupMapPath(tempRoot), System.Text.Json.JsonSerializer.Serialize(new
+            {
+                mode = ctx.Settings.DedupMode,
+                total = result.Total,
+                keptCount = keptNow,
+                duplicateCount = result.DuplicateCount,
+                expandPos
+            }));
+
+            _logger.Success($"帧去重完成：剔除 {result.DuplicateCount} 帧，实际处理 {keptNow} 帧（省 {result.DedupRate:P1}），重复帧保留在 {removedDir}");
+
+            // 各阶淘汰量（论文四阶级联的可观测性：出问题时能一眼看出卡在哪一阶）
+            var byPixel = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.PixelDiff);
+            var byHash = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.Hash);
+            var byQr = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.Qr);
+            var byFlow = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.Flow);
+            _logger.Info($"各阶判决：像素差淘汰 {byPixel}，dHash 淘汰 {byHash}，QR 淘汰 {byQr}，" +
+                         $"光流淘汰 {byFlow}，四阶全过判重 {result.DuplicateCount}");
+
+            var qrSample = result.Decisions.Where(d => d.Decided >= FrameDedupService.Stage.Qr).Select(d => d.Qr).ToList();
+            if (qrSample.Count > 0)
+                _logger.Info($"QR 距离 D_norm（论文归一化）：最小 {qrSample.Min():0.###e-0}，最大 {qrSample.Max():0.###e-0}，" +
+                             $"阈值 {opt.QrThreshold} → 共淘汰 {byQr} 帧");
+            var flowSample = result.Decisions.Where(d => d.Decided >= FrameDedupService.Stage.Flow).Select(d => d.MeanFlow).ToList();
+            if (flowSample.Count > 0)
+                _logger.Info($"光流 MeanFlow：最小 {flowSample.Min():0.###}，最大 {flowSample.Max():0.###} 像素，" +
+                             $"阈值 {opt.FlowThreshold} → 共淘汰 {byFlow} 帧");
+            return keptNow;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warn($"帧去重失败，本次按不去重继续：{ex.Message}");
+            return 0;
+        }
+    }
+
+    /// <summary>合并前回填：按 dedup_map.json 的位置表，把保留帧展开成与原始帧数一致的完整序列。
+    /// mult = 每个保留帧在 framesDir 里实际占的帧数（补帧时 = 补帧倍率，否则 1）：
+    /// RIFE 会把缺号输入重排成连续帧号，且保留帧 k 固定落在 (k-1)*mult+1 起的整块里
+    /// （实测：输入 1/3/5 三帧、-n 6 → 输出 1..6，其中 out1=in1、out3=in2、out5=in3），
+    /// 所以回填必须整块复制 mult 帧，否则补帧模式下成品帧数只有应有的 1/mult、时长随之缩水。
+    /// 另有定格修正：若下一个原始帧也是重复帧，该槽位在原片里是"保持不动"，插值结果应为同一帧
+    /// 连续 mult 次（展开表里相邻两槽位取值相同即表示后一槽位被去重，据此判断，无需额外存表）。
+    /// 返回 true 表示已生成可用的展开目录（随后合并改读该目录，帧率与时长保持不变）。</summary>
+    private async Task<bool> TryExpandDedupFramesAsync(string tempRoot, string framesDir, string expandedDir, int mult, CancellationToken ct)
+    {
+        try
+        {
+            var mapPath = DedupMapPath(tempRoot);
+            if (!File.Exists(mapPath)) return false;
+
+            List<int>? expandPos = null;
+            using (var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(mapPath)))
+            {
+                if (doc.RootElement.TryGetProperty("expandPos", out var arr))
+                {
+                    expandPos = new List<int>();
+                    foreach (var item in arr.EnumerateArray()) expandPos.Add(item.GetInt32());
+                }
+            }
+            if (expandPos is null || expandPos.Count == 0) return false;
+            if (mult < 1) mult = 1;
+
+            // 保留帧按文件名排序后的列表：位置表里的序号指向"第几个保留帧"
+            var keptFiles = Directory.GetFiles(framesDir, "*.png");
+            if (keptFiles.Length == 0) return false;
+            Array.Sort(keptFiles, StringComparer.OrdinalIgnoreCase);
+
+            if (Directory.Exists(expandedDir)) Directory.Delete(expandedDir, true);
+            Directory.CreateDirectory(expandedDir);
+
+            await Task.Run(() =>
+            {
+                for (var i = 0; i < expandPos.Count; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    // 原始第 i 个槽位 → 第 expandPos[i] 个保留帧 → 它在补帧结果里的整块（mult 帧）
+                    var srcBase = (expandPos[i] - 1) * mult;
+                    var dstBase = i * mult;
+                    // 下一个原始帧也是重复帧（展开表里相邻两槽位取值相同 = 后一槽位被去重）：
+                    // 此时该槽位在原片里是"定格保持"，插值结果应当是同一帧连续 mult 次，
+                    // 而不能去取跨过重复帧的插值帧（那会把定格变成一格渐变）。
+                    var holdBlock = i + 1 < expandPos.Count && expandPos[i + 1] == expandPos[i];
+                    for (var j = 0; j < mult; j++)
+                    {
+                        var srcIdx = srcBase + (holdBlock ? 0 : j);
+                        if (srcIdx < 0 || srcIdx >= keptFiles.Length) continue;
+                        var dst = Path.Combine(expandedDir, $"{dstBase + j + 1:D8}.png");
+                        try { File.Copy(keptFiles[srcIdx], dst, overwrite: true); }
+                        catch { /* 个别帧复制失败时跳过，不中断整个流程 */ }
+                    }
+                }
+            }, ct);
+
+            var n = CountFrames(expandedDir);
+            if (n == 0) return false;
+            _logger.Info($"帧去重回填：{keptFiles.Length} 帧 → 展开为 {n} 帧（时长/帧率保持不变）");
+            return true;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warn($"帧去重回填失败，本次按未回填继续：{ex.Message}");
+            return false;
+        }
     }
 
     private static int CountFrames(string dir)

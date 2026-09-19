@@ -72,6 +72,9 @@ public partial class App : Application
         // 装配服务链
         var settingsSvc = new SettingsService();
         var (app, toolCfg) = settingsSvc.Load();
+        // 多语言：功能暂时隐藏，固定简体中文（词表 Loc/strings.json 与 Loc 服务都保留，
+        // 需要恢复"按配置切换语言"时把下面一行换回 Loc.Set(app.Language, notify: false) 即可）
+        Loc.Set("zh-CN", notify: false);
         var tools = ToolPathResolver.Resolve(app, toolCfg);
 
         var logger = new Logger();
@@ -88,6 +91,7 @@ public partial class App : Application
         var selftestCli = false;
         var autoTestCli = false;
         var autoTestFull = false;
+        var dedupOnly = false;
         for (int i = 0; i < cmdLine.Length; i++)
         {
             if (cmdLine[i].Equals("--selftest", StringComparison.OrdinalIgnoreCase) && i + 2 < cmdLine.Length)
@@ -121,6 +125,14 @@ public partial class App : Application
                     autoTestFull = true;
                 break;
             }
+
+            // 帧去重专项测试: Easy4K.exe --dedup-test（不加载超分模型，补帧只用最轻 lite，几十秒跑完）
+            if (cmdLine[i].Equals("--dedup-test", StringComparison.OrdinalIgnoreCase))
+            {
+                autoTestCli = true;
+                dedupOnly = true;
+                break;
+            }
         }
 
         // 首次运行：先展示 OOBE 设置向导（完成后保存配置并衔接正式主界面）
@@ -138,7 +150,7 @@ public partial class App : Application
 
         OpenMainWindow();
         if (autoTestCli)
-            _ = RunAutoTestDelayedAsync(autoTestFull);
+            _ = RunAutoTestDelayedAsync(autoTestFull, dedupOnly);
     }
 
     /// <summary>创建并显示正式主窗口。
@@ -151,13 +163,13 @@ public partial class App : Application
         MainWindow.Activate();
     }
 
-    /// <summary>延迟到主窗口/页面加载完成后再跑 GUI 全面自动测试（--autotest-all 专用）。</summary>
-    private static async Task RunAutoTestDelayedAsync(bool fullMatrix)
+    /// <summary>延迟到主窗口/页面加载完成后再跑 GUI 自动测试（--autotest-all / --dedup-test 专用）。</summary>
+    private static async Task RunAutoTestDelayedAsync(bool fullMatrix, bool dedupOnly = false)
     {
         try
         {
             await Task.Delay(1500);
-            await Services.RunAutoTestAllAsync(fullMatrix);
+            await Services.RunAutoTestAllAsync(fullMatrix, dedupOnly);
         }
         catch (Exception ex)
         {

@@ -44,7 +44,9 @@ public partial class MainViewModel
         bool LowerQuality,
         bool GpuAccel,
         bool Cpu,
-        int Threads);
+        int Threads,
+        bool Dedup,
+        string DedupMode);
 
     private sealed record AutoResult(AutoCase Case, bool Ok, TimeSpan Elapsed, string? Output, string? Note);
 
@@ -53,7 +55,7 @@ public partial class MainViewModel
     /// fullMatrix=true：每个 v4/Offical 模型跑 ×2~×5 全矩阵（用例数最多、最慢）。
     /// 不模拟鼠标；每例输出独立临时目录，成功即清理，失败保留目录便于排查。
     /// </summary>
-    public async Task RunAutoTestAllAsync(bool fullMatrix = false)
+    public async Task RunAutoTestAllAsync(bool fullMatrix = false, bool dedupOnly = false)
     {
         if (IsProcessing) { _logger.Warn("自动测试: 已有处理进行中，忽略本次请求"); return; }
         if (!Tools.CoreToolsOk)
@@ -67,7 +69,9 @@ public partial class MainViewModel
         IsAutoTest = true;
         IsStartupSelfTest = false;
         SuppressCompletionDialog = true;
-        _logger.Info("==== 自动测试开始（GUI 全功能/全模型，全程可见可停止）====");
+        _logger.Info(dedupOnly
+            ? "==== 帧去重专项测试开始（只跑去重用例，不加载超分模型、补帧用最轻 lite 模型）===="
+            : "==== 自动测试开始（GUI 全功能/全模型，全程可见可停止）====");
 
         try
         {
@@ -95,7 +99,7 @@ public partial class MainViewModel
             Directory.CreateDirectory(root);
             Directory.CreateDirectory(failRoot);
 
-            var cases = BuildAutoTestCases(info, fullMatrix);
+            var cases = dedupOnly ? BuildDedupTestCases() : BuildAutoTestCases(info, fullMatrix);
             _autoTestCount = cases.Count;
             _autoTestIndex = 0;
             _logger.Info($"自动测试用例总数: {cases.Count}（fullMatrix={(fullMatrix ? "全倍率2~5" : "全模型x2+代表性全倍率")}），输入: 1s 测试视频 {info.Width}x{info.Height}@{info.FrameRate:F0}fps");
@@ -151,7 +155,9 @@ public partial class MainViewModel
                             UseGpuAcceleration = c.GpuAccel,
                             UseCpuProcessing = c.Cpu,
                             ThreadCount = Math.Clamp(c.Threads, 1, 32),
-                            EncodePreset = _app.EncodePreset
+                            EncodePreset = _app.EncodePreset,
+                            DedupEnabled = c.Dedup,
+                            DedupMode = string.IsNullOrEmpty(c.DedupMode) ? "performance" : c.DedupMode
                         },
                         Tools = Tools
                     };
@@ -224,6 +230,43 @@ public partial class MainViewModel
 
     // ===================== 用例构造 =====================
 
+    /// <summary>帧去重专项用例（--dedup-test）：不加载超分模型，补帧只用权重最小的 lite 模型，
+    /// 目的是几十秒内在 GUI 里看清「去重进度 / 预览 / 四阶判决 / 回填」是否正常。</summary>
+    private List<AutoCase> BuildDedupTestCases()
+    {
+        var cases = new List<AutoCase>();
+        var models = RifeCommandBuilder.ListModels(Tools.RifeModelsRoot);
+        // 权重最小的 lite 模型（v4.15/4.16/4.17-lite 实测都是 5134KB，最省）
+        var lite = models.FirstOrDefault(m => m.Equals("rife-v4.16-lite", StringComparison.OrdinalIgnoreCase))
+                   ?? models.FirstOrDefault(m => m.Contains("-lite", StringComparison.OrdinalIgnoreCase))
+                   ?? models.FirstOrDefault() ?? "rife-v4.6";
+
+        void Add(bool if_, bool merge, string name, string dedupMode, string? ifModel = null)
+        {
+            cases.Add(new AutoCase(
+                name,
+                new ProcessingOptions
+                {
+                    SplitFrames = true,
+                    SuperResolution = false,
+                    Interpolation = if_,
+                    MergeVideo = merge,
+                    MergeAudio = false,
+                    SdrToHdr = false,
+                    IfEngine = "NCNN"
+                },
+                null, 2, "NCNN", ifModel, 2, false, false, false, false, 4, true, dedupMode));
+        }
+
+        // 1/2：只拆帧 + 合并（不跑任何模型）——最快看清去重进度与预览
+        Add(false, true, "去重·性能模式（拆帧+合并，不跑模型）", "performance");
+        Add(false, true, "去重·完美模式（拆帧+合并，含 QR+光流）", "uhd");
+        // 3/4：最轻补帧 ×2 + 合并 —— 验证去重与补帧回填的联动
+        Add(true, true, $"去重·性能模式 + 最轻补帧 {lite} ×2", "performance", lite);
+        Add(true, true, $"去重·完美模式 + 最轻补帧 {lite} ×2", "uhd", lite);
+        return cases;
+    }
+
     private List<AutoCase> BuildAutoTestCases(VideoInfo info, bool fullMatrix)
     {
         var cases = new List<AutoCase>();
@@ -231,7 +274,8 @@ public partial class MainViewModel
 
         void Add(bool split, bool sr, bool if_, bool merge, bool audio, bool hdr,
             string engine, string? srModel, int srScale, string? ifModel, int ifMult,
-            string name, bool safe = false, bool lower = false, bool gpuAccel = false, bool cpu = false, int threads = 4)
+            string name, bool safe = false, bool lower = false, bool gpuAccel = false, bool cpu = false,
+            int threads = 4, bool dedup = false, string dedupMode = "performance")
         {
             cases.Add(new AutoCase(
                 name,
@@ -245,7 +289,7 @@ public partial class MainViewModel
                     SdrToHdr = hdr,
                     IfEngine = engine
                 },
-                srModel, srScale, engine, ifModel, ifMult, safe, lower, gpuAccel, cpu, threads));
+                srModel, srScale, engine, ifModel, ifMult, safe, lower, gpuAccel, cpu, threads, dedup, dedupMode));
         }
 
         // ---------- 超分：全部模型（x2/x3/x4） ----------
@@ -300,6 +344,11 @@ public partial class MainViewModel
         // SDR→HDR（仅 RTX + NVEncC 可用）
         if (gpu.SupportsHdr && Tools.NvEncExists)
             Add(true, true, false, true, true, true, "NCNN", dftSr, 2, null, 2, "组合 SDR→HDR（NVEncC 硬件编码）");
+        // 帧去重：性能模式（前两阶）与完美模式（四阶全开，含 QR 分解 + Farnebäck 光流）
+        Add(true, true, true, true, true, false, "NCNN", dftSr, 2, ncnnDefault, 2,
+            "组合 帧去重·性能模式（像素差+dHash）", dedup: true, dedupMode: "performance");
+        Add(true, true, true, true, true, false, "NCNN", dftSr, 2, ncnnDefault, 2,
+            "组合 帧去重·完美模式（QR分解+光流四阶）", dedup: true, dedupMode: "uhd");
         // CPU 模式（代表性单模型，速度最慢放最后）
         Add(true, true, false, true, true, false, "NCNN", dftSr, 2, null, 2,
             "组合 CPU处理模式（超分代表性模型，最慢）", safe: true, cpu: true, threads: 8);

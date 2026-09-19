@@ -96,6 +96,8 @@ public partial class MainViewModel : ObservableObject
         _hdrSaturation = Math.Clamp(app.HdrSaturation, 0, 200);
         _hdrContrast = Math.Clamp(app.HdrContrast, 0, 200);
         _suppressRedWarning = app.SuppressRedWarning;
+        _backgroundImage = app.BackgroundImage ?? "";
+        _backdropAcrylicPercent = Math.Clamp(app.BackdropAcrylicPercent, 0, 100);
 
         RefreshSrModels();
 
@@ -127,6 +129,9 @@ public partial class MainViewModel : ObservableObject
     private void RestoreDefaultStepsFromConfig()
     {
         _splitFrames = _app.DefaultSplitFrames;
+        _reportDir = string.IsNullOrWhiteSpace(_app.ReportDir) ? "Reports" : _app.ReportDir;
+        _dedupEnabled = _app.DedupEnabled;
+        _dedupMode = _app.DedupMode;
         _superResolution = _app.DefaultSuperResolution;
         _interpolation = _app.DefaultInterpolation;
         _mergeVideo = _app.DefaultMergeVideo;
@@ -265,6 +270,59 @@ public partial class MainViewModel : ObservableObject
 
     // HDR 是否可用（非 RTX 自动禁用）
     [ObservableProperty] private bool _isHdrEnabled = true;
+
+    // ===================== HTML 报告目录 =====================
+    /// <summary>处理完成后生成的 HTML 报告保存目录（相对运行根或绝对路径，空时按 Reports）</summary>
+    [ObservableProperty] private string _reportDir = "Reports";
+
+    // ===================== 图片背景主题 =====================
+    /// <summary>图片背景主题（theme=image）使用的背景图路径（设置页选择，改动即持久化并由窗口立即刷新）</summary>
+    [ObservableProperty] private string _backgroundImage = "";
+
+    /// <summary>背景图上那层亚克力的浓度 0-100（设置页拖动条，越大越糊/越暗、文字越清晰）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(BackdropOpacityText))]
+    private int _backdropAcrylicPercent = 45;
+
+    /// <summary>浓度百分比文案</summary>
+    public string BackdropOpacityText => $"{BackdropAcrylicPercent}%";
+
+    partial void OnBackgroundImageChanged(string value)
+    {
+        _app.BackgroundImage = value;
+        _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnBackdropAcrylicPercentChanged(int value)
+    {
+        _app.BackdropAcrylicPercent = Math.Clamp(value, 0, 100);
+        _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnReportDirChanged(string value)
+    {
+        _app.ReportDir = value;
+        _settings.Save(_app, _pathConfig);
+    }
+
+    // ===================== 帧去重（高级模式） =====================
+    /// <summary>相邻帧去重开关（超分/补帧前剔除重复帧，处理完回填，时长与音频不变）</summary>
+    [ObservableProperty] private bool _dedupEnabled;
+
+    /// <summary>去重模式：performance=性能模式（像素差+dHash）；uhd=完美模式（再加 SSIM 与块运动精判）</summary>
+    [ObservableProperty] private string _dedupMode = "performance";
+
+    partial void OnDedupEnabledChanged(bool value)
+    {
+        _app.DedupEnabled = value;
+        _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnDedupModeChanged(string value)
+    {
+        _app.DedupMode = value;
+        _settings.Save(_app, _pathConfig);
+    }
 
     /// <summary>HDR 参数区可见性（bool → Visibility，供 x:Bind 绑定）</summary>
     public Microsoft.UI.Xaml.Visibility SdrToHdrVis
@@ -803,24 +861,28 @@ public partial class MainViewModel : ObservableObject
             _sdrToHdr = false; OnPropertyChanged(nameof(SdrToHdr));
         }
         UpdateWarnings();
+        PersistStepFlags();
     }
 
     partial void OnSuperResolutionChanged(bool value)
     {
         if (value && !HasExternalFrames) SplitFrames = true; // 强制勾选拆分帧（用属性 setter 触发通知，否则 UI 不刷新）
         UpdateWarnings();
+        PersistStepFlags();
     }
 
     partial void OnInterpolationChanged(bool value)
     {
         if (value && !HasExternalFrames) SplitFrames = true; // 强制勾选拆分帧（用属性 setter 触发通知，否则 UI 不刷新）
         UpdateWarnings();
+        PersistStepFlags();
     }
 
     partial void OnMergeVideoChanged(bool value)
     {
         if (value && !HasExternalFrames) SplitFrames = true; // 强制勾选拆分帧（用属性 setter 触发通知，否则 UI 不刷新）
         UpdateWarnings();
+        PersistStepFlags();
     }
 
     partial void OnIfMultiplierChanged(int value)
@@ -872,6 +934,7 @@ public partial class MainViewModel : ObservableObject
                 _logger.Warn("输入视频无音频流，合并原音频将无效");
         }
         UpdateWarnings();
+        PersistStepFlags();
     }
 
     partial void OnSdrToHdrChanged(bool value)
@@ -884,6 +947,21 @@ public partial class MainViewModel : ObservableObject
         {
             _logger.Warn("NVEncC64 未安装，HDR 转换无法执行，将仅输出 SDR");
         }
+        PersistStepFlags();
+    }
+
+    /// <summary>把当前勾选的处理步骤整体写回 appsettings.json（任一勾选变化即自动保存，重启后按此恢复）。
+    /// 导入外部帧文件夹时的勾选是临时状态（清空后即恢复原值），不写入默认步骤。</summary>
+    private void PersistStepFlags()
+    {
+        if (HasExternalFrames) return;
+        _app.DefaultSplitFrames = SplitFrames;
+        _app.DefaultSuperResolution = SuperResolution;
+        _app.DefaultInterpolation = Interpolation;
+        _app.DefaultMergeVideo = MergeVideo;
+        _app.DefaultMergeAudio = MergeAudio;
+        _app.DefaultSdrToHdr = SdrToHdr;
+        _settings.Save(_app, _pathConfig);
     }
 
     private void UpdateWarnings()
@@ -933,6 +1011,9 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnIfEngineChanged(string value)
     {
+        // 补帧引擎改动即时持久化（下次启动按此恢复；此前只有点"保存当前设置为默认"才落盘）
+        _app.DefaultIfEngine = value;
+        _settings.Save(_app, _pathConfig);
         // 模型选择框由 MainPage code-behind 统一重建（切换引擎时整体重新加载下拉框，
         // 彻底避开 ComboBox 绑定联动导致的 0x80070490 闪退），这里只刷新警告
         UpdateWarnings();
@@ -1123,8 +1204,22 @@ public partial class MainViewModel : ObservableObject
         }
 
         // 成功完成 → 弹完成窗体（自测模式抑制）
+        // 注意：未勾选「合并视频」时流水线只做完中间帧就返回（返回的是临时目录里的中间文件路径），
+        // 那不是成品。以前会照样弹"完成"并生成报告，看起来像"点了开始处理只跑了 0 秒"，这里拦住。
         if (Stage == ProcessStage.Done && result is not null && !SuppressCompletionDialog)
         {
+            if (!MergeVideo)
+            {
+                _logger.Warn("未勾选「合并视频」：本次未产出成品视频（中间帧保留在临时目录）。如需成品请勾选后重新处理。");
+                ProgressDetail = "已结束：未勾选「合并视频」，没有成品输出";
+                return;
+            }
+            if (!File.Exists(result))
+            {
+                _logger.Warn($"处理已结束，但产物文件不存在（{result}）。可能是步骤被断点续传跳过且中间产物已被清理，请清理临时文件后重试。");
+                ProgressDetail = "已结束：未找到产物文件，详见日志";
+                return;
+            }
             ProcessingCompleted?.Invoke(new ProcessingResult
             {
                 Success = true,
@@ -1135,11 +1230,12 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>根据勾选项生成步骤描述文本（顺序与流水线一致：拆帧 → 超分 → 补帧 → 合并 → HDR → 音频）</summary>
+    /// <summary>根据勾选项生成步骤描述文本（顺序与流水线一致：拆帧 → 帧去重 → 超分 → 补帧 → 合并 → HDR → 音频）</summary>
     private string BuildStepsText()
     {
         var parts = new List<string>();
         if (SplitFrames) parts.Add("拆帧");
+        if (DedupEnabled) parts.Add($"帧去重({(DedupMode == "uhd" ? "完美" : "性能")})");
         if (SuperResolution) parts.Add($"超分×{SrScale}");
         if (Interpolation) parts.Add($"补帧×{IfMultiplier}");
         if (MergeVideo) parts.Add("合并");
@@ -1265,6 +1361,7 @@ public partial class MainViewModel : ObservableObject
 
             var parts = new System.Collections.Generic.List<string>();
             if (SplitFrames) parts.Add("拆帧");
+            if (DedupEnabled) parts.Add("帧去重");
             if (SuperResolution) parts.Add($"超分×{SrScale}");
             if (Interpolation) parts.Add($"补帧×{IfMultiplier}");
             if (MergeVideo) parts.Add("合并");
@@ -1641,6 +1738,15 @@ public partial class MainViewModel : ObservableObject
     {
         _app.Theme = theme;
         _settings.Save(_app, _pathConfig);
+    }
+
+    /// <summary>切换界面语言并持久化（Loc.Set 会广播 LanguageChanged，窗口据此重新本地化界面）。</summary>
+    public void SetLanguage(string code)
+    {
+        Loc.Set(code);
+        _app.Language = code;
+        _settings.Save(_app, _pathConfig);
+        _logger.Info($"界面语言已切换: {Loc.CurrentName}（{Loc.Current}）");
     }
 
     public void SaveSettings()

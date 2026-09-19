@@ -37,6 +37,10 @@
     <None Include="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- 多语言文案表：随程序分发，用户可自行修改/补充语言 -->
+    <None Include="Loc\strings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <!-- 欢迎向导素材：logo / 欢迎音乐复制到输出目录（exe 旁），便于首次引导展示 -->
@@ -50,6 +54,10 @@
        Tools sit at I:\Easy4K\Tools and are resolved by ToolPathResolver at runtime. -->
   <ItemGroup>
     <None Include="Assets\**" />
+    <!-- 界面插图要跟到输出目录，XAML 里用 ms-appx:///Assets/... 引用 -->
+    <None Update="Assets\DedupArt_*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <!-- 构建后自动把项目根 Tools（FFmpeg/NVEncC/realesrgan/rife/officalrife+便携python）增量同步到输出目录，

@@ -1,4 +1,5 @@
 using System.IO;
+using Easy4K.Services;
 using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -20,50 +21,15 @@ public sealed partial class MainPage : Page
     /// <summary>帧文件夹参数弹窗是否已打开（防止重复弹出）</summary>
     private bool _frameParamsDialogOpen;
 
-    /// <summary>上次确认的线程数（调到 1:8:8 及以上弹窗，拒绝则回退到该值）</summary>
-    private int _lastConfirmedThreads;
-
-    /// <summary>会话级：高线程警告只弹一次（确认/拒绝后均不再弹）</summary>
-    private static bool _threadWarnShown;
-
-    /// <summary>警告弹窗是否已打开（防止拖动期间重复弹）</summary>
-    private bool _threadDialogOpen;
-
-    /// <summary>CPU 模式确认弹窗是否已打开（防止重复弹）</summary>
-    private bool _cpuDialogOpen;
-
-    /// <summary>页面构造/恢复阶段标志：程序从 config/VM 恢复 CPU 勾选时跳过弹窗（应用启动、页面切换都不弹）；
-    /// 仅用户手动勾选才弹。用代码手动赋值（不用 x:Bind）彻底规避绑定初始化时机不确定性。</summary>
-    private bool _cpuDialogFromLoad;
-
     public MainPage()
     {
-        _cpuDialogFromLoad = true;
         InitializeComponent();
-        _cpuDialogFromLoad = false;
-        // CPU 勾选状态手动同步自 VM（x:Bind 初始化时机不可靠，会让"读取 config 恢复勾选"误触发弹窗）
-        _cpuDialogFromLoad = true;
-        CpuProcessingCb.IsChecked = Vm.UseCpuProcessing;
-        _cpuDialogFromLoad = false;
-        _lastConfirmedThreads = Vm.ThreadCount;
+
         // 引擎/模型属性变化兜底：即使下拉框 SelectionChanged 未触发，也重建模型列表/刷新倍率锁定
-        Loaded += (_, _) =>
-        {
-            Vm.PropertyChanged += OnVmPropertyChanged;
-            UpdateCpuDependentCheckBoxes();
-        };
+        Loaded += (_, _) => Vm.PropertyChanged += OnVmPropertyChanged;
         Unloaded += (_, _) => Vm.PropertyChanged -= OnVmPropertyChanged;
         // 初始填充模型下拉框（引擎变化后也走 ReloadIfModelCombo）
         ReloadIfModelCombo();
-    }
-
-    /// <summary>CPU 处理模式开启/关闭时，禁用/启用安全帧率、降低画质、GPU加速三个选项。</summary>
-    private void UpdateCpuDependentCheckBoxes()
-    {
-        var enabled = !Vm.UseCpuProcessing;
-        SafeFrameRateCb.IsEnabled = enabled;
-        LowerQualityCb.IsEnabled = enabled;
-        GpuAccelerationCb.IsEnabled = enabled;
     }
 
     /// <summary>VM 属性兜底：引擎变化 → 重建模型下拉框；模型变化 → 刷新倍率锁定。</summary>
@@ -73,13 +39,6 @@ public sealed partial class MainPage : Page
             ReloadIfModelCombo();
         else if (e.PropertyName == nameof(Vm.IfModel))
             Vm.RefreshIfMultiplierLock(Vm.IfModel);
-        else if (e.PropertyName == nameof(Vm.UseCpuProcessing))
-        {
-            UpdateCpuDependentCheckBoxes();
-            // 程序侧同步勾选状态（如用户拒绝弹窗回退取消勾选时联动；程序设值不弹窗）
-            if (CpuProcessingCb.IsChecked != Vm.UseCpuProcessing)
-                CpuProcessingCb.IsChecked = Vm.UseCpuProcessing;
-        }
     }
 
     // ===================== 补帧模型选择（重写：整体重建下拉框，避开 ComboBox 绑定联动 0x80070490 闪退） =====================
@@ -153,137 +112,20 @@ public sealed partial class MainPage : Page
             CloseButtonText = "知道了",
             DefaultButton = ContentDialogButton.Close,
         };
-        await dlg.ShowAsync();
-    }
-
-    /// <summary>线程滑块变化：调到 1:8:8（8）及以上时弹窗确认（会话内只弹一次），
-    /// 弹窗前释放滑块指针捕获（相当于自动松开鼠标左键，避免弹窗期间滑块继续被拖动），拒绝则回退到上次确认值。</summary>
-    private async void OnThreadSliderValueChanged(object sender, RangeBaseValueChangedEventArgs e)
-    {
-        var newVal = (int)e.NewValue;
-        if (newVal >= 8 && newVal > _lastConfirmedThreads)
-        {
-            if (_threadWarnShown)
-            {
-                // 已警告过一次，不再弹窗，直接放行
-                _lastConfirmedThreads = newVal;
-                return;
-            }
-            if (_threadDialogOpen) return;
-            _threadDialogOpen = true;
-
-            // 松开鼠标左键：向系统发送真实 LEFTUP 事件，终止滑块拖动（ReleasePointerCaptures 不足以停止）
-            ReleaseMouseLeftButton();
-            if (sender is Slider slider) slider.ReleasePointerCaptures();
-
-            var dlg = new ContentDialog
-            {
-                Title = "高线程警告",
-                Content = $"将线程设置为 1:{newVal}:{newVal} 可能会导致 Vulkan 设备丢失或显卡内存溢出，您确定？",
-                PrimaryButtonText = "是",
-                CloseButtonText = "否",
-                DefaultButton = ContentDialogButton.Close,
-                XamlRoot = this.XamlRoot
-            };
-            var result = await dlg.ShowAsync();
-            _threadDialogOpen = false;
-            _threadWarnShown = true; // 本次会话不再重复弹出
-
-            if (result != ContentDialogResult.Primary)
-            {
-                // 拒绝 → 回退到上次确认值（TwoWay 绑定会同步更新滑块）
-                Vm.ThreadCount = _lastConfirmedThreads;
-                return;
-            }
-        }
-        _lastConfirmedThreads = newVal;
-    }
-
-    /// <summary>模拟系统鼠标左键抬起：终止正在进行的滑块拖动（弹窗拦截拖动时调用）。</summary>
-    private static void ReleaseMouseLeftButton()
-    {
-        var input = new NativeInput
-        {
-            type = InputMouse,
-            mi = new NativeMouseInput { dwFlags = MouseEventFLeftUp }
-        };
-        SendInput(1, new[] { input }, System.Runtime.InteropServices.Marshal.SizeOf<NativeInput>());
-    }
-
-    private const uint InputMouse = 0;
-    private const uint MouseEventFLeftUp = 0x0004;
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    private struct NativeMouseInput
-    {
-        public int dx;
-        public int dy;
-        public uint mouseData;
-        public uint dwFlags;
-        public uint time;
-        public System.IntPtr dwExtraInfo;
-    }
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    private struct NativeInput
-    {
-        public uint type;
-        public NativeMouseInput mi;
-    }
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern uint SendInput(uint nInputs, NativeInput[] pInputs, int cbSize);
-
-    /// <summary>勾选"使用CPU处理所有模型"时弹窗警告不建议开启；拒绝则回退取消勾选。
-    /// _cpuDialogFromLoad=true（构造/绑定恢复阶段）时不弹窗——应用启动、页面切换从 config 恢复勾选均不触发弹窗，
-    /// 仅用户手动勾选才弹。CPU 推理速度远慢于 GPU（可能慢 10 倍以上）。</summary>
-    private async void OnUseCpuProcessingChecked(object sender, RoutedEventArgs e)
-    {
-        if (_cpuDialogFromLoad) return; // 构造/绑定恢复阶段不弹窗
-        if (_cpuDialogOpen) return;
-        _cpuDialogOpen = true;
-        try
-        {
-            var dlg = new ContentDialog
-            {
-                Title = "不建议开启 CPU 处理",
-                Content = "开启后所有模型（超分/补帧）将使用 CPU 推理，处理速度会大幅下降（可能比 GPU 慢 10 倍以上）。\n\n" +
-                          "仅在显卡不可用（驱动故障/设备丢失）或不稳定时才建议开启。确定要继续吗？",
-                PrimaryButtonText = "继续开启",
-                CloseButtonText = "取消",
-                DefaultButton = ContentDialogButton.Close, // 默认取消更安全
-                XamlRoot = XamlRoot
-            };
-            var result = await dlg.ShowAsync();
-            if (result == ContentDialogResult.Primary)
-            {
-                // 确认开启 → 写回 VM（触发联动：取消勾选安全帧率/降低画质/GPU加速并禁用，保存 config）
-                Vm.UseCpuProcessing = true;
-            }
-            else
-            {
-                // 拒绝 → 回退取消勾选（VM 同步关闭，UI 经 PropertyChanged 同步取消勾选）
-                Vm.UseCpuProcessing = false;
-            }
-        }
-        finally
-        {
-            _cpuDialogOpen = false;
-        }
-    }
-
-    /// <summary>用户取消勾选"使用CPU处理"→ 写回 VM 关闭（触发联动：恢复三个选项可用，保存 config）。
-    /// CheckBox 已去掉 x:Bind 手动同步，取消勾选不会自动写回 VM。</summary>
-    private void OnUseCpuProcessingUnchecked(object sender, RoutedEventArgs e)
-    {
-        if (_cpuDialogFromLoad) return; // 构造/恢复阶段程序赋值不处理
-        if (Vm.UseCpuProcessing) Vm.UseCpuProcessing = false;
+        await dlg.ShowLocalizedAsync();
     }
 
     // ===================== 文件 / 目录选择 =====================
 
     private async void OnBrowseInput(object sender, RoutedEventArgs e) => await PickVideoAsync();
-    private void OnClearInputVideo(object sender, RoutedEventArgs e) => Vm.ClearInputVideo();
+
+    /// <summary>清除输入视频：清空后不会自动重选，用底部通知条告知结果并提供"重新选择视频"入口。</summary>
+    private void OnClearInputVideo(object sender, RoutedEventArgs e)
+    {
+        Vm.ClearInputVideo();
+        App.MainWindow?.ShowNotice("已清除输入视频", "检测结果与可用输出已同步清空，选好新视频即可再次开始处理。",
+            "重新选择视频", async () => await PickVideoAsync());
+    }
 
     /// <summary>手填输入视频路径：路径变化时触发检测（空/无效路径只清空检测状态）。
     /// InputVideo 已由 TwoWay 绑定实时更新，这里只检测不写回，避免输入被打断。</summary>
@@ -363,7 +205,7 @@ public sealed partial class MainPage : Page
             framesBox.TextChanged += (_, _) => UpdatePrimary();
             fpsBox.TextChanged += (_, _) => UpdatePrimary();
 
-            var result = await dialog.ShowAsync();
+            var result = await dialog.ShowLocalizedAsync();
             if (result != ContentDialogResult.Primary) return;
 
             // 确定按钮仅在参数有效时可点，此处直接应用
@@ -379,9 +221,20 @@ public sealed partial class MainPage : Page
     private async void OnBrowseTemp(object sender, RoutedEventArgs e) => await PickTempFolderAsync();
     private async void OnBrowseOutput(object sender, RoutedEventArgs e) => await PickFolderAsync(p => Vm.SetOutputRoot(p));
 
-    private async void OnExtractAudio(object sender, RoutedEventArgs e) => await Vm.ExtractAudioAsync();
+    private async void OnExtractAudio(object sender, RoutedEventArgs e)
+    {
+        await Vm.ExtractAudioAsync();
+        // 提取结果只写日志，主页看不到 → 通知条告知成功/失败，成功时给一个直达临时目录的入口
+        if (System.IO.File.Exists(Vm.ExtractedAudioPath))
+            App.MainWindow?.ShowNotice("音频提取完成", $"已保存到 {Vm.ExtractedAudioPath}",
+                "打开临时目录", () => App.MainWindow?.OpenTempFolder());
+        else
+            App.MainWindow?.ShowNotice("音频提取失败", "失败原因见「进行中」页的日志与 ffmpeg 输出。");
+    }
 
-    private async void OnImportFrameFolder(object sender, RoutedEventArgs e)
+    private async void OnImportFrameFolder(object sender, RoutedEventArgs e) => await ImportFrameFolderAsync();
+
+    private async Task ImportFrameFolderAsync()
     {
         var picker = new FolderPicker();
         InitializePicker(picker);
@@ -398,7 +251,13 @@ public sealed partial class MainPage : Page
         }
     }
 
-    private void OnClearFrameFolder(object sender, RoutedEventArgs e) => Vm.ClearExternalFrames();
+    /// <summary>清除帧文件夹：流程会退回"先拆帧"，用通知条说明并提供重新导入入口。</summary>
+    private void OnClearFrameFolder(object sender, RoutedEventArgs e)
+    {
+        Vm.ClearExternalFrames();
+        App.MainWindow?.ShowNotice("已清除帧文件夹", "流程恢复为从输入视频拆帧，请确认输入视频已选择。",
+            "重新导入帧文件夹", async () => await ImportFrameFolderAsync());
+    }
 
     private async Task PickVideoAsync()
     {
@@ -461,7 +320,7 @@ public sealed partial class MainPage : Page
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = XamlRoot
             };
-            var r = await dlg.ShowAsync();
+            var r = await dlg.ShowLocalizedAsync();
             if (r == ContentDialogResult.Primary)
             {
                 Vm.AcceptTempRoot(folder.Path); // 清空旧缓存并采用该目录
@@ -536,7 +395,7 @@ public sealed partial class MainPage : Page
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = App.MainWindow.WindowContentRoot
         };
-        await dlg.ShowAsync();
+        await dlg.ShowLocalizedAsync();
         App.MainWindow.HideNavAndGoHome(); // 失败后留在"进行中"页无意义，关窗即回主页
     }
 
@@ -558,7 +417,7 @@ public sealed partial class MainPage : Page
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = XamlRoot
         };
-        if (await first.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await first.ShowLocalizedAsync() != ContentDialogResult.Primary) return;
 
         var second = new ContentDialog
         {
@@ -569,9 +428,13 @@ public sealed partial class MainPage : Page
             DefaultButton = ContentDialogButton.Close, // 第二次默认取消更安全
             XamlRoot = XamlRoot
         };
-        if (await second.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await second.ShowLocalizedAsync() != ContentDialogResult.Primary) return;
 
-        await Vm.CleanTempInAsync(Vm.TempRoot); // 后台清理，主页进度条显示进度
+        var msg = await Vm.CleanTempInAsync(Vm.TempRoot); // 后台清理，主页进度条显示进度
+        Vm.RefreshCacheBlock(); // cache.json 已删除 → 解除"缓存与当前视频不符"的启动阻断
+        App.MainWindow?.ShowNotice(
+            msg.Contains("无法删除") ? "清理完成，但有项目未能删除" : "临时文件已清理",
+            msg, "打开临时目录", () => App.MainWindow?.OpenTempFolder());
     }
 
     // ===================== 快捷键 =====================
@@ -596,6 +459,6 @@ public sealed partial class MainPage : Page
             CloseButtonText = "关闭",
             XamlRoot = XamlRoot
         };
-        await dlg.ShowAsync();
+        await dlg.ShowLocalizedAsync();
     }
 }
