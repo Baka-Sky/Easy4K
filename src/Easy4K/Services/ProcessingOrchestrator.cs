@@ -954,8 +954,9 @@ public sealed class ProcessingOrchestrator
             var removedDir = Path.Combine(tempRoot, "input_frames_dedup_removed");
             Directory.CreateDirectory(removedDir);
 
-            // 进度文本形如：帧去重(性能) 判决阶段(dHash) 去重365帧 69%（69% 由 DetailText 拼上）
-            string DedupText(string phase, int dup) => $"帧去重({modeShort}) {phase} 去重{dup}帧";
+            // 进度文本形如：帧去重(性能) 判决阶段(dHash) 已判重365帧 第1234帧/共7187帧
+            // （"已判重"=累计判为重复的帧数；"第 N 帧/共 M 帧"=判决进度；百分比单独显示在右侧）
+            string DedupText(string phase, int dup) => $"帧去重({modeShort}) {phase} 已判重{dup}帧";
 
             var result = await FrameDedupService.AnalyzeAsync(inputFrames, opt, pr =>
                 ProgressChanged?.Invoke(new ProcessProgress
@@ -964,10 +965,11 @@ public sealed class ProcessingOrchestrator
                     StageText = DedupText(pr.Phase, pr.DuplicateCount),
                     Current = pr.Done,
                     Total = pr.Total,
-                    PercentDisplay = true,
+                    PercentDisplay = false,   // 用"第 N 帧/共 M 帧"表达判决进度，避免与"已判重 N 帧"挨在一起被误读
                     // 预览框：右侧「筛选帧」= 当前正在判决的帧；左侧「疑似帧」= 最近筛出的疑似重复帧
                     LatestFramePath = pr.CurrentFramePath,
-                    CompareFramePath = pr.CompareFramePath
+                    CompareFramePath = pr.CompareFramePath,
+                    CompareFrameIndex = pr.CompareIndex
                 }), ct);
 
             // 重复帧移出 input_frames（保留在 removed 目录，便于排查/回退）

@@ -21,8 +21,9 @@ public sealed partial class ProgressPage : Page
     private int _compareSeq;
     /// <summary>是否处于"左疑似帧 + 右筛选帧"的对比布局（仅帧去重阶段）</summary>
     private bool _compareMode;
-    /// <summary>上次解码时间（节流，防止密集上报导致解码排队堆积）</summary>
-    private long _lastLoadTick;
+    /// <summary>左、右图各自的上次解码时间（分别节流：共用一个时间戳会让后加载的右图永远被跳过）</summary>
+    private long _lastMainTick;
+    private long _lastCompareTick;
     /// <summary>预览解码宽度上限：4K 帧整幅解码既慢又占内存，预览框用不到这个分辨率</summary>
     private const int PreviewDecodeWidth = 960;
     /// <summary>是否已订阅 ViewModel/Logger 事件（Loaded 可能多次触发，重复订阅会让每条日志/进度出现两次）</summary>
@@ -190,6 +191,13 @@ public sealed partial class ProgressPage : Page
             var hasCompare = !string.IsNullOrEmpty(compare);
             if (hasCompare != _compareMode) SetCompareMode(hasCompare);
 
+            if (hasCompare)
+            {
+                // 标签带上帧号，一眼能看出左右两张图各自停在哪儿、以及是否在推进
+                CompareLabel.Text = p.CompareFrameIndex > 0 ? $"疑似帧 · 第 {p.CompareFrameIndex} 帧" : "疑似帧";
+                PreviewCaption.Text = p.Current > 0 ? $"筛选帧 · 第 {p.Current} 帧" : "筛选帧";
+            }
+
             if (hasCompare && compare != _lastComparePath)
             {
                 _lastComparePath = compare;
@@ -214,6 +222,8 @@ public sealed partial class ProgressPage : Page
         {
             CompareImage.Source = null;   // 退出对比时释放左图
             _lastComparePath = "";
+            CompareLabel.Text = "疑似帧";
+            PreviewCaption.Text = "筛选帧";
         }
     }
 
@@ -228,8 +238,16 @@ public sealed partial class ProgressPage : Page
         try
         {
             var now = Environment.TickCount64;
-            if (now - _lastLoadTick < 100) return;   // 节流：最多每 100ms 解码一次
-            _lastLoadTick = now;
+            if (isCompare)
+            {
+                if (now - _lastCompareTick < 100) return;   // 左图单独节流
+                _lastCompareTick = now;
+            }
+            else
+            {
+                if (now - _lastMainTick < 100) return;      // 右图单独节流（不能与左图共用，否则会被左图挤掉）
+                _lastMainTick = now;
+            }
 
             byte[] bytes;
             try { bytes = await Task.Run(() => File.ReadAllBytes(path)); }
