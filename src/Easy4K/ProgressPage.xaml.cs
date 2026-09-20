@@ -252,35 +252,35 @@ public sealed partial class ProgressPage : Page
             try { bytes = await Task.Run(() => File.ReadAllBytes(path)); }
             catch { return; }   // 帧可能刚被搬走或正在写入
 
-            var bmp = await Task.Run(async () =>
+            // 注意：BitmapImage 是 UI 对象（DependencyObject），必须在 UI 线程创建、在 UI 线程调 SetSourceAsync，
+            // 放到后台线程会直接挂不上图。它本身是异步解码（解码在内部后台线程完成），不会阻塞界面；
+            // 真正占 UI 线程的读文件已经用 Task.Run 挪走了。用内存流则不会持有帧文件句柄。
+            var bmp = new BitmapImage { DecodePixelWidth = PreviewDecodeWidth };
+            using (var ms = new InMemoryRandomAccessStream())
             {
-                var ms = new InMemoryRandomAccessStream();
                 await ms.WriteAsync(bytes.AsBuffer());
                 ms.Seek(0);
-                var image = new BitmapImage { DecodePixelWidth = PreviewDecodeWidth };
-                await image.SetSourceAsync(ms);
-                ms.Dispose();   // 解码后像素已在内存，释放临时流
-                return image;
-            });
+                await bmp.SetSourceAsync(ms);
+            }
 
             if (!Vm.ShowPreview) return;
-            // 统一回到 UI 线程再挂图（避免任何后台线程触碰 XAML 元素）
-            DispatcherQueue.TryEnqueue(() =>
+            if (isCompare)
             {
-                if (isCompare)
-                {
-                    if (seq != _compareSeq || !_compareMode) return;
-                    CompareImage.Source = bmp;
-                }
-                else
-                {
-                    if (seq != _mainSeq) return;
-                    PreviewImage.Source = bmp;
-                    PreviewHint.Visibility = Visibility.Collapsed;
-                }
-            });
+                if (seq != _compareSeq || !_compareMode) return;
+                CompareImage.Source = bmp;
+            }
+            else
+            {
+                if (seq != _mainSeq) return;
+                PreviewImage.Source = bmp;
+                PreviewHint.Visibility = Visibility.Collapsed;
+            }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            // 预览失败不影响处理流程（帧可能刚好被搬走/删除）；出问题时便于从调试输出定位
+            System.Diagnostics.Debug.WriteLine($"[Preview] 帧加载失败 {path}: {ex.Message}");
+        }
     }
 
     private void OnStop(object sender, RoutedEventArgs e) => Vm.Stop();
