@@ -226,7 +226,9 @@ public sealed partial class ProgressPage : Page
     /// <summary>预览目标：判决帧（左）/ 对比帧（中）/ 筛选帧（右）。</summary>
     private enum PreviewTarget { Verdict, Compare, Main }
 
-    /// <summary>切换「单图 / 三联对比」布局（三联仅用于帧去重）：判决帧、对比帧各占三分之一。</summary>
+    /// <summary>切换「单图 / 三联对比」布局（三联仅用于帧去重）：判决帧、对比帧各占三分之一。
+    /// 三联时每栏上下留对称空行，让「图片 + 标签」整体垂直居中（最大化时不会贴底留出大片空白）；
+    /// 单图时收掉尾部空行，让画面占满并居中。</summary>
     private void SetCompareMode(bool on)
     {
         _compareMode = on;
@@ -237,6 +239,11 @@ public sealed partial class ProgressPage : Page
         VerdictPane.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
         ComparePane.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
         PreviewCaption.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        VerdictTailRow.Height = on ? star : none;
+        CompareTailRow.Height = on ? star : none;
+        MainTailRow.Height = on ? star : none;
+        // 三联：图紧贴下方标签；单图：图在整块区域里居中
+        PreviewImage.VerticalAlignment = on ? VerticalAlignment.Bottom : VerticalAlignment.Center;
         if (!on)
         {
             VerdictImage.Source = null;   // 退出三联时释放左、中两张图
