@@ -965,8 +965,9 @@ public sealed class ProcessingOrchestrator
                     Current = pr.Done,
                     Total = pr.Total,
                     PercentDisplay = true,
-                    // 预览框显示"被标记为重复"的帧，新出现标记帧时自动刷新
-                    LatestFramePath = pr.MarkedFramePath
+                    // 预览框：右侧「筛选帧」= 当前正在判决的帧；左侧「疑似帧」= 最近筛出的疑似重复帧
+                    LatestFramePath = pr.CurrentFramePath,
+                    CompareFramePath = pr.CompareFramePath
                 }), ct);
 
             // 重复帧移出 input_frames（保留在 removed 目录，便于排查/回退）
@@ -978,36 +979,60 @@ public sealed class ProcessingOrchestrator
                 Total = result.Total,
                 PercentDisplay = true
             });
-            foreach (var d in result.Decisions)
+            // 逐个搬移并重试：预览图解码、杀毒软件实时扫描、资源管理器缩略图都可能短暂占用 PNG。
+            // 极个别帧始终搬不动时，把它改判为"保留"——必须保证判决表与磁盘上的实际帧数一致，
+            // 否则回填表会与文件对不上（成品帧数、时长都会缩水）。
+            var decisions = result.Decisions.ToList();
+            var moveFailed = 0;
+            for (var i = 0; i < decisions.Count; i++)
             {
+                var d = decisions[i];
                 if (!d.Duplicate) continue;
                 var src = Path.Combine(inputFrames, $"{d.Index:D8}.png");
                 if (!File.Exists(src)) continue;
                 var dst = Path.Combine(removedDir, $"{d.Index:D8}.png");
-                if (File.Exists(dst)) File.Delete(dst);
-                File.Move(src, dst);
+                if (!TryMoveFrame(src, dst))
+                {
+                    decisions[i] = d with { Duplicate = false };
+                    moveFailed++;
+                }
+            }
+            if (moveFailed > 0)
+            {
+                _logger.Warn($"帧去重：{moveFailed} 帧因文件被占用无法移出，已改判为保留（成品帧数与时长不受影响）；" +
+                             "若频繁出现，可关闭图片预览或把临时目录加入杀毒软件实时扫描白名单");
+                ProgressChanged?.Invoke(new ProcessProgress
+                {
+                    Stage = ProcessStage.Splitting,
+                    StageText = DedupText("搬移重复帧", decisions.Count(x => x.Duplicate)),
+                    Current = decisions.Count,
+                    Total = decisions.Count,
+                    PercentDisplay = true
+                });
             }
 
             // 回填位置表：第 k 个输出槽位应取"保留序列"里的第几帧（1 基）
-            var expandPos = new List<int>(result.Total);
+            var expandPos = new List<int>(decisions.Count);
             var seenKept = 0;
-            foreach (var d in result.Decisions)
+            foreach (var d in decisions)
             {
                 if (!d.Duplicate) seenKept++;
                 expandPos.Add(Math.Max(1, seenKept));
             }
 
             var keptNow = CountFrames(inputFrames);
+            var movedCount = decisions.Count(x => x.Duplicate);   // 实际搬走的帧数（= 真实剔除量）
+            var dedupRate = decisions.Count > 0 ? (double)movedCount / decisions.Count : 0;
             File.WriteAllText(DedupMapPath(tempRoot), System.Text.Json.JsonSerializer.Serialize(new
             {
                 mode = ctx.Settings.DedupMode,
                 total = result.Total,
                 keptCount = keptNow,
-                duplicateCount = result.DuplicateCount,
+                duplicateCount = movedCount,
                 expandPos
             }));
 
-            _logger.Success($"帧去重完成：剔除 {result.DuplicateCount} 帧，实际处理 {keptNow} 帧（省 {result.DedupRate:P1}），重复帧保留在 {removedDir}");
+            _logger.Success($"帧去重完成：剔除 {movedCount} 帧，实际处理 {keptNow} 帧（省 {dedupRate:P1}），重复帧保留在 {removedDir}");
 
             // 各阶淘汰量（论文四阶级联的可观测性：出问题时能一眼看出卡在哪一阶）
             var byPixel = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.PixelDiff);
@@ -1108,6 +1133,33 @@ public sealed class ProcessingOrchestrator
 
     private static int CountFrames(string dir)
         => Directory.Exists(dir) ? Directory.GetFiles(dir, "*.png").Length : 0;
+
+    /// <summary>搬移帧文件：遇到"文件被其他进程占用"等瞬时错误时退避重试，最后再用复制+删除兜底。
+    /// 全部失败返回 false，由调用方把该帧改判为保留（保证判决表与磁盘文件数一致）。</summary>
+    private static bool TryMoveFrame(string src, string dst)
+    {
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            try
+            {
+                if (File.Exists(dst)) File.Delete(dst);
+                File.Move(src, dst);
+                return true;
+            }
+            catch (IOException) { /* 共享冲突：稍等再试（预览解码/杀毒扫描通常是瞬时的） */ }
+            catch (UnauthorizedAccessException) { }
+            Thread.Sleep(120 * (attempt + 1));
+        }
+
+        // 兜底：复制（只需读共享）成功后再删源文件；删源失败则回滚，避免两处都留有该帧
+        try
+        {
+            File.Copy(src, dst, overwrite: true);
+            try { File.Delete(src); return true; }
+            catch { try { File.Delete(dst); } catch { } return false; }
+        }
+        catch { return false; }
+    }
 
     /// <summary>把外部帧文件夹复制到临时目录（增量：目标已存在同名帧则跳过），带进度推送。
     /// 放在后台线程执行，避免大量文件复制阻塞 UI。</summary>

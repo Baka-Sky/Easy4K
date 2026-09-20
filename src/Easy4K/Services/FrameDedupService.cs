@@ -201,9 +201,10 @@ public static class FrameDedupService
         return (true, mad, hamming, qr, flow.MeanFlow, flow.VarFlow, Stage.Duplicate);
     }
 
-    /// <summary>分析进度：当前阶段 + 已处理/总数 + 已判重帧数 + 最近被标记（判为重复）的帧路径</summary>
+    /// <summary>分析进度：当前阶段 + 已处理/总数 + 已判重帧数 +
+    /// 当前正在判决的帧（预览框右侧「筛选帧」）+ 上一帧（预览框左侧「疑似帧」）</summary>
     public readonly record struct AnalysisProgress(
-        string Phase, int Done, int Total, int DuplicateCount, string MarkedFramePath);
+        string Phase, int Done, int Total, int DuplicateCount, string CurrentFramePath, string CompareFramePath);
 
     /// <summary>扫描帧目录做判决，返回结果与回填表（不改动文件）。</summary>
     public static async Task<Result> AnalyzeAsync(
@@ -218,7 +219,8 @@ public static class FrameDedupService
         var prevH = 0;
         var dupSoFar = 0;
         var batchDeepest = Stage.FirstFrame;   // 本批（16 帧）实际跑到的最深判决阶，用于进度文本
-        var markedPath = "";                   // 最近被判为重复的帧（供预览框显示"被标记的图片"）
+        var markedPath = "";                   // 最近被判为重复的帧（预览框左侧「疑似帧」）
+        var prevPath = "";                     // 上一帧（还没有判重结果时兜底当对比帧）
 
         for (var i = 0; i < files.Length; i++)
         {
@@ -250,18 +252,25 @@ public static class FrameDedupService
 
             if (i % 16 == 0 || i == files.Length - 1)
             {
+                // 左侧「疑似帧」取最近判出的重复帧（每筛出一张与此相似的帧，左图就换成它）；
+                // 还没筛出过重复帧时用上一帧兜底，保证一开始就有可比对象
+                var comparePath = string.IsNullOrEmpty(markedPath) ? prevPath : markedPath;
                 progress?.Invoke(new AnalysisProgress($"判决阶段({StageName(batchDeepest)})",
-                    i + 1, files.Length, dupSoFar, markedPath));
+                    i + 1, files.Length, dupSoFar, files[i], comparePath));
                 batchDeepest = Stage.FirstFrame;
             }
+
+            prevPath = files[i];
         }
 
         // 时序平滑：孤立重复（连续长度 < MinRunLength）撤销删除，避免动画刻意的 1 帧顿帧被吃掉
-        progress?.Invoke(new AnalysisProgress("时序平滑", files.Length, files.Length, dupSoFar, markedPath));
+        var lastFrame = files.Length > 0 ? files[^1] : "";
+        var lastCompare = string.IsNullOrEmpty(markedPath) ? (files.Length > 1 ? files[^2] : "") : markedPath;
+        progress?.Invoke(new AnalysisProgress("时序平滑", files.Length, files.Length, dupSoFar, lastFrame, lastCompare));
         SmoothIsolatedRuns(decisions, opt.MinRunLength);
 
         var dupCount = decisions.Count(d => d.Duplicate);
-        progress?.Invoke(new AnalysisProgress("时序平滑", files.Length, files.Length, dupCount, markedPath));
+        progress?.Invoke(new AnalysisProgress("时序平滑", files.Length, files.Length, dupCount, lastFrame, lastCompare));
         var expand = new List<int>(decisions.Count);
         for (var i = 0; i < decisions.Count; i++)
         {

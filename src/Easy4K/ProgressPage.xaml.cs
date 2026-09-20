@@ -4,6 +4,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using System.Runtime.InteropServices.WindowsRuntime;
+using Windows.Storage.Streams;
 
 namespace Easy4K;
 
@@ -12,7 +14,17 @@ public sealed partial class ProgressPage : Page
 {
     private MainViewModel Vm => App.Services;
     private string _lastPreviewPath = "";
-    private int _previewSeq;
+    /// <summary>左图（疑似帧）当前显示的路径，用于去重时不重复解码</summary>
+    private string _lastComparePath = "";
+    /// <summary>右图/左图各自的解码序号：慢解码完成后若已有更新的帧，直接丢弃，避免旧帧覆盖新帧</summary>
+    private int _mainSeq;
+    private int _compareSeq;
+    /// <summary>是否处于"左疑似帧 + 右筛选帧"的对比布局（仅帧去重阶段）</summary>
+    private bool _compareMode;
+    /// <summary>上次解码时间（节流，防止密集上报导致解码排队堆积）</summary>
+    private long _lastLoadTick;
+    /// <summary>预览解码宽度上限：4K 帧整幅解码既慢又占内存，预览框用不到这个分辨率</summary>
+    private const int PreviewDecodeWidth = 960;
     /// <summary>是否已订阅 ViewModel/Logger 事件（Loaded 可能多次触发，重复订阅会让每条日志/进度出现两次）</summary>
     private bool _subscribed;
 
@@ -65,16 +77,21 @@ public sealed partial class ProgressPage : Page
         DispatcherQueue.TryEnqueue(() => CommandLogBox.Text = "");
     }
 
+    /// <summary>清空预览并让在途解码作废（同时释放 Image 对帧文件的引用，方便清理临时文件）。</summary>
+    private void ClearPreview()
+    {
+        PreviewImage.Source = null;
+        _lastPreviewPath = "";
+        _mainSeq++;
+        _compareSeq++;
+        SetCompareMode(false);
+        PreviewHint.Visibility = Visibility.Visible;
+    }
+
     /// <summary>清理临时文件时清空预览图，释放帧文件句柄（否则文件被锁删不掉）</summary>
     private void OnCleanRequested()
     {
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            PreviewImage.Source = null;
-            _lastPreviewPath = "";
-            _previewSeq++;
-            PreviewHint.Visibility = Visibility.Visible;
-        });
+        DispatcherQueue.TryEnqueue(ClearPreview);
     }
 
     /// <summary>暂停状态变化（确认挂起/恢复）→ 更新按钮文案。
@@ -87,11 +104,8 @@ public sealed partial class ProgressPage : Page
             UpdatePreviewVisibility();
         if (e.PropertyName == nameof(Vm.PreviewBlocked) && Vm.PreviewBlocked)
         {
-            // 进入不产帧的阶段：清空旧画面，避免误导（同时释放 Image 对帧文件的句柄）
-            PreviewImage.Source = null;
-            _lastPreviewPath = "";
-            _previewSeq++;
-            PreviewHint.Visibility = Visibility.Visible;
+            // 进入不产帧的阶段：清空旧画面，避免误导（同时释放 Image 对帧文件的引用）
+            ClearPreview();
         }
         if (e.PropertyName == nameof(Vm.IsStartupSelfTest))
             SelfTestSkipBtn.Visibility = Vm.IsStartupSelfTest ? Visibility.Visible : Visibility.Collapsed;
@@ -170,33 +184,75 @@ public sealed partial class ProgressPage : Page
         {
             // 关闭图片预览时不再加载帧
             if (!Vm.ShowPreview) return;
+
+            // 帧去重阶段：左「疑似帧」+ 右「筛选帧」并排；其他阶段只有单图
+            var compare = p.CompareFramePath;
+            var hasCompare = !string.IsNullOrEmpty(compare);
+            if (hasCompare != _compareMode) SetCompareMode(hasCompare);
+
+            if (hasCompare && compare != _lastComparePath)
+            {
+                _lastComparePath = compare;
+                LoadPreviewAsync(compare, isCompare: true);
+            }
             if (!string.IsNullOrEmpty(p.LatestFramePath) && p.LatestFramePath != _lastPreviewPath)
             {
                 _lastPreviewPath = p.LatestFramePath;
-                UpdatePreviewAsync(p.LatestFramePath);
+                LoadPreviewAsync(p.LatestFramePath, isCompare: false);
             }
         });
     }
 
-    /// <summary>异步加载新帧，解码完成前旧帧保持显示，避免闪烁。</summary>
-    private async void UpdatePreviewAsync(string path)
+    /// <summary>切换「单图 / 左右对比」布局：对比时左列占一半，并显示底部「疑似帧」「筛选帧」标签。</summary>
+    private void SetCompareMode(bool on)
     {
-        var seq = ++_previewSeq;
+        _compareMode = on;
+        CompareColumn.Width = on ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+        ComparePane.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        PreviewCaption.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        if (!on)
+        {
+            CompareImage.Source = null;   // 退出对比时释放左图
+            _lastComparePath = "";
+        }
+    }
+
+    /// <summary>加载预览帧。三个关键点：
+    /// ① 先在后台线程把文件整幅读进内存再解码：不占 UI 线程，也不长期持有文件句柄
+    ///    （否则帧去重搬移这些 PNG 时会撞上"文件被另一个进程占用"）；
+    /// ② 解码时限制宽度（4K 帧整幅解码既慢又吃内存，预览框用不到），避免预览拖慢处理；
+    /// ③ 节流 + 过期丢弃：密集上报时不会排队堆积，慢解码也不会覆盖新帧。</summary>
+    private async void LoadPreviewAsync(string path, bool isCompare)
+    {
+        var seq = isCompare ? ++_compareSeq : ++_mainSeq;
         try
         {
-            // 用 FileStream + FileShare.ReadWrite 读，避免进程写帧时锁文件加载失败
-            using var fs = new System.IO.FileStream(
-                path, System.IO.FileMode.Open,
-                System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite);
-            var bmp = new BitmapImage();
-            // 等解码完成（期间旧帧不隐藏）；流在解码完成后才释放
-            await bmp.SetSourceAsync(fs.AsRandomAccessStream());
-            // 期间已有更新的帧 → 丢弃本次，防止旧解码覆盖新帧
-            if (seq != _previewSeq) return;
-            // 关闭预览后丢弃已解码帧
+            var now = Environment.TickCount64;
+            if (now - _lastLoadTick < 100) return;   // 节流：最多每 100ms 解码一次
+            _lastLoadTick = now;
+
+            byte[] bytes;
+            try { bytes = await Task.Run(() => File.ReadAllBytes(path)); }
+            catch { return; }   // 帧可能刚被搬走或正在写入
+
+            using var ms = new InMemoryRandomAccessStream();
+            await ms.WriteAsync(bytes.AsBuffer());
+            ms.Seek(0);
+            var bmp = new BitmapImage { DecodePixelWidth = PreviewDecodeWidth };
+            await bmp.SetSourceAsync(ms);
+
             if (!Vm.ShowPreview) return;
-            PreviewImage.Source = bmp;
-            PreviewHint.Visibility = Visibility.Collapsed;
+            if (isCompare)
+            {
+                if (seq != _compareSeq || !_compareMode) return;
+                CompareImage.Source = bmp;
+            }
+            else
+            {
+                if (seq != _mainSeq) return;
+                PreviewImage.Source = bmp;
+                PreviewHint.Visibility = Visibility.Collapsed;
+            }
         }
         catch { }
     }

@@ -50,7 +50,7 @@
             <ProgressBar Value="{x:Bind Vm.ProgressPercent, Mode=OneWay}" Maximum="100" Height="18"/>
         </StackPanel>
 
-        <!-- 预览图（占满剩余空间） -->
+        <!-- 预览图（占满剩余空间）。帧去重时左右并排：左「疑似帧」（最近筛出的疑似重复帧）+ 右「筛选帧」（当前正在判决的帧） -->
         <Border Grid.Row="2" Style="{StaticResource CardBorder}">
             <Grid RowSpacing="4">
                 <Grid.RowDefinitions>
@@ -60,7 +60,32 @@
                 <ToggleSwitch Grid.Row="0" Header="图片预览" IsOn="{x:Bind Vm.ShowPreview, Mode=TwoWay}" IsEnabled="{x:Bind Vm.IsPreviewToggleEnabled, Mode=OneWay}" FontSize="12"/>
                 <Grid Grid.Row="1">
                     <TextBlock x:Name="PreviewHint" Text="{x:Bind Vm.PreviewHintText, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.4" FontSize="14"/>
-                    <Image x:Name="PreviewImage" Stretch="Uniform" Visibility="{x:Bind Vm.ShowPreview, Mode=OneWay}"/>
+                    <Grid Visibility="{x:Bind Vm.ShowPreview, Mode=OneWay}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition x:Name="CompareColumn" Width="0"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <!-- 左：疑似帧（只在帧去重对比时出现） -->
+                        <Grid x:Name="ComparePane" Grid.Column="0" Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Image x:Name="CompareImage" Grid.Row="0" Stretch="Uniform"/>
+                            <TextBlock Grid.Row="1" Text="疑似帧" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       FontSize="12" Opacity="0.65" Margin="0,3,0,0"/>
+                        </Grid>
+                        <!-- 右：筛选帧（当前正在判决/产出的帧） -->
+                        <Grid x:Name="MainPane" Grid.Column="1" Margin="3,0,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Image x:Name="PreviewImage" Grid.Row="0" Stretch="Uniform"/>
+                            <TextBlock x:Name="PreviewCaption" Grid.Row="1" Text="筛选帧" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       FontSize="12" Opacity="0.65" Margin="0,3,0,0" Visibility="Collapsed"/>
+                        </Grid>
+                    </Grid>
                 </Grid>
             </Grid>
         </Border>
