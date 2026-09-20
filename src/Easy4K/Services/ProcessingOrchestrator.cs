@@ -967,10 +967,13 @@ public sealed class ProcessingOrchestrator
                     Total = pr.Total,
                     PercentDisplay = false,   // 用"第 N 帧/共 M 帧"表达判决进度，避免与"已判重 N 帧"挨在一起被误读
                     FrameCompareMode = true,
-                    // 预览框：右侧「筛选帧」= 当前正在判决的帧；左侧「疑似帧」= 已判为重复的那张帧（无则留空）
+                    // 三联预览：右「筛选帧」= 正在判决的帧；中「对比帧」= 与它作比较的上一帧；
+                    // 左「判决帧」= 最近被判为重复的那张（还没判出重复时留空）
                     LatestFramePath = pr.CurrentFramePath,
                     CompareFramePath = pr.CompareFramePath,
-                    CompareFrameIndex = pr.CompareIndex
+                    CompareFrameIndex = pr.CompareIndex,
+                    VerdictFramePath = pr.VerdictFramePath,
+                    VerdictFrameIndex = pr.VerdictIndex
                 }), ct);
 
             // 重复帧移出 input_frames（保留在 removed 目录，便于排查/回退）

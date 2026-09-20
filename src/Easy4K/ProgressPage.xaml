@@ -62,21 +62,32 @@
                     <TextBlock x:Name="PreviewHint" Text="{x:Bind Vm.PreviewHintText, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.4" FontSize="14"/>
                     <Grid Visibility="{x:Bind Vm.ShowPreview, Mode=OneWay}">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition x:Name="VerdictColumn" Width="0"/>
                             <ColumnDefinition x:Name="CompareColumn" Width="0"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <!-- 左：疑似帧（只在帧去重对比时出现） -->
-                        <Grid x:Name="ComparePane" Grid.Column="0" Visibility="Collapsed">
+                        <!-- 左：判决帧（最近被判为重复的那张；只在判出重复时更换） -->
+                        <Grid x:Name="VerdictPane" Grid.Column="0" Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Image x:Name="VerdictImage" Grid.Row="0" Stretch="Uniform" VerticalAlignment="Bottom"/>
+                            <TextBlock x:Name="VerdictLabel" Grid.Row="1" Text="判决帧" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       FontSize="12" Opacity="0.65" Margin="0,3,0,0"/>
+                        </Grid>
+                        <!-- 中：对比帧（与筛选帧作比较的那一帧） -->
+                        <Grid x:Name="ComparePane" Grid.Column="1" Visibility="Collapsed" Margin="3,0,0,0">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <Image x:Name="CompareImage" Grid.Row="0" Stretch="Uniform" VerticalAlignment="Bottom"/>
-                            <TextBlock x:Name="CompareLabel" Grid.Row="1" Text="疑似帧" HorizontalAlignment="Center" VerticalAlignment="Center"
+                            <TextBlock x:Name="CompareLabel" Grid.Row="1" Text="对比帧" HorizontalAlignment="Center" VerticalAlignment="Center"
                                        FontSize="12" Opacity="0.65" Margin="0,3,0,0"/>
                         </Grid>
-                        <!-- 右：筛选帧（当前正在判决/产出的帧） -->
-                        <Grid x:Name="MainPane" Grid.Column="1" Margin="3,0,0,0">
+                        <!-- 右：筛选帧（当前正在判决的帧） -->
+                        <Grid x:Name="MainPane" Grid.Column="2" Margin="3,0,0,0">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>

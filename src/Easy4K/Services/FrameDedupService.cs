@@ -201,12 +201,15 @@ public static class FrameDedupService
         return (true, mad, hamming, qr, flow.MeanFlow, flow.VarFlow, Stage.Duplicate);
     }
 
-    /// <summary>分析进度：当前阶段 + 已处理/总数 + 已判重帧数 +
-    /// 当前正在判决的帧（预览框右侧「筛选帧」）+ 对比基准帧（预览框左侧「疑似帧」：
-    /// 最近一次被判为重复的帧；还没有判重结果时用上一帧兜底）及其帧号</summary>
+    /// <summary>分析进度：当前阶段 + 已处理/总数 + 已判重帧数 + 三联预览所需的三张帧：
+    /// ① 筛选帧 = 当前正在判决的帧（右，逐帧前移）；② 对比帧 = 与它作比较的那一帧，即上一帧（中，同样前移）；
+    /// ③ 判决帧 = 最近一次被判为重复的帧（左，只在判出重复时更换）。</summary>
     public readonly record struct AnalysisProgress(
         string Phase, int Done, int Total, int DuplicateCount,
-        string CurrentFramePath, string CompareFramePath, int CompareIndex);
+        string CurrentFramePath, int CurrentIndex,
+        string CompareFramePath, int CompareIndex,
+        string VerdictFramePath, int VerdictIndex);
+
 
     /// <summary>扫描帧目录做判决，返回结果与回填表（不改动文件）。
     /// 判决计算（第 3 阶 QR 分解、第 4 阶 Farnebäck 稠密光流）是纯 CPU 密集运算，
@@ -228,7 +231,8 @@ public static class FrameDedupService
         var prevH = 0;
         var dupSoFar = 0;
         var batchDeepest = Stage.FirstFrame;   // 本批（16 帧）实际跑到的最深判决阶，用于进度文本
-        var markedPath = "";                   // 最近被判为重复的帧（预览框左侧「疑似帧」）
+        var prevPath = "";                     // 上一帧路径 = 预览框中间的「对比帧」
+        var markedPath = "";                   // 最近被判为重复的帧 = 预览框左侧的「判决帧」
         var markedIndex = 0;                   // 它的原始帧号（1 基）
         for (var i = 0; i < files.Length; i++)
         {
@@ -247,7 +251,7 @@ public static class FrameDedupService
                 if (dup)
                 {
                     dupSoFar++;
-                    markedPath = files[i];        // 本帧与上一帧重复 → 标记本帧
+                    markedPath = files[i];        // 本帧与对比帧重复 → 更新左侧「判决帧」为这张最新判出的
                     markedIndex = i + 1;
                 }
                 // 判为重复时"实际跑到的阶"是模式决定的最深一阶（性能=dHash，完美=光流）
@@ -261,23 +265,27 @@ public static class FrameDedupService
 
             if (i % 16 == 0 || i == files.Length - 1)
             {
-                // 左侧「疑似帧」只在"筛出疑似重复帧"时更新：它代表已被判为重复的那张图，
-                // 不做"上一帧"兜底（否则它会跟着右侧筛选帧一起动，看不出哪张才是被判重的）
                 progress?.Invoke(new AnalysisProgress($"判决阶段({StageName(batchDeepest)})",
-                    i + 1, files.Length, dupSoFar, files[i], markedPath, markedIndex));
+                    i + 1, files.Length, dupSoFar,
+                    files[i], i + 1,                 // 筛选帧（右）：当前正在判决的帧
+                    prevPath, i,                     // 对比帧（中）：与它作比较的上一帧
+                    markedPath, markedIndex));       // 判决帧（左）：最近被判为重复的帧
                 batchDeepest = Stage.FirstFrame;
             }
+
+            prevPath = files[i];
         }
 
         // 时序平滑：孤立重复（连续长度 < MinRunLength）撤销删除，避免动画刻意的 1 帧顿帧被吃掉
         var lastFrame = files.Length > 0 ? files[^1] : "";
-        var lastCompare = markedPath;          // 本次没筛出疑似帧时留空（左图保持上一张，不跟着右图动）
-        var lastCompareIndex = markedIndex;
-        progress?.Invoke(new AnalysisProgress("时序平滑", files.Length, files.Length, dupSoFar, lastFrame, lastCompare, lastCompareIndex));
+        var lastIndex = Math.Max(0, files.Length - 1);
+        progress?.Invoke(new AnalysisProgress("时序平滑", files.Length, files.Length, dupSoFar,
+            lastFrame, files.Length, prevPath, lastIndex, markedPath, markedIndex));
         SmoothIsolatedRuns(decisions, opt.MinRunLength);
 
         var dupCount = decisions.Count(d => d.Duplicate);
-        progress?.Invoke(new AnalysisProgress("时序平滑", files.Length, files.Length, dupCount, lastFrame, lastCompare, lastCompareIndex));
+        progress?.Invoke(new AnalysisProgress("时序平滑", files.Length, files.Length, dupCount,
+            lastFrame, files.Length, prevPath, lastIndex, markedPath, markedIndex));
         var expand = new List<int>(decisions.Count);
         for (var i = 0; i < decisions.Count; i++)
         {

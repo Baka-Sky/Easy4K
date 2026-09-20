@@ -9,13 +9,16 @@ public sealed class ProcessProgress
     public long Total { get; set; }
     /// <summary>最新产出的帧文件路径（供预览图实时刷新，无则空）</summary>
     public string LatestFramePath { get; set; } = "";
-    /// <summary>对比帧路径：帧去重时填"疑似帧"（预览框左侧显示用）；
-    /// 空表示当前阶段没有对比对象，预览框只显示单图</summary>
+    /// <summary>对比帧路径：帧去重时填"对比帧"（与筛选帧做比较的那一帧，预览框中间显示）</summary>
     public string CompareFramePath { get; set; } = "";
-    /// <summary>对比帧的原始帧号（帧去重时的"疑似帧"帧号，供预览标签显示；0 表示未知）</summary>
+    /// <summary>对比帧的原始帧号（供预览标签显示；0 表示未知）</summary>
     public int CompareFrameIndex { get; set; }
-    /// <summary>是否处于帧去重的「疑似帧 / 筛选帧」左右对比模式。
-    /// 与"有没有对比帧路径"无关：一进入去重就把双图布局摆好，第一张疑似帧出现前左图先留空。</summary>
+    /// <summary>判决帧路径：帧去重时填"最近被判为重复的那一帧"（预览框左侧显示，只在判出重复时更换）</summary>
+    public string VerdictFramePath { get; set; } = "";
+    /// <summary>判决帧的原始帧号（供预览标签显示；0 表示未知）</summary>
+    public int VerdictFrameIndex { get; set; }
+    /// <summary>是否处于帧去重的「判决帧 / 对比帧 / 筛选帧」三联预览模式。
+    /// 与"有没有帧路径"无关：一进入去重就把三图布局摆好，还没判出重复时左图先留空。</summary>
     public bool FrameCompareMode { get; set; }
     /// <summary>降级提示文本（安全帧率触发时设置，空则无降级）</summary>
     public string DegradeNotice { get; set; } = "";

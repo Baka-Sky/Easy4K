@@ -13,17 +13,21 @@ namespace Easy4K;
 public sealed partial class ProgressPage : Page
 {
     private MainViewModel Vm => App.Services;
-    private string _lastPreviewPath = "";
-    /// <summary>左图（疑似帧）当前显示的路径，用于去重时不重复解码</summary>
+    private string _lastPreviewPath = "";    // 右：筛选帧
+    /// <summary>中图（对比帧）当前显示的路径，用于去重时不重复解码</summary>
     private string _lastComparePath = "";
-    /// <summary>右图/左图各自的解码序号：慢解码完成后若已有更新的帧，直接丢弃，避免旧帧覆盖新帧</summary>
+    /// <summary>左图（判决帧）当前显示的路径</summary>
+    private string _lastVerdictPath = "";
+    /// <summary>三联图各自的解码序号：慢解码完成后若已有更新的帧，直接丢弃，避免旧帧覆盖新帧</summary>
     private int _mainSeq;
     private int _compareSeq;
-    /// <summary>是否处于"左疑似帧 + 右筛选帧"的对比布局（仅帧去重阶段）</summary>
+    private int _verdictSeq;
+    /// <summary>是否处于"判决帧 + 对比帧 + 筛选帧"三联布局（仅帧去重阶段）</summary>
     private bool _compareMode;
-    /// <summary>左、右图各自的上次解码时间（分别节流：共用一个时间戳会让后加载的右图永远被跳过）</summary>
+    /// <summary>三联图各自的上次解码时间（分别节流：共用同一条时间戳会让后加载的图被跳掉）</summary>
     private long _lastMainTick;
     private long _lastCompareTick;
+    private long _lastVerdictTick;
     /// <summary>预览解码宽度上限：4K 帧整幅解码既慢又占内存，预览框用不到这个分辨率</summary>
     private const int PreviewDecodeWidth = 960;
     /// <summary>是否已订阅 ViewModel/Logger 事件（Loaded 可能多次触发，重复订阅会让每条日志/进度出现两次）</summary>
@@ -85,6 +89,7 @@ public sealed partial class ProgressPage : Page
         _lastPreviewPath = "";
         _mainSeq++;
         _compareSeq++;
+        _verdictSeq++;
         SetCompareMode(false);
         PreviewHint.Visibility = Visibility.Visible;
     }
@@ -186,65 +191,93 @@ public sealed partial class ProgressPage : Page
             // 关闭图片预览时不再加载帧
             if (!Vm.ShowPreview) return;
 
-            // 帧去重阶段：左「疑似帧」+ 右「筛选帧」并排（一进入去重就摆好布局）；其他阶段只有单图
-            var compare = p.CompareFramePath;
+            // 帧去重阶段：左「判决帧」+ 中「对比帧」+ 右「筛选帧」三联（一进入去重就摆好布局）；其他阶段只有单图
             if (p.FrameCompareMode != _compareMode) SetCompareMode(p.FrameCompareMode);
 
             if (p.FrameCompareMode)
             {
-                // 标签带上帧号，一眼能看出左图停在哪（它只在筛出疑似帧时更换）
-                CompareLabel.Text = p.CompareFrameIndex > 0 ? $"疑似帧 · 第 {p.CompareFrameIndex} 帧" : "疑似帧";
+                // 标签带上帧号：左右两图停在哪儿一目了然，中间与右侧则会一路前移
+                VerdictLabel.Text = p.VerdictFrameIndex > 0 ? $"判决帧 · 第 {p.VerdictFrameIndex} 帧" : "判决帧";
+                CompareLabel.Text = p.CompareFrameIndex > 0 ? $"对比帧 · 第 {p.CompareFrameIndex} 帧" : "对比帧";
                 PreviewCaption.Text = p.Current > 0 ? $"筛选帧 · 第 {p.Current} 帧" : "筛选帧";
             }
 
-            if (p.FrameCompareMode && !string.IsNullOrEmpty(compare) && compare != _lastComparePath)
+            // 左：判决帧（只在判出重复时更新，其余时间保持不动）
+            if (p.FrameCompareMode && !string.IsNullOrEmpty(p.VerdictFramePath) && p.VerdictFramePath != _lastVerdictPath)
             {
-                _lastComparePath = compare;
-                LoadPreviewAsync(compare, isCompare: true);
+                _lastVerdictPath = p.VerdictFramePath;
+                LoadPreviewAsync(p.VerdictFramePath, PreviewTarget.Verdict);
             }
+            // 中：对比帧（与筛选帧作比较的那一帧，随判决逐帧前移）
+            if (p.FrameCompareMode && !string.IsNullOrEmpty(p.CompareFramePath) && p.CompareFramePath != _lastComparePath)
+            {
+                _lastComparePath = p.CompareFramePath;
+                LoadPreviewAsync(p.CompareFramePath, PreviewTarget.Compare);
+            }
+            // 右：筛选帧（当前正在判决的帧）
             if (!string.IsNullOrEmpty(p.LatestFramePath) && p.LatestFramePath != _lastPreviewPath)
             {
                 _lastPreviewPath = p.LatestFramePath;
-                LoadPreviewAsync(p.LatestFramePath, isCompare: false);
+                LoadPreviewAsync(p.LatestFramePath, PreviewTarget.Main);
             }
         });
     }
 
-    /// <summary>切换「单图 / 左右对比」布局：对比时左列占一半，并显示底部「疑似帧」「筛选帧」标签。</summary>
+    /// <summary>预览目标：判决帧（左）/ 对比帧（中）/ 筛选帧（右）。</summary>
+    private enum PreviewTarget { Verdict, Compare, Main }
+
+    /// <summary>切换「单图 / 三联对比」布局（三联仅用于帧去重）：判决帧、对比帧各占三分之一。</summary>
     private void SetCompareMode(bool on)
     {
         _compareMode = on;
-        CompareColumn.Width = on ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+        var star = new GridLength(1, GridUnitType.Star);
+        var none = new GridLength(0);
+        VerdictColumn.Width = on ? star : none;
+        CompareColumn.Width = on ? star : none;
+        VerdictPane.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
         ComparePane.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
         PreviewCaption.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
         if (!on)
         {
-            CompareImage.Source = null;   // 退出对比时释放左图
+            VerdictImage.Source = null;   // 退出三联时释放左、中两张图
+            CompareImage.Source = null;
+            _lastVerdictPath = "";
             _lastComparePath = "";
-            CompareLabel.Text = "疑似帧";
+            VerdictLabel.Text = "判决帧";
+            CompareLabel.Text = "对比帧";
             PreviewCaption.Text = "筛选帧";
         }
     }
 
     /// <summary>加载预览帧。要点：
-    /// ① 读文件 + 解码全部在后台（Task.Run / WinRT 异步），UI 线程只做最后一步赋值；
+    /// ① 读文件在后台线程（Task.Run），UI 线程不碰磁盘 IO；
     /// ② 期间不持有帧文件句柄（先整幅读进内存），否则帧去重搬移这些 PNG 时会撞"文件被占用"；
-    /// ③ 解码限制宽度，4K 帧不整幅解码，避免预览拖慢处理；
-    /// ④ 左右图各自节流 + 过期丢弃，慢解码不会覆盖新帧、也不会堵塞。</summary>
-    private async void LoadPreviewAsync(string path, bool isCompare)
+    /// ③ 解码限制宽度（4K 帧整幅解码既慢又吃内存，预览框用不到）；
+    /// ④ 三联图各自节流 + 过期丢弃：慢解码不会覆盖新帧，也不会互相挤掉。</summary>
+    private async void LoadPreviewAsync(string path, PreviewTarget target)
     {
-        var seq = isCompare ? ++_compareSeq : ++_mainSeq;
+        var seq = target switch
+        {
+            PreviewTarget.Verdict => ++_verdictSeq,
+            PreviewTarget.Compare => ++_compareSeq,
+            _ => ++_mainSeq
+        };
         try
         {
             var now = Environment.TickCount64;
-            if (isCompare)
+            if (target == PreviewTarget.Verdict)
             {
-                if (now - _lastCompareTick < 100) return;   // 左图单独节流
+                if (now - _lastVerdictTick < 100) return;
+                _lastVerdictTick = now;
+            }
+            else if (target == PreviewTarget.Compare)
+            {
+                if (now - _lastCompareTick < 100) return;
                 _lastCompareTick = now;
             }
             else
             {
-                if (now - _lastMainTick < 100) return;      // 右图单独节流（不能与左图共用，否则会被左图挤掉）
+                if (now - _lastMainTick < 100) return;
                 _lastMainTick = now;
             }
 
@@ -253,8 +286,7 @@ public sealed partial class ProgressPage : Page
             catch { return; }   // 帧可能刚被搬走或正在写入
 
             // 注意：BitmapImage 是 UI 对象（DependencyObject），必须在 UI 线程创建、在 UI 线程调 SetSourceAsync，
-            // 放到后台线程会直接挂不上图。它本身是异步解码（解码在内部后台线程完成），不会阻塞界面；
-            // 真正占 UI 线程的读文件已经用 Task.Run 挪走了。用内存流则不会持有帧文件句柄。
+            // 放到后台线程会直接挂不上图。它本身是异步解码（解码在内部后台线程完成），不会阻塞界面。
             var bmp = new BitmapImage { DecodePixelWidth = PreviewDecodeWidth };
             using (var ms = new InMemoryRandomAccessStream())
             {
@@ -264,16 +296,21 @@ public sealed partial class ProgressPage : Page
             }
 
             if (!Vm.ShowPreview) return;
-            if (isCompare)
+            switch (target)
             {
-                if (seq != _compareSeq || !_compareMode) return;
-                CompareImage.Source = bmp;
-            }
-            else
-            {
-                if (seq != _mainSeq) return;
-                PreviewImage.Source = bmp;
-                PreviewHint.Visibility = Visibility.Collapsed;
+                case PreviewTarget.Verdict:
+                    if (seq != _verdictSeq || !_compareMode) return;
+                    VerdictImage.Source = bmp;
+                    break;
+                case PreviewTarget.Compare:
+                    if (seq != _compareSeq || !_compareMode) return;
+                    CompareImage.Source = bmp;
+                    break;
+                default:
+                    if (seq != _mainSeq) return;
+                    PreviewImage.Source = bmp;
+                    PreviewHint.Visibility = Visibility.Collapsed;
+                    break;
             }
         }
         catch (Exception ex)
