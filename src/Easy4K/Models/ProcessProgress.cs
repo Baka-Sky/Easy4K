@@ -14,6 +14,9 @@ public sealed class ProcessProgress
     public string CompareFramePath { get; set; } = "";
     /// <summary>对比帧的原始帧号（帧去重时的"疑似帧"帧号，供预览标签显示；0 表示未知）</summary>
     public int CompareFrameIndex { get; set; }
+    /// <summary>是否处于帧去重的「疑似帧 / 筛选帧」左右对比模式。
+    /// 与"有没有对比帧路径"无关：一进入去重就把双图布局摆好，第一张疑似帧出现前左图先留空。</summary>
+    public bool FrameCompareMode { get; set; }
     /// <summary>降级提示文本（安全帧率触发时设置，空则无降级）</summary>
     public string DegradeNotice { get; set; } = "";
     /// <summary>进度以百分比显示（如 HDR 转换），false 时按帧数显示</summary>

@@ -186,19 +186,18 @@ public sealed partial class ProgressPage : Page
             // 关闭图片预览时不再加载帧
             if (!Vm.ShowPreview) return;
 
-            // 帧去重阶段：左「疑似帧」+ 右「筛选帧」并排；其他阶段只有单图
+            // 帧去重阶段：左「疑似帧」+ 右「筛选帧」并排（一进入去重就摆好布局）；其他阶段只有单图
             var compare = p.CompareFramePath;
-            var hasCompare = !string.IsNullOrEmpty(compare);
-            if (hasCompare != _compareMode) SetCompareMode(hasCompare);
+            if (p.FrameCompareMode != _compareMode) SetCompareMode(p.FrameCompareMode);
 
-            if (hasCompare)
+            if (p.FrameCompareMode)
             {
-                // 标签带上帧号，一眼能看出左右两张图各自停在哪儿、以及是否在推进
+                // 标签带上帧号，一眼能看出左图停在哪（它只在筛出疑似帧时更换）
                 CompareLabel.Text = p.CompareFrameIndex > 0 ? $"疑似帧 · 第 {p.CompareFrameIndex} 帧" : "疑似帧";
                 PreviewCaption.Text = p.Current > 0 ? $"筛选帧 · 第 {p.Current} 帧" : "筛选帧";
             }
 
-            if (hasCompare && compare != _lastComparePath)
+            if (p.FrameCompareMode && !string.IsNullOrEmpty(compare) && compare != _lastComparePath)
             {
                 _lastComparePath = compare;
                 LoadPreviewAsync(compare, isCompare: true);
@@ -227,11 +226,11 @@ public sealed partial class ProgressPage : Page
         }
     }
 
-    /// <summary>加载预览帧。三个关键点：
-    /// ① 先在后台线程把文件整幅读进内存再解码：不占 UI 线程，也不长期持有文件句柄
-    ///    （否则帧去重搬移这些 PNG 时会撞上"文件被另一个进程占用"）；
-    /// ② 解码时限制宽度（4K 帧整幅解码既慢又吃内存，预览框用不到），避免预览拖慢处理；
-    /// ③ 节流 + 过期丢弃：密集上报时不会排队堆积，慢解码也不会覆盖新帧。</summary>
+    /// <summary>加载预览帧。要点：
+    /// ① 读文件 + 解码全部在后台（Task.Run / WinRT 异步），UI 线程只做最后一步赋值；
+    /// ② 期间不持有帧文件句柄（先整幅读进内存），否则帧去重搬移这些 PNG 时会撞"文件被占用"；
+    /// ③ 解码限制宽度，4K 帧不整幅解码，避免预览拖慢处理；
+    /// ④ 左右图各自节流 + 过期丢弃，慢解码不会覆盖新帧、也不会堵塞。</summary>
     private async void LoadPreviewAsync(string path, bool isCompare)
     {
         var seq = isCompare ? ++_compareSeq : ++_mainSeq;
@@ -253,24 +252,33 @@ public sealed partial class ProgressPage : Page
             try { bytes = await Task.Run(() => File.ReadAllBytes(path)); }
             catch { return; }   // 帧可能刚被搬走或正在写入
 
-            using var ms = new InMemoryRandomAccessStream();
-            await ms.WriteAsync(bytes.AsBuffer());
-            ms.Seek(0);
-            var bmp = new BitmapImage { DecodePixelWidth = PreviewDecodeWidth };
-            await bmp.SetSourceAsync(ms);
+            var bmp = await Task.Run(async () =>
+            {
+                var ms = new InMemoryRandomAccessStream();
+                await ms.WriteAsync(bytes.AsBuffer());
+                ms.Seek(0);
+                var image = new BitmapImage { DecodePixelWidth = PreviewDecodeWidth };
+                await image.SetSourceAsync(ms);
+                ms.Dispose();   // 解码后像素已在内存，释放临时流
+                return image;
+            });
 
             if (!Vm.ShowPreview) return;
-            if (isCompare)
+            // 统一回到 UI 线程再挂图（避免任何后台线程触碰 XAML 元素）
+            DispatcherQueue.TryEnqueue(() =>
             {
-                if (seq != _compareSeq || !_compareMode) return;
-                CompareImage.Source = bmp;
-            }
-            else
-            {
-                if (seq != _mainSeq) return;
-                PreviewImage.Source = bmp;
-                PreviewHint.Visibility = Visibility.Collapsed;
-            }
+                if (isCompare)
+                {
+                    if (seq != _compareSeq || !_compareMode) return;
+                    CompareImage.Source = bmp;
+                }
+                else
+                {
+                    if (seq != _mainSeq) return;
+                    PreviewImage.Source = bmp;
+                    PreviewHint.Visibility = Visibility.Collapsed;
+                }
+            });
         }
         catch { }
     }

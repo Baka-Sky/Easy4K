@@ -817,15 +817,16 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>手动导入外部帧文件夹（跳过拆帧）。校验目录存在且有 PNG 帧，否则拒绝。</summary>
-    public void ImportFrameFolder(string dir)
+    /// <summary>手动导入外部帧文件夹（跳过拆帧）。校验目录存在且有 PNG 帧，否则拒绝。
+    /// 帧数统计放后台线程：目录里可能有好几万张 PNG（网络盘更慢），同步统计会卡住界面。</summary>
+    public async Task ImportFrameFolderAsync(string dir)
     {
         if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
         {
             _logger.Error("帧文件夹不存在，导入失败");
             return;
         }
-        var pngCount = Directory.Exists(dir) ? Directory.GetFiles(dir, "*.png").Length : 0;
+        var pngCount = await Task.Run(() => Directory.GetFiles(dir, "*.png").Length);
         if (pngCount == 0)
         {
             _logger.Error("所选文件夹内没有 PNG 帧文件，导入失败");

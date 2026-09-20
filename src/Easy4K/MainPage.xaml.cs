@@ -146,10 +146,11 @@ public sealed partial class MainPage : Page
             Vm.ClearExternalFrames();
             return;
         }
-        if (Directory.Exists(path) && Directory.GetFiles(path, "*.png").Length > 0)
+        // 目录校验与帧数统计都在 ImportFrameFolderAsync 内部后台执行（大目录同步统计会卡界面）
+        if (Directory.Exists(path))
         {
             var prev = Vm.ExternalFramesDir;
-            Vm.ImportFrameFolder(path);
+            await Vm.ImportFrameFolderAsync(path);
             if (Vm.HasExternalFrames && Vm.ExternalFramesDir != prev)
                 await ShowFrameParamsDialogAsync();
         }
@@ -245,7 +246,7 @@ public sealed partial class MainPage : Page
         if (folder is not null)
         {
             var prev = Vm.ExternalFramesDir;
-            Vm.ImportFrameFolder(folder.Path);
+            await Vm.ImportFrameFolderAsync(folder.Path);
             if (Vm.HasExternalFrames && Vm.ExternalFramesDir != prev)
                 await ShowFrameParamsDialogAsync();
         }

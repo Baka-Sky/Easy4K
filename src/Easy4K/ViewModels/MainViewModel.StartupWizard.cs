@@ -151,8 +151,8 @@ public partial class MainViewModel
                 return (PreProcessTestOutcome.Failed, "1 秒测试视频不可用或生成失败");
             }
 
-            // 探测测试视频
-            var info = _videoDetector.Detect(StartupTestVideoPath);
+            // 探测测试视频（ffprobe 子进程会阻塞，放后台线程）
+            var info = await Task.Run(() => _videoDetector.Detect(StartupTestVideoPath));
             if (info is null || !info.IsValid)
             {
                 _logger.Error("处理前测试: 测试视频探测失败");

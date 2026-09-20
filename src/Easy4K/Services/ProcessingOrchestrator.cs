@@ -966,7 +966,8 @@ public sealed class ProcessingOrchestrator
                     Current = pr.Done,
                     Total = pr.Total,
                     PercentDisplay = false,   // 用"第 N 帧/共 M 帧"表达判决进度，避免与"已判重 N 帧"挨在一起被误读
-                    // 预览框：右侧「筛选帧」= 当前正在判决的帧；左侧「疑似帧」= 最近筛出的疑似重复帧
+                    FrameCompareMode = true,
+                    // 预览框：右侧「筛选帧」= 当前正在判决的帧；左侧「疑似帧」= 已判为重复的那张帧（无则留空）
                     LatestFramePath = pr.CurrentFramePath,
                     CompareFramePath = pr.CompareFramePath,
                     CompareFrameIndex = pr.CompareIndex
@@ -979,26 +980,31 @@ public sealed class ProcessingOrchestrator
                 StageText = DedupText("搬移重复帧", result.DuplicateCount),
                 Current = result.Total,
                 Total = result.Total,
-                PercentDisplay = true
+                PercentDisplay = true,
+                FrameCompareMode = true
             });
             // 逐个搬移并重试：预览图解码、杀毒软件实时扫描、资源管理器缩略图都可能短暂占用 PNG。
             // 极个别帧始终搬不动时，把它改判为"保留"——必须保证判决表与磁盘上的实际帧数一致，
             // 否则回填表会与文件对不上（成品帧数、时长都会缩水）。
             var decisions = result.Decisions.ToList();
             var moveFailed = 0;
-            for (var i = 0; i < decisions.Count; i++)
+            // 搬移是几千次文件操作（含失败重试），必须放后台线程，否则会阻塞 UI
+            await Task.Run(() =>
             {
-                var d = decisions[i];
-                if (!d.Duplicate) continue;
-                var src = Path.Combine(inputFrames, $"{d.Index:D8}.png");
-                if (!File.Exists(src)) continue;
-                var dst = Path.Combine(removedDir, $"{d.Index:D8}.png");
-                if (!TryMoveFrame(src, dst))
+                for (var i = 0; i < decisions.Count; i++)
                 {
-                    decisions[i] = d with { Duplicate = false };
-                    moveFailed++;
+                    var d = decisions[i];
+                    if (!d.Duplicate) continue;
+                    var src = Path.Combine(inputFrames, $"{d.Index:D8}.png");
+                    if (!File.Exists(src)) continue;
+                    var dst = Path.Combine(removedDir, $"{d.Index:D8}.png");
+                    if (!TryMoveFrame(src, dst))
+                    {
+                        decisions[i] = d with { Duplicate = false };
+                        moveFailed++;
+                    }
                 }
-            }
+            }, ct);
             if (moveFailed > 0)
             {
                 _logger.Warn($"帧去重：{moveFailed} 帧因文件被占用无法移出，已改判为保留（成品帧数与时长不受影响）；" +
@@ -1009,7 +1015,8 @@ public sealed class ProcessingOrchestrator
                     StageText = DedupText("搬移重复帧", decisions.Count(x => x.Duplicate)),
                     Current = decisions.Count,
                     Total = decisions.Count,
-                    PercentDisplay = true
+                    PercentDisplay = true,
+                    FrameCompareMode = true
                 });
             }
 

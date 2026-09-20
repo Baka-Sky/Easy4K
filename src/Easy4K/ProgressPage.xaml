@@ -71,7 +71,7 @@
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <Image x:Name="CompareImage" Grid.Row="0" Stretch="Uniform"/>
+                            <Image x:Name="CompareImage" Grid.Row="0" Stretch="Uniform" VerticalAlignment="Bottom"/>
                             <TextBlock x:Name="CompareLabel" Text="疑似帧" HorizontalAlignment="Center" VerticalAlignment="Center"
                                        FontSize="12" Opacity="0.65" Margin="0,3,0,0"/>
                         </Grid>
@@ -81,7 +81,7 @@
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <Image x:Name="PreviewImage" Grid.Row="0" Stretch="Uniform"/>
+                            <Image x:Name="PreviewImage" Grid.Row="0" Stretch="Uniform" VerticalAlignment="Bottom"/>
                             <TextBlock x:Name="PreviewCaption" Grid.Row="1" Text="筛选帧" HorizontalAlignment="Center" VerticalAlignment="Center"
                                        FontSize="12" Opacity="0.65" Margin="0,3,0,0" Visibility="Collapsed"/>
                         </Grid>
