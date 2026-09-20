@@ -71,10 +71,8 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
-                                <!-- 尾部对称空行：让「图片 + 标签」整体垂直居中，最大化时不会贴底并留出大片空白 -->
-                                <RowDefinition x:Name="VerdictTailRow" Height="*"/>
                             </Grid.RowDefinitions>
-                            <Image x:Name="VerdictImage" Grid.Row="0" Stretch="Uniform" VerticalAlignment="Bottom"/>
+                            <Image x:Name="VerdictImage" Grid.Row="0" Stretch="Uniform"/>
                             <TextBlock x:Name="VerdictLabel" Grid.Row="1" Text="判决帧" HorizontalAlignment="Center" VerticalAlignment="Center"
                                        FontSize="12" Opacity="0.65" Margin="0,3,0,0"/>
                         </Grid>
@@ -83,9 +81,8 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
-                                <RowDefinition x:Name="CompareTailRow" Height="*"/>
                             </Grid.RowDefinitions>
-                            <Image x:Name="CompareImage" Grid.Row="0" Stretch="Uniform" VerticalAlignment="Bottom"/>
+                            <Image x:Name="CompareImage" Grid.Row="0" Stretch="Uniform"/>
                             <TextBlock x:Name="CompareLabel" Grid.Row="1" Text="对比帧" HorizontalAlignment="Center" VerticalAlignment="Center"
                                        FontSize="12" Opacity="0.65" Margin="0,3,0,0"/>
                         </Grid>
@@ -94,9 +91,8 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
-                                <RowDefinition x:Name="MainTailRow" Height="*"/>
                             </Grid.RowDefinitions>
-                            <Image x:Name="PreviewImage" Grid.Row="0" Stretch="Uniform" VerticalAlignment="Bottom"/>
+                            <Image x:Name="PreviewImage" Grid.Row="0" Stretch="Uniform"/>
                             <TextBlock x:Name="PreviewCaption" Grid.Row="1" Text="筛选帧" HorizontalAlignment="Center" VerticalAlignment="Center"
                                        FontSize="12" Opacity="0.65" Margin="0,3,0,0" Visibility="Collapsed"/>
                         </Grid>
