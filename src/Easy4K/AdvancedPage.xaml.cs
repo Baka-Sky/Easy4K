@@ -279,15 +279,17 @@ public sealed partial class AdvancedPage : Page
         string? body = null;
         if (value < 120)
         {
-            title = "⚠ 块太小";
-            body = $"当前每块 {value} 帧。超分与补帧工具每处理一个块都要重新加载一次模型，" +
-                   "块太小时加载开销可能超过并行带来的收益。建议 120 帧以上（默认 240）。";
+            title = "涡轮模式：块太小";
+            body = $"当前每块 {value} 帧。\n\n" +
+                   "超分与补帧工具每处理一个块都要重新加载一次模型，块太小时加载开销可能超过并行带来的收益。\n\n" +
+                   "建议 120 帧以上（默认 240）。";
         }
         else if (value > 600)
         {
-            title = "⚠ 块太大";
-            body = $"当前每块 {value} 帧。块太大时 CPU 与 GPU 重叠的时间会变短，涡轮模式收益变小" +
-                   "（超过 1500 帧基本退化成串行处理）。建议 120 ~ 600 帧。";
+            title = "涡轮模式：块太大";
+            body = $"当前每块 {value} 帧。\n\n" +
+                   "块太大时 CPU 与 GPU 重叠的时间会变短，涡轮模式的收益会变小；超过 1500 帧基本退化成串行处理。\n\n" +
+                   "建议 120 ~ 600 帧。";
         }
         if (title is null) return;
 
@@ -295,7 +297,11 @@ public sealed partial class AdvancedPage : Page
         var dlg = new ContentDialog
         {
             Title = title,
-            Content = new TextBlock { TextWrapping = TextWrapping.Wrap, Text = body },
+            Content = new ScrollViewer
+            {
+                MaxHeight = 420,
+                Content = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Text = body }
+            },
             CloseButtonText = "知道了",
             XamlRoot = XamlRoot
         };
@@ -313,15 +319,20 @@ public sealed partial class AdvancedPage : Page
 
         var dlg = new ContentDialog
         {
-            Title = "⚠ 检测到机械硬盘",
-            Content = new TextBlock
+            Title = "涡轮模式：检测到机械硬盘",
+            Content = new ScrollViewer
             {
-                TextWrapping = TextWrapping.Wrap,
-                Text =
-                    "涡轮模式会让拆帧、去重判决、回填、超分、补帧同时读写临时目录，机械硬盘的随机读写能力撑不住这种吞吐，" +
-                    "开启后很可能比普通模式更慢。\n\n" +
-                    $"当前临时目录：\n{Vm.TempRoot}\n\n" +
-                    "该目录位于机械硬盘（HDD）。建议先改到固态硬盘（SSD / NVMe）再开启。"
+                MaxHeight = 420,
+                Content = new TextBlock
+                {
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 12,
+                    Text =
+                        "涡轮模式会让拆帧、去重判决、回填、超分、补帧同时读写临时目录，机械硬盘的随机读写能力撑不住这种吞吐，" +
+                        "开启后很可能比普通模式更慢。\n\n" +
+                        $"当前临时目录：\n{Vm.TempRoot}\n\n" +
+                        "该目录位于机械硬盘（HDD）。建议先改到固态硬盘（SSD / NVMe）再开启。"
+                }
             },
             PrimaryButtonText = "仍要开启",
             CloseButtonText = "否",
