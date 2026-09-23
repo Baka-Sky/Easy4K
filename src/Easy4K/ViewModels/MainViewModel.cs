@@ -340,10 +340,21 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _audioSrPrecision = "fp16";
 
     /// <summary>涡轮模式：把勾选的所有操作同时进行——CPU 侧（去重判决 / 回填）与 GPU 侧（超分 / 补帧）按块并行，音频链路独立并行</summary>
-    [ObservableProperty] private bool _turboMode;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TurboBlockVis))]
+    private bool _turboMode;
 
     /// <summary>涡轮模式每块帧数（用户可调）：太小会反复加载模型，太大会降低并行度</summary>
-    [ObservableProperty] private int _turboBlockFrames = 240;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TurboBlockLabel))]
+    private int _turboBlockFrames = 240;
+
+    /// <summary>块大小滑块只在涡轮模式开启时出现（关闭时整块收起，不占位）</summary>
+    public Microsoft.UI.Xaml.Visibility TurboBlockVis =>
+        TurboMode ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+    /// <summary>块大小右侧的数值文本</summary>
+    public string TurboBlockLabel => $"{TurboBlockFrames} 帧";
 
     partial void OnAudioSrEnabledChanged(bool value)
     {

@@ -146,25 +146,24 @@
                         <TextBlock TextWrapping="Wrap" FontSize="10" Opacity="0.6"
                                    Text="将勾选的所有操作同时进行。由于数据吞吐巨大，本功能要求临时目录必须为固态存储介质。"/>
 
-                        <!-- 每块帧数：用户自定，越界给出警告色提示 -->
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="每块帧数" Style="{StaticResource FieldLabel}"/>
-                            <NumberBox Grid.Column="1" x:Name="TurboBlockBox" Width="150"
-                                       Minimum="32" Maximum="4000" SmallChange="60" LargeChange="240"
-                                       SpinButtonPlacementMode="Compact"
-                                       ValueChanged="OnTurboBlockChanged"
-                                       AutomationProperties.Name="涡轮模式每块帧数"/>
-                            <TextBlock Grid.Column="2" VerticalAlignment="Center" FontSize="10" Opacity="0.6"
-                                       TextWrapping="Wrap"
-                                       Text="块越小并行度越高、模型加载越频繁"/>
-                        </Grid>
-
-                        <TextBlock x:Name="TurboBlockHint" FontSize="10" TextWrapping="Wrap"/>
+                        <!-- 每块帧数：只在涡轮模式开启时出现；越界由弹窗提醒（见 AdvancedPage.xaml.cs） -->
+                        <StackPanel x:Name="TurboBlockPanel" Spacing="4"
+                                    Visibility="{x:Bind Vm.TurboBlockVis, Mode=OneWay}">
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Slider Grid.Column="0" Minimum="32" Maximum="2000" StepFrequency="8" TickFrequency="64"
+                                        Value="{x:Bind Vm.TurboBlockFrames, Mode=OneWay}"
+                                        ValueChanged="OnTurboBlockChanged"
+                                        HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="{x:Bind Vm.TurboBlockLabel, Mode=OneWay}"
+                                           VerticalAlignment="Center" FontSize="12" MinWidth="70" TextAlignment="Right"/>
+                            </Grid>
+                            <TextBlock Text="每块帧数（默认 240，建议 120 ~ 600）：块越小 CPU 与 GPU 重叠越充分，但超分 / 补帧模型会被反复加载"
+                                       FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                        </StackPanel>
 
                         <TextBlock x:Name="TurboHint" FontSize="10" Opacity="0.6" TextWrapping="Wrap"
                                    Text="单卡建议 128~512 帧：块越小并行度越高，但外部工具重复加载模型的次数也越多；改完立即写入配置。"/>

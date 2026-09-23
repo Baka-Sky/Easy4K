@@ -47,11 +47,9 @@ public sealed partial class AdvancedPage : Page
         // 涡轮模式的磁盘检查只在用户手动切换时触发：等首屏绑定回填完成后再放行
         Loaded += (_, _) => DispatcherQueue.TryEnqueue(() => _turboUiReady = true);
 
-        // 涡轮块大小：程序回填时抑制写回，避免构造期覆盖配置
+        // 块大小滑块：绑定回填期间抑制事件，页面加载完成后再放行（避免构造期弹警告）
         _turboBlockSyncing = true;
-        TurboBlockBox.Value = Vm.TurboBlockFrames;
-        _turboBlockSyncing = false;
-        UpdateTurboBlockHint(Vm.TurboBlockFrames);
+        Loaded += (_, _) => DispatcherQueue.TryEnqueue(() => _turboBlockSyncing = false);
 
         // 去重模式单选：程序回填时不写回，避免构造期覆盖配置
         _dedupSyncing = true;
@@ -263,52 +261,45 @@ public sealed partial class AdvancedPage : Page
     /// <summary>程序回填块大小输入框时抑制写回</summary>
     private bool _turboBlockSyncing;
 
-    /// <summary>块大小由用户自定：写回配置并刷新评估提示（过小/过大给警告色）。</summary>
-    private void OnTurboBlockChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    /// <summary>上一次已提示过的越界块大小（同一档位不重复弹窗，避免拖动时连弹）</summary>
+    private int _lastWarnedBlock = -1;
+
+    /// <summary>块大小调整：写回配置；明显越界时直接弹窗警告（同一档位只提醒一次）。</summary>
+    private async void OnTurboBlockChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
         if (_turboBlockSyncing) return;
 
-        var value = double.IsNaN(args.NewValue) ? 240 : (int)Math.Round(args.NewValue);
-        value = Math.Clamp(value, 32, 4000);
+        var value = (int)Math.Round(e.NewValue);
+        value = Math.Clamp(value, 32, 2000);
         Vm.TurboBlockFrames = value;
-        UpdateTurboBlockHint(value);
-    }
 
-    /// <summary>块大小评估提示：过小会反复加载模型，过大流水线退化为串行。</summary>
-    private void UpdateTurboBlockHint(int frames)
-    {
-        string text;
-        var warn = false;
+        if (value == _lastWarnedBlock) return;
 
-        if (frames < 60)
+        string? title = null;
+        string? body = null;
+        if (value < 120)
         {
-            text = "⚠ 太小：每个块都要重新加载一次超分/补帧模型，加载开销可能超过并行带来的收益，建议不低于 120 帧";
-            warn = true;
+            title = "⚠ 块太小";
+            body = $"当前每块 {value} 帧。超分与补帧工具每处理一个块都要重新加载一次模型，" +
+                   "块太小时加载开销可能超过并行带来的收益。建议 120 帧以上（默认 240）。";
         }
-        else if (frames < 120)
+        else if (value > 600)
         {
-            text = "偏小：并行度最高，但模型加载次数偏多，低端显卡上不一定划算";
-            warn = true;
+            title = "⚠ 块太大";
+            body = $"当前每块 {value} 帧。块太大时 CPU 与 GPU 重叠的时间会变短，涡轮模式收益变小" +
+                   "（超过 1500 帧基本退化成串行处理）。建议 120 ~ 600 帧。";
         }
-        else if (frames <= 600)
-        {
-            text = "推荐区间：并行度与模型加载开销比较平衡";
-        }
-        else if (frames <= 1500)
-        {
-            text = "偏大：模型加载更省，但 CPU 与 GPU 重叠的时间变短";
-        }
-        else
-        {
-            text = "⚠ 太大：流水线几乎退化成串行，涡轮模式收益很小";
-            warn = true;
-        }
+        if (title is null) return;
 
-        TurboBlockHint.Text = text;
-        if (warn)
-            TurboBlockHint.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Orange);
-        else
-            TurboBlockHint.ClearValue(TextBlock.ForegroundProperty);
+        _lastWarnedBlock = value;
+        var dlg = new ContentDialog
+        {
+            Title = title,
+            Content = new TextBlock { TextWrapping = TextWrapping.Wrap, Text = body },
+            CloseButtonText = "知道了",
+            XamlRoot = XamlRoot
+        };
+        await dlg.ShowLocalizedAsync();
     }
 
     /// <summary>勾选涡轮模式时检查临时目录所在磁盘：机械盘撑不住多路并发读写，弹窗确认，选「否」自动关闭。</summary>
