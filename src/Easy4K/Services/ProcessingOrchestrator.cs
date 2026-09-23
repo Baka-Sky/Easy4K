@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.RegularExpressions;
+using System.Threading.Channels;
 using Easy4K.Models;
 using Easy4K.Services.CommandBuilders;
 
@@ -165,6 +166,25 @@ public sealed class ProcessingOrchestrator
                     }
                 }
                 _logger.Success($"拆帧完成: {CountFrames(inputFrames)} 帧");
+            }
+        }
+
+        // ============ 涡轮模式：块级流水（CPU 侧任务准备 与 GPU 侧超分/补帧 同时进行） ============
+        // 走通后 srFrames / ifFrames 已按全局连续编号写满，后续阶段会凭"帧数够"自动跳过，直接进入合并，
+        // 合并与收尾逻辑无需任何改动；任一步失败都返回 false，本次自动回退逐阶段串行，不会把任务做废。
+        if (ctx.Settings.TurboMode)
+        {
+            if (TurboSupported(ctx))
+            {
+                var turboOk = await RunTurboBlocksAsync(ctx, tempRoot, inputFrames, srFrames, ifFrames, totalFrames, ifMult, cpu, ct);
+                if (turboOk)
+                    _logger.Success("[涡轮] 块级流水已产出全部帧，后续阶段将自动跳过并进入合并");
+                else
+                    _logger.Warn("[涡轮] 块级流水未完成，本次回退为逐阶段串行处理");
+            }
+            else
+            {
+                _logger.Warn("[涡轮] 当前组合暂不支持块级流水（需关闭帧去重、勾选超分或补帧、补帧使用 NCNN 引擎），本次按逐阶段串行处理");
             }
         }
 
@@ -1141,6 +1161,280 @@ public sealed class ProcessingOrchestrator
             _logger.Warn($"帧去重回填失败，本次按未回填继续：{ex.Message}");
             return false;
         }
+    }
+
+    /// <summary>涡轮模式适用性判定：帧去重要看"上一帧"并产出全局回填表，块间状态复杂，第一版不并行；
+    /// 官方补帧引擎（python 脚本）入参结构不同，也先不并行。</summary>
+    private static bool TurboSupported(ProcessingContext ctx)
+        => !ctx.Settings.DedupEnabled
+           && (ctx.Options.SuperResolution || ctx.Options.Interpolation)
+           && !(ctx.Options.Interpolation && ctx.Options.IfEngine == "Offical");
+
+    /// <summary>待 GPU 处理的块：块内帧清单 + 各阶段输出的全局起始编号（块内连续编号需要整体平移）。</summary>
+    private sealed record TurboBlock(int Index, List<string> Frames, int SrStartNumber, int IfStartNumber);
+
+    /// <summary>涡轮模式核心：按 turboBlockFrames 把帧序列切块，GPU 侧串行执行「超分 → 补帧」，
+    /// CPU 侧同时把下一块的帧准备好并入队（有界队列背压：队列满就让上游等待，避免帧文件堆满磁盘）。
+    /// 产物按全局连续编号写入 srFrames / ifFrames，与逐阶段串行的目录结构完全一致，
+    /// 因此后续阶段会凭"帧数够"自动跳过，合并阶段不需要任何改动。返回 false 表示未完成（调用方回退串行）。</summary>
+    private async Task<bool> RunTurboBlocksAsync(ProcessingContext ctx, string tempRoot, string inputFrames,
+        string srFrames, string ifFrames, long totalFrames, int ifMult, bool cpu, CancellationToken ct)
+    {
+        var blockFrames = Math.Clamp(ctx.Settings.TurboBlockFrames, 32, 4000);
+        var turboRoot = Path.Combine(tempRoot, "turbo_blocks");
+        var jThreads = $"1:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}";
+
+        var files = Directory.GetFiles(inputFrames, "*.png");
+        Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+        if (files.Length == 0)
+        {
+            _logger.Warn("[涡轮] 输入帧目录为空，无法进行块级流水");
+            return false;
+        }
+
+        try
+        {
+            if (Directory.Exists(turboRoot)) Directory.Delete(turboRoot, true);
+            Directory.CreateDirectory(turboRoot);
+            CleanPartialOutput(srFrames);
+            if (ctx.Options.Interpolation) CleanPartialOutput(ifFrames);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"[涡轮] 初始化临时目录失败：{ex.Message}");
+            return false;
+        }
+
+        var blockCount = (int)Math.Ceiling(files.Length / (double)blockFrames);
+        _logger.Info($"[涡轮] 块级流水开始：{files.Length} 帧 → {blockCount} 块 × {blockFrames} 帧，" +
+                     "CPU 侧准备与 GPU 侧超分/补帧同时进行");
+
+        // 两条 GPU 流水串起来：超分 worker 处理块 n+1 的同时，补帧 worker 正在处理块 n，
+        // 两个外部进程各吃一份显存、真正同时跑；CPU 侧负责把下一块的帧喂进来。
+        // 队列容量 2：手里最多压两块，再往上就让上游等 —— 这就是背压，避免帧文件与显存双爆。
+        var srQueue = Channel.CreateBounded<TurboBlock>(new BoundedChannelOptions(2)
+        {
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait
+        });
+        var ifQueue = Channel.CreateBounded<TurboBlock>(new BoundedChannelOptions(2)
+        {
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait
+        });
+
+        var srWorker = Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (var block in srQueue.Reader.ReadAllAsync(ct))
+                {
+                    if (!await SuperResBlockAsync(ctx, block, turboRoot, srFrames, jThreads, cpu, ct))
+                        throw new InvalidOperationException($"第 {block.Index} 块超分失败");
+                    await ifQueue.Writer.WriteAsync(block, ct);
+                }
+                ifQueue.Writer.Complete();
+            }
+            catch (Exception ex)
+            {
+                ifQueue.Writer.TryComplete(ex);
+                throw;
+            }
+        }, ct);
+
+        var ifWorker = Task.Run(async () =>
+        {
+            await foreach (var block in ifQueue.Reader.ReadAllAsync(ct))
+            {
+                if (!await InterpBlockAsync(ctx, block, turboRoot, ifFrames, ifMult, jThreads, cpu, ct))
+                    throw new InvalidOperationException($"第 {block.Index} 块补帧失败");
+            }
+        }, ct);
+
+        var srNumber = 1;
+        var ifNumber = 1;
+        try
+        {
+            for (var b = 0; b < blockCount; b++)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var frames = new List<string>();
+                for (var i = b * blockFrames; i < Math.Min((b + 1) * blockFrames, files.Length); i++)
+                    frames.Add(files[i]);
+
+                var block = new TurboBlock(b + 1, frames, srNumber, ifNumber);
+                srNumber += frames.Count;
+                ifNumber += ctx.Options.Interpolation ? frames.Count * ifMult : frames.Count;
+
+                // CPU 侧准备：把块帧拷进独立目录（外部工具只吃目录），这一步与 GPU 的处理同时进行
+                await PrepareBlockAsync(block, turboRoot, ct);
+
+                await srQueue.Writer.WriteAsync(block, ct);   // 队列满 → 在这里等 GPU 追上来
+
+                ProgressChanged?.Invoke(new ProcessProgress
+                {
+                    Stage = ProcessStage.SuperRes,
+                    StageText = $"[涡轮] 已提交 {b + 1}/{blockCount} 块",
+                    Current = b + 1,
+                    Total = blockCount
+                });
+            }
+
+            srQueue.Writer.Complete();
+            await Task.WhenAll(srWorker, ifWorker);
+        }
+        catch (OperationCanceledException)
+        {
+            srQueue.Writer.TryComplete();
+            ifQueue.Writer.TryComplete();
+            throw;
+        }
+        catch (Exception ex)
+        {
+            srQueue.Writer.TryComplete();
+            ifQueue.Writer.TryComplete();
+            try { await Task.WhenAll(srWorker, ifWorker); } catch { }
+            _logger.Warn($"[涡轮] {ex.Message}，回退逐阶段串行");
+            return false;
+        }
+
+        var srDone = !ctx.Options.SuperResolution || CountFrames(srFrames) >= files.Length;
+        var ifDone = !ctx.Options.Interpolation || CountFrames(ifFrames) >= files.Length * ifMult;
+        if (!srDone || !ifDone)
+        {
+            _logger.Warn($"[涡轮] 产物数量不足（超分 {CountFrames(srFrames)} 帧 / 补帧 {CountFrames(ifFrames)} 帧），回退逐阶段串行");
+            return false;
+        }
+
+        _logger.Success($"[涡轮] 块级流水完成：{blockCount} 块全部处理完毕，超分 {CountFrames(srFrames)} 帧、补帧 {CountFrames(ifFrames)} 帧");
+        return true;
+    }
+
+    /// <summary>CPU 侧准备：把块内帧拷进该块的输入目录（外部工具只吃目录，无法只处理指定的几帧），
+    /// 这一步在 CPU 上做，与 GPU 正在处理的上一块重叠。</summary>
+    private static async Task PrepareBlockAsync(TurboBlock block, string turboRoot, CancellationToken ct)
+    {
+        var srIn = Path.Combine(turboRoot, $"block_{block.Index:D4}", "sr_in");
+        await Task.Run(() =>
+        {
+            if (Directory.Exists(srIn)) Directory.Delete(srIn, true);
+            Directory.CreateDirectory(srIn);
+
+            var idx = 0;
+            foreach (var frame in block.Frames)
+            {
+                ct.ThrowIfCancellationRequested();
+                File.Copy(frame, Path.Combine(srIn, $"{++idx:D8}.png"), overwrite: true);
+            }
+        }, ct);
+    }
+
+    /// <summary>超分流水：处理一块，结果按全局连续编号并入 srFrames（未勾选超分时块帧直接并入）。</summary>
+    private async Task<bool> SuperResBlockAsync(ProcessingContext ctx, TurboBlock block, string turboRoot,
+        string srFrames, string jThreads, bool cpu, CancellationToken ct)
+    {
+        var blockDir = Path.Combine(turboRoot, $"block_{block.Index:D4}");
+        var srIn = Path.Combine(blockDir, "sr_in");
+        var srOut = Path.Combine(blockDir, "sr_out");
+
+        try
+        {
+            if (!ctx.Options.SuperResolution)
+            {
+                await MergeBlockFramesAsync(srIn, srFrames, block.SrStartNumber, ct);
+                return true;
+            }
+
+            var args = RealEsrganCommandBuilder.Build(srIn, srOut, ctx.SrModel, ctx.SrScale, jThreads,
+                ctx.Settings.LowerQualityForVram, useCpu: cpu);
+            var exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes,
+                $"[涡轮] 超分块 {block.Index}", block.Frames.Count, ctx.Tools.RealEsrganExe, args, srOut, ct);
+            if (exit != 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                _logger.Warn($"[涡轮] 超分块 {block.Index} 失败（exit={exit}）");
+                return false;
+            }
+            await MergeBlockFramesAsync(srOut, srFrames, block.SrStartNumber, ct);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"[涡轮] 超分块 {block.Index} 异常：{ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>补帧流水：处理一块，结果按全局连续编号并入 ifFrames（未勾选补帧时跳过）；块目录用完即删省空间。</summary>
+    private async Task<bool> InterpBlockAsync(ProcessingContext ctx, TurboBlock block, string turboRoot,
+        string ifFrames, int ifMult, string jThreads, bool cpu, CancellationToken ct)
+    {
+        var blockDir = Path.Combine(turboRoot, $"block_{block.Index:D4}");
+        var ifOut = Path.Combine(blockDir, "if_out");
+
+        try
+        {
+            if (!ctx.Options.Interpolation)
+            {
+                try { if (Directory.Exists(blockDir)) Directory.Delete(blockDir, true); } catch { }
+                return true;
+            }
+
+            var ifInput = ctx.Options.SuperResolution
+                ? Path.Combine(blockDir, "sr_out")
+                : Path.Combine(blockDir, "sr_in");
+            var ifCount = block.Frames.Count * ifMult;
+            var args = RifeCommandBuilder.Build(ifInput, ifOut, ctx.IfModel, ifMult, ifCount, jThreads,
+                ctx.Settings.LowerQualityForVram, useCpu: cpu);
+            var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating,
+                $"[涡轮] 补帧块 {block.Index}", ifCount, ctx.Tools.RifeExe, args, ifOut, ct);
+            if (exit != 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                _logger.Warn($"[涡轮] 补帧块 {block.Index} 失败（exit={exit}）");
+                return false;
+            }
+            await MergeBlockFramesAsync(ifOut, ifFrames, block.IfStartNumber, ct);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"[涡轮] 补帧块 {block.Index} 异常：{ex.Message}");
+            return false;
+        }
+        finally
+        {
+            // 块产物已并入最终目录，删掉块目录（4K 帧很占地方）
+            try { if (Directory.Exists(blockDir)) Directory.Delete(blockDir, true); } catch { }
+        }
+    }
+
+    /// <summary>把块产物按全局连续编号并入最终目录（工具输出的是块内 1..N 连续编号，需要整体平移）。</summary>
+    private static async Task MergeBlockFramesAsync(string srcDir, string dstDir, int startNumber, CancellationToken ct)
+    {
+        var files = Directory.GetFiles(srcDir, "*.png");
+        Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+        Directory.CreateDirectory(dstDir);
+
+        await Task.Run(() =>
+        {
+            for (var i = 0; i < files.Length; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                File.Copy(files[i], Path.Combine(dstDir, $"{startNumber + i:D8}.png"), overwrite: true);
+            }
+        }, ct);
     }
 
     private static int CountFrames(string dir)
