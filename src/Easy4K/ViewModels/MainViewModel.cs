@@ -51,6 +51,9 @@ public partial class MainViewModel : ObservableObject
     /// <summary>开始处理被前置校验拦截（如目录不可写）：主页没有日志区，只写日志会表现为"点了没反应"，需弹窗告知原因</summary>
     public event Action<string>? StartFailed;
 
+    /// <summary>涡轮模式因临时目录在机械硬盘而未生效：必须明确弹窗告知，不能静默关闭</summary>
+    public event Action<string>? TurboDisabledRequired;
+
     /// <summary>自测/自动化模式下抑制完成弹窗（true 时不弹）</summary>
     public bool SuppressCompletionDialog { get; set; }
 
@@ -1193,16 +1196,20 @@ public partial class MainViewModel : ObservableObject
         }
 
         // 涡轮模式复检：用户可以先切到固态盘开启涡轮、再把主页的临时目录改回机械盘，从而绕过勾选时的检查。
-        // 因此开跑前再验一次，命中机械盘就直接关掉涡轮（不阻塞本次处理，只是退回逐阶段串行）。
+        // 因此开跑前再验一次；命中机械盘就关闭涡轮，并且明确告知用户（不静默处理）。
         if (TurboMode)
         {
             var media = await Task.Run(() => StorageMediaDetector.DetectForPath(TempRoot));
             if (media == StorageMediaDetector.MediaKind.Hdd)
             {
-                _logger.Warn($"涡轮模式已自动关闭：临时目录「{TempRoot}」位于机械硬盘，" +
-                             "涡轮模式的多路并发读写会被随机 IO 拖慢甚至比串行更慢；本次改为逐阶段串行处理，" +
-                             "把临时目录换到固态硬盘后可重新开启");
+                var reason =
+                    $"临时目录「{TempRoot}」位于机械硬盘。\n\n" +
+                    "涡轮模式会让拆帧、去重判决、回填、超分、补帧同时读写临时目录，机械硬盘的随机读写能力撑不住这种吞吐，" +
+                    "开启后很可能比普通模式更慢。\n\n" +
+                    "本次已关闭涡轮模式，按逐阶段串行处理；把临时目录换到固态硬盘（SSD / NVMe）后即可重新开启。";
+                _logger.Warn($"涡轮模式未生效：临时目录位于机械硬盘（{TempRoot}），本次按串行处理");
                 TurboMode = false;
+                TurboDisabledRequired?.Invoke(reason);
             }
         }
 

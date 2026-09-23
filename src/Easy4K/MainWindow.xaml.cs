@@ -178,6 +178,26 @@ public sealed partial class MainWindow : Window
             Vm.DialogResult(await dlg.ShowLocalizedAsync() == ContentDialogResult.Primary);
         });
 
+        // 涡轮模式因临时目录在机械盘未生效 → 明确弹窗告知（不静默关闭），并提供直接切换临时目录的入口
+        Vm.TurboDisabledRequired += reason => DispatcherQueue.TryEnqueue(async () =>
+        {
+            var dlg = new ContentDialog
+            {
+                Title = "涡轮模式未生效",
+                Content = new ScrollViewer
+                {
+                    MaxHeight = 420,
+                    Content = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Text = reason }
+                },
+                PrimaryButtonText = "切换硬盘",
+                CloseButtonText = "知道了",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = RootFrame.XamlRoot
+            };
+            if (await dlg.ShowLocalizedAsync() == ContentDialogResult.Primary)
+                await ChooseTempFolderAsync();
+        });
+
         // 开始处理被前置校验拦截（如目录不可写）→ 弹窗告知原因，避免主页看不到日志而表现为"点了没反应"
         Vm.StartFailed += msg => DispatcherQueue.TryEnqueue(async () =>
         {

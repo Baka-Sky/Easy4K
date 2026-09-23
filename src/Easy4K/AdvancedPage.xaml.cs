@@ -334,17 +334,20 @@ public sealed partial class AdvancedPage : Page
                         "该目录位于机械硬盘（HDD）。建议先改到固态硬盘（SSD / NVMe）再开启。"
                 }
             },
-            PrimaryButtonText = "仍要开启",
-            CloseButtonText = "否",
+            PrimaryButtonText = "切换硬盘",
+            CloseButtonText = "关闭",
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = XamlRoot
         };
 
-        if (await dlg.ShowLocalizedAsync() != ContentDialogResult.Primary)
-        {
-            TurboSwitch.IsOn = false;
-            Vm.TurboMode = false;   // 选「否」自动关闭涡轮模式
-        }
+        // 机械盘上不允许开启涡轮：两个按钮都不保持开启状态
+        var result = await dlg.ShowLocalizedAsync();
+        TurboSwitch.IsOn = false;
+        Vm.TurboMode = false;
+
+        // 选「切换硬盘」直接去挑一个固态盘上的目录，换完可以再开启涡轮
+        if (result == ContentDialogResult.Primary && App.MainWindow is not null)
+            await App.MainWindow.ChooseTempFolderAsync();
     }
 
     /// <summary>ⓘ 提示：AudioSR 是什么、两档精度的差别、为什么 FP16 不能用 CPU。</summary>
