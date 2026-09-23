@@ -37,6 +37,29 @@ public sealed class GpuDetector
         return info;
     }
 
+    /// <summary>枚举物理显卡名称（WMI，过滤虚拟/软件显卡）。用于涡轮模式「多卡分流」的前置判断：
+    /// 只有一块物理显卡时直接告诉用户分流没意义，不必等开跑才发现。
+    /// 注意 WMI 的顺序与 Vulkan 设备序号未必一致，因此真正使用时还会拿 -g 1 跑一次探测确认。</summary>
+    public static IReadOnlyList<string> ListPhysicalGpus()
+    {
+        var result = new List<string>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT Name FROM Win32_VideoController");
+            foreach (var obj in searcher.Get().Cast<ManagementObject>())
+            {
+                var name = obj["Name"]?.ToString() ?? "";
+                if (IsVirtualGpu(name)) continue;
+                if (!result.Contains(name)) result.Add(name);
+            }
+        }
+        catch
+        {
+            // WMI 不可用，按"检测不到"处理
+        }
+        return result;
+    }
+
     private void TryNvidiaSmi(GpuInfo info)
     {
         foreach (var path in NvidiaSmiPaths)

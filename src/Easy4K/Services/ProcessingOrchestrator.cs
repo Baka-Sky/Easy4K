@@ -1173,8 +1173,9 @@ public sealed class ProcessingOrchestrator
     /// <summary>待 GPU 处理的块：块内帧清单 + 各阶段输出的全局起始编号（块内连续编号需要整体平移）。</summary>
     private sealed record TurboBlock(int Index, List<string> Frames, int SrStartNumber, int IfStartNumber);
 
-    /// <summary>涡轮模式核心：按 turboBlockFrames 把帧序列切块，GPU 侧串行执行「超分 → 补帧」，
-    /// CPU 侧同时把下一块的帧准备好并入队（有界队列背压：队列满就让上游等待，避免帧文件堆满磁盘）。
+    /// <summary>涡轮模式核心：按 turboBlockFrames 把帧序列切块。CPU 侧负责把下一块的帧拷进独立目录
+    /// （外部工具只吃目录），两条 GPU 流水用有界队列串起来——超分 worker 处理块 n+1 的同时补帧 worker
+    /// 正在处理块 n，两个外部进程真正同时跑；队列容量 2 形成背压，避免帧文件与显存双爆。
     /// 产物按全局连续编号写入 srFrames / ifFrames，与逐阶段串行的目录结构完全一致，
     /// 因此后续阶段会凭"帧数够"自动跳过，合并阶段不需要任何改动。返回 false 表示未完成（调用方回退串行）。</summary>
     private async Task<bool> RunTurboBlocksAsync(ProcessingContext ctx, string tempRoot, string inputFrames,
@@ -1182,7 +1183,13 @@ public sealed class ProcessingOrchestrator
     {
         var blockFrames = Math.Clamp(ctx.Settings.TurboBlockFrames, 32, 4000);
         var turboRoot = Path.Combine(tempRoot, "turbo_blocks");
-        var jThreads = $"1:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}:{Math.Clamp(ctx.Settings.ThreadCount, 1, 32)}";
+
+        // 线程预算：单卡上超分与补帧同时跑会互相抢算力，两边都开满只会让 GPU 过订阅、来回抖动。
+        // 因此两条流水同时存在时把预算对半分（8 → 各 4），只跑一条流水时不存在争抢，给满线程。
+        var bothStages = ctx.Options.SuperResolution && ctx.Options.Interpolation;
+        var budget = Math.Clamp(ctx.Settings.ThreadCount, 1, 32);
+        var perStage = bothStages ? Math.Max(1, budget / 2) : budget;
+        var jThreads = $"1:{perStage}:{perStage}";
 
         var files = Directory.GetFiles(inputFrames, "*.png");
         Array.Sort(files, StringComparer.OrdinalIgnoreCase);
@@ -1204,6 +1211,12 @@ public sealed class ProcessingOrchestrator
             _logger.Warn($"[涡轮] 初始化临时目录失败：{ex.Message}");
             return false;
         }
+
+        // 多卡分流：只在两条流水都在、且用户开了分流时才去探测第二块卡；探测不通过就退回单卡
+        var gpuIf = await ResolveIfGpuAsync(ctx, ctx.Settings.TurboSplitGpus && bothStages, files[0], turboRoot, ct);
+        if (bothStages)
+            _logger.Info($"[涡轮] 线程预算按两条流水对半分：每条 -j {jThreads}" +
+                         (gpuIf == 1 ? "，补帧走 GPU 1" : ""));
 
         var blockCount = (int)Math.Ceiling(files.Length / (double)blockFrames);
         _logger.Info($"[涡轮] 块级流水开始：{files.Length} 帧 → {blockCount} 块 × {blockFrames} 帧，" +
@@ -1248,7 +1261,7 @@ public sealed class ProcessingOrchestrator
         {
             await foreach (var block in ifQueue.Reader.ReadAllAsync(ct))
             {
-                if (!await InterpBlockAsync(ctx, block, turboRoot, ifFrames, ifMult, jThreads, cpu, ct))
+                if (!await InterpBlockAsync(ctx, block, turboRoot, ifFrames, ifMult, jThreads, cpu, gpuIf, ct))
                     throw new InvalidOperationException($"第 {block.Index} 块补帧失败");
             }
         }, ct);
@@ -1313,6 +1326,56 @@ public sealed class ProcessingOrchestrator
         return true;
     }
 
+    /// <summary>多卡分流探测：拿一块真实输入帧跑一次 Real-ESRGAN 的 -g 1，跑通说明 Vulkan 设备 1 存在。
+    /// 不用 WMI 的显卡数量去猜——系统里有两块显卡不代表 Vulkan 暴露了两个设备（驱动异常、独显禁用都会少一个），
+    /// 猜错会让补帧进程直接 "invalid gpu device" 退出来。探测不过就返回 0（两个阶段都用 GPU 0）并写日志说明。
+    /// Real-ESRGAN 与 RIFE 都基于同一套 ncnn Vulkan 后端，设备枚举顺序一致，探测其中一个即可。</summary>
+    private async Task<int> ResolveIfGpuAsync(ProcessingContext ctx, bool split, string probeFrame,
+        string turboRoot, CancellationToken ct)
+    {
+        if (!split) return 0;
+
+        var probeIn = Path.Combine(turboRoot, "probe_in");
+        var probeOut = Path.Combine(turboRoot, "probe_out");
+        try
+        {
+            if (Directory.Exists(probeIn)) Directory.Delete(probeIn, true);
+            if (Directory.Exists(probeOut)) Directory.Delete(probeOut, true);
+            Directory.CreateDirectory(probeIn);
+            File.Copy(probeFrame, Path.Combine(probeIn, "00000001.png"), overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"[涡轮] 多卡分流探测准备失败，本次不分流：{ex.Message}");
+            return 0;
+        }
+
+        var args = RealEsrganCommandBuilder.Build(probeIn, probeOut, ctx.SrModel, ctx.SrScale, "1:1:1",
+            ctx.Settings.LowerQualityForVram, useCpu: false, gpuIndex: 1);
+        int exit;
+        try
+        {
+            exit = await _runner.RunAsync(ctx.Tools.RealEsrganExe, args,
+                onLine: _ => { }, onStderr: _ => { }, ct: ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { exit = -1; }
+        finally
+        {
+            try { if (Directory.Exists(probeIn)) Directory.Delete(probeIn, true); } catch { }
+            try { if (Directory.Exists(probeOut)) Directory.Delete(probeOut, true); } catch { }
+        }
+
+        if (exit == 0)
+        {
+            _logger.Success("[涡轮] 多卡分流已就绪：超分走 GPU 0、补帧走 GPU 1");
+            return 1;
+        }
+        _logger.Warn("[涡轮] 多卡分流不可用（未探测到第二块可用显卡），本次两个阶段都用 GPU 0；" +
+                     "请在高级页关闭「多卡分流」，或确认第二块显卡已启用");
+        return 0;
+    }
+
     /// <summary>CPU 侧准备：把块内帧拷进该块的输入目录（外部工具只吃目录，无法只处理指定的几帧），
     /// 这一步在 CPU 上做，与 GPU 正在处理的上一块重叠。</summary>
     private static async Task PrepareBlockAsync(TurboBlock block, string turboRoot, CancellationToken ct)
@@ -1372,9 +1435,10 @@ public sealed class ProcessingOrchestrator
         }
     }
 
-    /// <summary>补帧流水：处理一块，结果按全局连续编号并入 ifFrames（未勾选补帧时跳过）；块目录用完即删省空间。</summary>
+    /// <summary>补帧流水：处理一块，结果按全局连续编号并入 ifFrames（未勾选补帧时跳过）；块目录用完即删省空间。
+    /// gpuIndex &gt; 0 表示多卡分流，补帧走另一块显卡。</summary>
     private async Task<bool> InterpBlockAsync(ProcessingContext ctx, TurboBlock block, string turboRoot,
-        string ifFrames, int ifMult, string jThreads, bool cpu, CancellationToken ct)
+        string ifFrames, int ifMult, string jThreads, bool cpu, int gpuIndex, CancellationToken ct)
     {
         var blockDir = Path.Combine(turboRoot, $"block_{block.Index:D4}");
         var ifOut = Path.Combine(blockDir, "if_out");
@@ -1392,7 +1456,7 @@ public sealed class ProcessingOrchestrator
                 : Path.Combine(blockDir, "sr_in");
             var ifCount = block.Frames.Count * ifMult;
             var args = RifeCommandBuilder.Build(ifInput, ifOut, ctx.IfModel, ifMult, ifCount, jThreads,
-                ctx.Settings.LowerQualityForVram, useCpu: cpu);
+                ctx.Settings.LowerQualityForVram, useCpu: cpu, gpuIndex: gpuIndex);
             var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating,
                 $"[涡轮] 补帧块 {block.Index}", ifCount, ctx.Tools.RifeExe, args, ifOut, ct);
             if (exit != 0)

@@ -78,11 +78,14 @@ public sealed class AppSettings
     public string AudioSrPrecision { get; set; } = "fp16";
 
     // ===================== 涡轮模式 =====================
-    /// <summary>涡轮模式：帧序列按块切分，CPU 侧（拆帧 / 去重判决 / 回填）与 GPU 侧（超分 / 补帧）同时开工，
-    /// 音频链路独立并行。数据吞吐很大，要求临时目录位于固态存储介质。</summary>
+    /// <summary>涡轮模式：帧序列按块切分，超分与补帧两条 GPU 流水经有界队列同时推进（CPU 侧负责准备块输入）。
+    /// 数据吞吐很大，要求临时目录位于固态存储介质。</summary>
     public bool TurboMode { get; set; }
     /// <summary>涡轮模式每块帧数：太小会反复加载模型，太大会降低并行度（默认 240）</summary>
     public int TurboBlockFrames { get; set; } = 240;
+    /// <summary>涡轮模式多卡分流：超分走 GPU 0、补帧走 GPU 1。
+    /// 单卡上两个外部进程会互相抢算力，分流到两块卡才是真并行；只在检测到两块以上显卡时生效。</summary>
+    public bool TurboSplitGpus { get; set; }
 
     // ===================== 匿名遥测 =====================
     /// <summary>遥测同意状态：空 = 尚未询问（首次进主界面弹一次同意窗）；agreed = 已同意并上报；declined = 已拒绝，不再询问</summary>

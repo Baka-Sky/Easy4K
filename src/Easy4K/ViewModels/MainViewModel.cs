@@ -141,6 +141,7 @@ public partial class MainViewModel : ObservableObject
         _audioSrPrecision = string.Equals(_app.AudioSrPrecision, "fp32", StringComparison.OrdinalIgnoreCase) ? "fp32" : "fp16";
         _turboMode = _app.TurboMode;
         _turboBlockFrames = Math.Clamp(_app.TurboBlockFrames, 32, 4000);
+        _turboSplitGpus = _app.TurboSplitGpus;
         _superResolution = _app.DefaultSuperResolution;
         _interpolation = _app.DefaultInterpolation;
         _mergeVideo = _app.DefaultMergeVideo;
@@ -342,7 +343,7 @@ public partial class MainViewModel : ObservableObject
     /// <summary>精度档：fp16=低精度性能模式（仅 GPU，禁 CPU）；fp32=高精度完美模式（CPU/GPU 均可）</summary>
     [ObservableProperty] private string _audioSrPrecision = "fp16";
 
-    /// <summary>涡轮模式：把勾选的所有操作同时进行——CPU 侧（去重判决 / 回填）与 GPU 侧（超分 / 补帧）按块并行，音频链路独立并行</summary>
+    /// <summary>涡轮模式：帧序列按块切分，超分与补帧两条 GPU 流水经有界队列同时推进（CPU 侧准备块输入）</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(TurboBlockVis))]
     private bool _turboMode;
@@ -359,6 +360,19 @@ public partial class MainViewModel : ObservableObject
     /// <summary>块大小右侧的数值文本</summary>
     public string TurboBlockLabel => $"{TurboBlockFrames} 帧";
 
+    /// <summary>涡轮模式多卡分流：超分走 GPU 0、补帧走 GPU 1（单卡上两个进程只会互相抢算力）</summary>
+    [ObservableProperty]
+    private bool _turboSplitGpus;
+
+    partial void OnTurboSplitGpusChanged(bool value)
+    {
+        _app.TurboSplitGpus = value;
+        _settings.Save(_app, _pathConfig);
+        _logger.Info(value
+            ? "涡轮模式多卡分流已开启：超分走 GPU 0、补帧走 GPU 1（开跑前会探测第二块显卡是否可用）"
+            : "涡轮模式多卡分流已关闭：超分与补帧共用 GPU 0");
+    }
+
     partial void OnAudioSrEnabledChanged(bool value)
     {
         _app.AudioSrEnabled = value;
@@ -370,7 +384,7 @@ public partial class MainViewModel : ObservableObject
         _app.TurboMode = value;
         _settings.Save(_app, _pathConfig);
         _logger.Info(value
-            ? $"涡轮模式已开启：帧序列按 {Math.Max(32, _app.TurboBlockFrames)} 帧切块，CPU 侧（去重判决 / 回填）与 GPU 侧（超分 / 补帧）将同时进行；请确保临时目录位于固态硬盘"
+            ? $"涡轮模式已开启：帧序列按 {Math.Max(32, _app.TurboBlockFrames)} 帧切块，超分与补帧两条 GPU 流水同时推进（线程预算对半分{(TurboSplitGpus ? "，并启用多卡分流" : "")}）；请确保临时目录位于固态硬盘"
             : "涡轮模式已关闭：恢复逐阶段串行处理");
     }
 
@@ -1866,7 +1880,7 @@ public partial class MainViewModel : ObservableObject
         if (Interpolation) parts.Add("补帧");
         if (DedupEnabled) parts.Add(DedupMode == "uhd" ? "帧去重(完美)" : "帧去重(性能)");
         if (AudioSrEnabled) parts.Add(AudioSrPrecision == "fp32" ? "音频超分(FP32)" : "音频超分(FP16)");
-        if (TurboMode) parts.Add("涡轮模式");
+        if (TurboMode) parts.Add(TurboSplitGpus ? "涡轮模式(多卡分流)" : "涡轮模式");
         if (MergeVideo) parts.Add("合并视频");
         if (MergeAudio) parts.Add("合并音频");
         if (SdrToHdr) parts.Add("SDR→HDR");

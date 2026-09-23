@@ -349,6 +349,43 @@ public sealed partial class AdvancedPage : Page
             await App.MainWindow.ChooseTempFolderAsync();
     }
 
+    /// <summary>勾选多卡分流时先数一下机器上有几块显卡：只有一块就直接说清楚并关掉，不必等到开跑才发现。</summary>
+    private async void OnTurboSplitToggled(object sender, RoutedEventArgs e)
+    {
+        if (!_turboUiReady) return;
+        if (!TurboSplitSwitch.IsOn) return;
+
+        var gpus = await Task.Run(() => GpuDetector.ListPhysicalGpus());
+        if (gpus.Count >= 2) return;
+
+        var list = gpus.Count == 0
+            ? "（未能识别到显卡型号）"
+            : string.Join("\n", gpus.Select((n, i) => $"GPU {i}：{n}"));
+        var dlg = new ContentDialog
+        {
+            Title = "多卡分流：只检测到一块显卡",
+            Content = new ScrollViewer
+            {
+                MaxHeight = 420,
+                Content = new TextBlock
+                {
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 12,
+                    Text = "多卡分流会把超分放到 GPU 0、补帧放到 GPU 1，让两块显卡各跑一条流水线。\n\n" +
+                           $"当前检测到的显卡：\n{list}\n\n" +
+                           "只有一块显卡时分流没有意义：两个进程会抢同一份算力，总耗时与不分流基本一样。" +
+                           "因此本次不会开启——装好第二块显卡（或用核显 + 独显）后再来打开。"
+                }
+            },
+            CloseButtonText = "知道了",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
+        };
+        await dlg.ShowLocalizedAsync();
+        TurboSplitSwitch.IsOn = false;
+        Vm.TurboSplitGpus = false;
+    }
+
     /// <summary>ⓘ 提示：AudioSR 是什么、两档精度的差别、为什么 FP16 不能用 CPU。</summary>
     private async void OnAudioSrInfoClick(object sender, RoutedEventArgs e)
     {
@@ -405,24 +442,30 @@ public sealed partial class AdvancedPage : Page
                     TextWrapping = TextWrapping.Wrap,
                     FontSize = 12,
                     Text =
-                        "平时处理是「一段一段排队」：拆帧全部跑完才轮到超分，超分跑完才轮到补帧 —— 在拆帧、判决、回填、合并这些" +
-                        "不碰显卡的时段里，GPU 其实是空转的。\n\n" +
+                        "平时处理是「一段一段排队」：拆帧全部跑完才轮到超分，超分跑完才轮到补帧 —— 在不碰显卡的时段里，GPU 其实是空转的。\n\n" +
                         "【涡轮模式做了什么】\n" +
-                        "把帧序列切成若干块，让两条流水线同时推进：\n" +
-                        "· CPU 侧：拆帧 → 逐帧判决（帧去重）→ 回填展开\n" +
-                        "· GPU 侧：超分 → 补帧\n" +
-                        "两侧之间用有界队列衔接：GPU 侧处理第 N 块时，CPU 侧已经在判第 N+1 块，队列满了上游会自动等一等" +
-                        "（背压），不会把内存吃爆。音频超分则作为独立链路全程并行，不与视频抢同一个队列。\n\n" +
+                        "把帧序列切成若干块，两条 GPU 流水同时推进：超分 worker 处理第 N+1 块时，补帧 worker 正在处理第 N 块，" +
+                        "两个外部进程各占一份显存、真正并发；CPU 侧负责把下一块的帧拷进独立目录（外部工具只吃目录，没法只喂指定几帧）。" +
+                        "两条流水之间用容量 2 的有界队列衔接，队列满了上游会自动等一等（背压），不会把磁盘和显存同时吃爆。\n" +
+                        "两条流水同时存在时，线程预算会对半分（滑块 8 → 每条 4），避免两边都开满把 GPU 过订阅；" +
+                        "只勾了超分或只勾了补帧时给满线程。\n\n" +
+                        "【单卡的真实收益】\n" +
+                        "超分与补帧都是 GPU 密集阶段，在只有一块显卡的机器上，同时跑会互相抢算力：各自速率减半、总吞吐基本不变。" +
+                        "实测（RX 580）300 帧 360p 为 72.7s 对串行 74.7s，68 帧 1080p 为 128.1s 对串行 129.2s —— 基本持平。" +
+                        "开启后建议自己拿一段素材对比耗时，按实际结果决定留不留。\n\n" +
+                        "【多卡分流】\n" +
+                        "机器上有两块以上显卡时打开：超分走 GPU 0、补帧走 GPU 1，两条流水各占一块卡，此时才是接近翻倍的提速。" +
+                        "开启前会先数一遍物理显卡数量；真正开跑时还会拿一块真实输入帧试跑一次 GPU 1，" +
+                        "探测不通过（比如第二块卡被禁用、驱动异常）就自动退回单卡并用日志说明，不会让任务失败。\n\n" +
+                        "【当前不参与并行的部分】\n" +
+                        "帧去重（要逐帧看「上一帧」并产出全局回填表）与官方 PyTorch 补帧引擎（入参结构与 NCNN 不同）仍按逐阶段串行处理，" +
+                        "日志里会写明「当前组合暂不支持块级流水」；音频链路不在流水线内。\n\n" +
                         "【为什么要求固态临时目录】\n" +
-                        "同时开工意味着同一时刻会有多路读写：拆帧在写 PNG、超分在读 PNG 并写新 PNG、补帧再读写一轮、" +
-                        "合并同时在编码。机械硬盘的随机读写会成为整条流水线的瓶颈，甚至拖到比不开涡轮还慢；\n" +
-                        "固态盘上这些读写能真正重叠，收益才明显。\n\n" +
+                        "块级流水会同时读写多个块目录：一边在读上一块的输入、一边在写超分结果、一边在写补帧结果。机械硬盘的随机读写会成为" +
+                        "整条流水线的瓶颈，甚至拖到比不开涡轮还慢；固态盘上这些读写才能真正重叠。\n\n" +
                         "【保留的能力】\n" +
-                        "断点续传按块判断（块目录帧数够就跳过）、安全帧率与降级重试照常生效、缺陷帧被占用时仍会改判为保留，" +
-                        "成片时长、帧率与音频对齐与普通模式完全一致。\n\n" +
-                        "【什么时候别开】\n" +
-                        "临时目录在机械盘或网络盘、显存吃紧（同时驻留超分与补帧进程）、或素材很短（并行还没热起来就结束了）。" +
-                        "关闭涡轮即回到与原来完全一致的处理方式。"
+                        "任一块失败或产物数量不足都会自动回退逐阶段串行，本次任务不会被做废；成片时长、帧率与音频对齐与普通模式完全一致；" +
+                        "安全帧率、显存降级重试照常生效。关闭涡轮即回到与原来完全一致的处理方式。"
                 }
             },
             CloseButtonText = "关闭",

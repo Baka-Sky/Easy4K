@@ -134,7 +134,7 @@
                             <Button Grid.Column="1" HorizontalAlignment="Left"
                                     Padding="3" Background="Transparent" BorderThickness="0"
                                     VerticalAlignment="Center" Click="OnTurboInfoClick"
-                                    ToolTipService.ToolTip="帧序列按块切分，CPU 侧（拆帧 / 去重判决 / 回填）与 GPU 侧（超分 / 补帧）同时开工，音频超分独立并行&#x0a;块大小见 appsettings.json 的 turboBlockFrames&#x0a;&#x0a;点击图标查看详细讲解"
+                                    ToolTipService.ToolTip="帧序列按块切分，超分与补帧两条 GPU 流水经有界队列同时推进&#x0a;有两块以上显卡时可开「多卡分流」：超分走 GPU 0、补帧走 GPU 1&#x0a;&#x0a;点击图标查看详细讲解"
                                     AutomationProperties.Name="涡轮模式说明">
                                 <FontIcon Glyph="&#xE946;" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             </Button>
@@ -163,6 +163,22 @@
                             </Grid>
                             <TextBlock Text="每块帧数（默认 240，建议 120 ~ 600）：块越小 CPU 与 GPU 重叠越充分，但超分 / 补帧模型会被反复加载"
                                        FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+
+                            <!-- 多卡分流：超分与补帧各占一块显卡。只在检测到两块以上显卡时才允许开启 -->
+                            <Grid ColumnSpacing="8" Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock Text="多卡分流" FontSize="12"/>
+                                    <TextBlock Text="超分走 GPU 0、补帧走 GPU 1。单卡上两个进程只会互相抢算力，分流到两块显卡才是真并行"
+                                               FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <ToggleSwitch Grid.Column="1" x:Name="TurboSplitSwitch" OnContent="已开启" OffContent="已关闭"
+                                              IsOn="{x:Bind Vm.TurboSplitGpus, Mode=TwoWay}" Toggled="OnTurboSplitToggled"
+                                              FontSize="12" VerticalAlignment="Center"/>
+                            </Grid>
                         </StackPanel>
 
                         <TextBlock x:Name="TurboHint" FontSize="10" Opacity="0.6" TextWrapping="Wrap"
