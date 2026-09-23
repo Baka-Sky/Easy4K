@@ -146,8 +146,28 @@
                         <TextBlock TextWrapping="Wrap" FontSize="10" Opacity="0.6"
                                    Text="将勾选的所有操作同时进行。由于数据吞吐巨大，本功能要求临时目录必须为固态存储介质。"/>
 
+                        <!-- 每块帧数：用户自定，越界给出警告色提示 -->
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="每块帧数" Style="{StaticResource FieldLabel}"/>
+                            <NumberBox Grid.Column="1" x:Name="TurboBlockBox" Width="150"
+                                       Minimum="32" Maximum="4000" SmallChange="60" LargeChange="240"
+                                       SpinButtonPlacementMode="Compact"
+                                       ValueChanged="OnTurboBlockChanged"
+                                       AutomationProperties.Name="涡轮模式每块帧数"/>
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" FontSize="10" Opacity="0.6"
+                                       TextWrapping="Wrap"
+                                       Text="块越小并行度越高、模型加载越频繁"/>
+                        </Grid>
+
+                        <TextBlock x:Name="TurboBlockHint" FontSize="10" TextWrapping="Wrap"/>
+
                         <TextBlock x:Name="TurboHint" FontSize="10" Opacity="0.6" TextWrapping="Wrap"
-                                   Text="块大小默认 256 帧（appsettings.json 的 turboBlockFrames 可调，单卡建议 128~512）：块越小并行度越高，但外部工具重复加载模型的次数也越多。"/>
+                                   Text="单卡建议 128~512 帧：块越小并行度越高，但外部工具重复加载模型的次数也越多；改完立即写入配置。"/>
                     </StackPanel>
                 </Border>
 

@@ -137,6 +137,7 @@ public partial class MainViewModel : ObservableObject
         _audioSrEnabled = _app.AudioSrEnabled;
         _audioSrPrecision = string.Equals(_app.AudioSrPrecision, "fp32", StringComparison.OrdinalIgnoreCase) ? "fp32" : "fp16";
         _turboMode = _app.TurboMode;
+        _turboBlockFrames = Math.Clamp(_app.TurboBlockFrames, 32, 4000);
         _superResolution = _app.DefaultSuperResolution;
         _interpolation = _app.DefaultInterpolation;
         _mergeVideo = _app.DefaultMergeVideo;
@@ -341,6 +342,9 @@ public partial class MainViewModel : ObservableObject
     /// <summary>涡轮模式：把勾选的所有操作同时进行——CPU 侧（去重判决 / 回填）与 GPU 侧（超分 / 补帧）按块并行，音频链路独立并行</summary>
     [ObservableProperty] private bool _turboMode;
 
+    /// <summary>涡轮模式每块帧数（用户可调）：太小会反复加载模型，太大会降低并行度</summary>
+    [ObservableProperty] private int _turboBlockFrames = 240;
+
     partial void OnAudioSrEnabledChanged(bool value)
     {
         _app.AudioSrEnabled = value;
@@ -354,6 +358,12 @@ public partial class MainViewModel : ObservableObject
         _logger.Info(value
             ? $"涡轮模式已开启：帧序列按 {Math.Max(32, _app.TurboBlockFrames)} 帧切块，CPU 侧（去重判决 / 回填）与 GPU 侧（超分 / 补帧）将同时进行；请确保临时目录位于固态硬盘"
             : "涡轮模式已关闭：恢复逐阶段串行处理");
+    }
+
+    partial void OnTurboBlockFramesChanged(int value)
+    {
+        _app.TurboBlockFrames = value;
+        _settings.Save(_app, _pathConfig);
     }
 
     partial void OnAudioSrPrecisionChanged(string value)

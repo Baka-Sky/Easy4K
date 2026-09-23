@@ -47,6 +47,12 @@ public sealed partial class AdvancedPage : Page
         // 涡轮模式的磁盘检查只在用户手动切换时触发：等首屏绑定回填完成后再放行
         Loaded += (_, _) => DispatcherQueue.TryEnqueue(() => _turboUiReady = true);
 
+        // 涡轮块大小：程序回填时抑制写回，避免构造期覆盖配置
+        _turboBlockSyncing = true;
+        TurboBlockBox.Value = Vm.TurboBlockFrames;
+        _turboBlockSyncing = false;
+        UpdateTurboBlockHint(Vm.TurboBlockFrames);
+
         // 去重模式单选：程序回填时不写回，避免构造期覆盖配置
         _dedupSyncing = true;
         DedupPerfRb.IsChecked = Vm.DedupMode != "uhd";
@@ -253,6 +259,57 @@ public sealed partial class AdvancedPage : Page
 
     /// <summary>页面初始化回填开关状态时也会触发 Toggled，要等绑定完成后再允许弹磁盘提示</summary>
     private bool _turboUiReady;
+
+    /// <summary>程序回填块大小输入框时抑制写回</summary>
+    private bool _turboBlockSyncing;
+
+    /// <summary>块大小由用户自定：写回配置并刷新评估提示（过小/过大给警告色）。</summary>
+    private void OnTurboBlockChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_turboBlockSyncing) return;
+
+        var value = double.IsNaN(args.NewValue) ? 240 : (int)Math.Round(args.NewValue);
+        value = Math.Clamp(value, 32, 4000);
+        Vm.TurboBlockFrames = value;
+        UpdateTurboBlockHint(value);
+    }
+
+    /// <summary>块大小评估提示：过小会反复加载模型，过大流水线退化为串行。</summary>
+    private void UpdateTurboBlockHint(int frames)
+    {
+        string text;
+        var warn = false;
+
+        if (frames < 60)
+        {
+            text = "⚠ 太小：每个块都要重新加载一次超分/补帧模型，加载开销可能超过并行带来的收益，建议不低于 120 帧";
+            warn = true;
+        }
+        else if (frames < 120)
+        {
+            text = "偏小：并行度最高，但模型加载次数偏多，低端显卡上不一定划算";
+            warn = true;
+        }
+        else if (frames <= 600)
+        {
+            text = "推荐区间：并行度与模型加载开销比较平衡";
+        }
+        else if (frames <= 1500)
+        {
+            text = "偏大：模型加载更省，但 CPU 与 GPU 重叠的时间变短";
+        }
+        else
+        {
+            text = "⚠ 太大：流水线几乎退化成串行，涡轮模式收益很小";
+            warn = true;
+        }
+
+        TurboBlockHint.Text = text;
+        if (warn)
+            TurboBlockHint.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Orange);
+        else
+            TurboBlockHint.ClearValue(TextBlock.ForegroundProperty);
+    }
 
     /// <summary>勾选涡轮模式时检查临时目录所在磁盘：机械盘撑不住多路并发读写，弹窗确认，选「否」自动关闭。</summary>
     private async void OnTurboToggled(object sender, RoutedEventArgs e)
