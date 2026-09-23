@@ -1192,12 +1192,12 @@ public sealed class ProcessingOrchestrator
         var blockFrames = Math.Clamp(ctx.Settings.TurboBlockFrames, 32, 4000);
         var turboRoot = Path.Combine(tempRoot, "turbo_blocks");
 
-        // 线程预算：单卡上超分与补帧同时跑会互相抢算力，两边都开满只会让 GPU 过订阅、来回抖动。
-        // 因此两条流水同时存在时把预算对半分（8 → 各 4），只跑一条流水时不存在争抢，给满线程。
-        var bothStages = ctx.Options.SuperResolution && ctx.Options.Interpolation;
+        // 线程：两条流水都按用户设定的线程数跑，不对半分。
+        // 早先试过「两条流水各分一半」（8 → 每条 4），实测反而慢一大截：单个进程用满线程比两个进程各半
+        // 高效得多（模型只加载一次、显存与调度冲突少）。296 帧 360p 实测：串行 1:8:8 = 58.5s，
+        // 涡轮两条各 1:8:8 = 59.6s，涡轮两条各 1:4:4 = 72.7s。线程数交给用户自己权衡。
         var budget = Math.Clamp(ctx.Settings.ThreadCount, 1, 32);
-        var perStage = bothStages ? Math.Max(1, budget / 2) : budget;
-        var jThreads = $"1:{perStage}:{perStage}";
+        var jThreads = $"1:{budget}:{budget}";
 
         var files = Directory.GetFiles(inputFrames, "*.png");
         Array.Sort(files, StringComparer.OrdinalIgnoreCase);
@@ -1221,10 +1221,10 @@ public sealed class ProcessingOrchestrator
         }
 
         // 多卡分流：只在两条流水都在、且用户开了分流时才去探测第二块卡；探测不通过就退回单卡
+        var bothStages = ctx.Options.SuperResolution && ctx.Options.Interpolation;
         var gpuIf = await ResolveIfGpuAsync(ctx, ctx.Settings.TurboSplitGpus && bothStages, files[0], turboRoot, ct);
-        if (bothStages)
-            _logger.Info($"[涡轮] 线程预算按两条流水对半分：每条 -j {jThreads}" +
-                         (gpuIf == 1 ? "，补帧走 GPU 1" : ""));
+        if (bothStages && gpuIf == 1)
+            _logger.Info("[涡轮] 多卡分流生效：超分走 GPU 0、补帧走 GPU 1");
 
         // 帧去重判决也并进流水线：判决是纯 CPU 运算（dHash / QR / 光流），正好与 GPU 侧重叠。
         // 拆帧结果不完整时不做（与串行路径同一条规则），本次交给后面的串行阶段处理。
@@ -1235,6 +1235,11 @@ public sealed class ProcessingOrchestrator
         var dedupModeShort = ctx.Settings.DedupMode == "uhd" ? "完美" : "性能";
         // 全局原始判决（未做时序平滑）：下标 = 原始帧号 - 1
         var raw = streamDedup ? new List<FrameDedupService.FrameDecision>(files.Length) : null;
+        // 定稿判决（下标 = 原始帧号 - 1）：发布一块时写入，之后不再改动。
+        // 末尾不再对 raw 统一跑一次时序平滑 —— 发布时每块都已掌握全局长度，结论就是最终结论；
+        // 末尾再平滑一次只会在"搬不动改判保留"改变过序列之后产生级联差异（实测差 6 帧、被判据对不上拦下）。
+        var finalDup = streamDedup ? new bool[files.Length] : null;
+        var finalized = 0;   // 已写入定稿表的帧数
         var removedDir = Path.Combine(tempRoot, "input_frames_dedup_removed");
         var dedupMoveFailed = 0;
         if (streamDedup) Directory.CreateDirectory(removedDir);   // 搬移重复帧前必须先建好目标目录
@@ -1363,22 +1368,21 @@ public sealed class ProcessingOrchestrator
             var smoothed = raw.GetRange(0, horizon);
             FrameDedupService.SmoothIsolatedRuns(smoothed, dedupOpt!.MinRunLength);
 
-            // 重复帧移出 input_frames（保留在 removed 目录，便于排查/回退）。搬不动就改判为保留，
-            // 并让它一起进超分 —— 判决表、磁盘、超分产物三者必须一致，否则成品帧数会缩水。
-            for (var i = s; i < e; i++)
-            {
-                if (!smoothed[i].Duplicate) continue;
-                var dst = Path.Combine(removedDir, $"{i + 1:D8}.png");
-                if (!TryMoveFrame(files[i], dst))
-                {
-                    raw[i] = raw[i] with { Duplicate = false };
-                    dedupMoveFailed++;
-                }
-            }
-
+            // 把本块判决写进定稿表：重复帧移出 input_frames（保留在 removed 目录，便于排查/回退），
+            // 搬不动就改判为保留 —— 判决表、磁盘、超分产物三者必须一致，否则成品帧数会缩水。
             var kept = new List<string>();
             for (var i = s; i < e; i++)
-                if (!raw[i].Duplicate) kept.Add(files[i]);
+            {
+                var dup = smoothed[i].Duplicate;
+                if (dup && !TryMoveFrame(files[i], Path.Combine(removedDir, $"{i + 1:D8}.png")))
+                {
+                    dup = false;
+                    dedupMoveFailed++;
+                }
+                finalDup![i] = dup;
+                if (!dup) kept.Add(files[i]);
+            }
+            finalized = e;
 
             // 整块都是重复帧（动画定格段）时没有帧要送去超分，跳过这一块但照样报进度
             if (kept.Count > 0)
@@ -1452,6 +1456,7 @@ public sealed class ProcessingOrchestrator
             srQueue.Writer.TryComplete();
             ifQueue.Writer.TryComplete();
             try { await Task.WhenAll(srWorker, ifWorker); } catch { }
+            await RestoreDedupRemovedSafeAsync(streamDedup, inputFrames, removedDir, files.Length);
             _logger.Warn($"[涡轮] {ex.Message}，回退逐阶段串行");
             return (false, 0);
         }
@@ -1460,8 +1465,14 @@ public sealed class ProcessingOrchestrator
         var expectedKept = files.Length;
         if (streamDedup)
         {
-            FrameDedupService.SmoothIsolatedRuns(raw!, dedupOpt!.MinRunLength);
-            expectedKept = raw!.Where(d => !d.Duplicate).Count();
+            if (finalized != files.Length)
+            {
+                await RestoreDedupRemovedSafeAsync(true, inputFrames, removedDir, files.Length);
+                _logger.Warn($"[涡轮] 去重判决只定稿了 {finalized}/{files.Length} 帧，回退逐阶段串行");
+                return (false, 0);
+            }
+            expectedKept = 0;
+            foreach (var dup in finalDup!) if (!dup) expectedKept++;
         }
 
         var srDone = !ctx.Options.SuperResolution || CountFrames(srFrames) >= expectedKept;
@@ -1471,6 +1482,7 @@ public sealed class ProcessingOrchestrator
             // 判决表、超分产物、补帧产物对不上号：一个都不要用，整段回退串行重跑
             _logger.Warn($"[涡轮] 产物数量对不上（超分 {CountFrames(srFrames)} 帧 / 补帧 {CountFrames(ifFrames)} 帧，" +
                          $"应有 {expectedKept} × {ifMult}），回退逐阶段串行");
+            await RestoreDedupRemovedSafeAsync(streamDedup, inputFrames, removedDir, files.Length);
             return (false, 0);
         }
 
@@ -1479,25 +1491,25 @@ public sealed class ProcessingOrchestrator
         {
             dedupKept = expectedKept;
             // 回填位置表：第 k 个输出槽位应取"保留序列"里的第几帧（1 基）
-            var expandPos = new List<int>(raw!.Count);
+            var expandPos = new List<int>(finalDup!.Length);
             var seenKept = 0;
-            foreach (var d in raw!)
+            foreach (var dup in finalDup!)
             {
-                if (!d.Duplicate) seenKept++;
+                if (!dup) seenKept++;
                 expandPos.Add(Math.Max(1, seenKept));
             }
-            var dropped = raw!.Count - dedupKept;
+            var dropped = finalDup!.Length - dedupKept;
             File.WriteAllText(DedupMapPath(tempRoot), System.Text.Json.JsonSerializer.Serialize(new
             {
                 mode = ctx.Settings.DedupMode,
-                total = raw!.Count,
+                total = finalDup!.Length,
                 keptCount = dedupKept,
                 duplicateCount = dropped,
                 expandPos
             }));
 
             _logger.Success($"[涡轮] 帧去重（{dedupModeShort}模式）判决已并入流水线：剔除 {dropped} 帧，" +
-                            $"实际处理 {dedupKept} 帧（省 {(double)dropped / raw!.Count:P1}），重复帧保留在 {removedDir}");
+                            $"实际处理 {dedupKept} 帧（省 {(double)dropped / finalDup!.Length:P1}），重复帧保留在 {removedDir}");
             if (dedupMoveFailed > 0)
                 _logger.Warn($"帧去重：{dedupMoveFailed} 帧因文件被占用无法移出，已改判为保留（成品帧数与时长不受影响）");
             // 各阶淘汰量（论文四阶级联的可观测性：出问题时能一眼看出卡在哪一阶）
@@ -1560,6 +1572,34 @@ public sealed class ProcessingOrchestrator
         _logger.Warn("[涡轮] 多卡分流不可用（未探测到第二块可用显卡），本次两个阶段都用 GPU 0；" +
                      "请在高级页关闭「多卡分流」，或确认第二块显卡已启用");
         return 0;
+    }
+
+    /// <summary>涡轮回退前把已搬走的重复帧搬回 input_frames。串行路径是用「帧数够不够」判断拆帧是否完整的，
+    /// 少了几十帧会被判成「拆帧不完整」从而跳过去重，接着超分只吃到保留帧、补帧却仍按原始帧数要结果，
+    /// 成品会错（实测过：235 帧喂进去、要求出 592 帧，RIFE 硬凑出来的后段全是废帧）。
+    /// 搬回去（含复制回退）之后串行路径才能干净重跑。这里不吃取消令牌 —— 收尾动作必须做完。</summary>
+    private async Task RestoreDedupRemovedSafeAsync(bool needed, string inputFrames, string removedDir, int expectedFrames)
+    {
+        if (!needed || !Directory.Exists(removedDir)) return;
+        try
+        {
+            await Task.Run(() =>
+            {
+                foreach (var f in Directory.GetFiles(removedDir, "*.png"))
+                    TryMoveFrame(f, Path.Combine(inputFrames, Path.GetFileName(f)));
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"[涡轮] 恢复被移出的重复帧失败：{ex.Message}");
+        }
+
+        var n = CountFrames(inputFrames);
+        if (n < expectedFrames)
+            _logger.Warn($"[涡轮] 被移出的重复帧只回到 {n}/{expectedFrames} 帧；" +
+                         "串行路径检测到拆帧不完整会自动重新拆帧后再处理");
+        else
+            _logger.Info($"[涡轮] 已把移出的重复帧放回 input_frames（{n} 帧），本次按逐阶段串行重跑");
     }
 
     /// <summary>CPU 侧准备：把块内帧拷进该块的输入目录（外部工具只吃目录，无法只处理指定的几帧），
