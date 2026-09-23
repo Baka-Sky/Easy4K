@@ -269,9 +269,8 @@ public sealed partial class AdvancedPage : Page
     {
         if (_turboBlockSyncing) return;
 
+        // 写回由 TwoWay 绑定负责（与「处理线程」滑块同一套），这里只做越界提醒
         var value = (int)Math.Round(e.NewValue);
-        value = Math.Clamp(value, 32, 2000);
-        Vm.TurboBlockFrames = value;
 
         if (_turboBlockWarned) return;
 

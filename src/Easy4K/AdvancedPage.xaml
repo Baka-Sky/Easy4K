@@ -155,7 +155,7 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <Slider Grid.Column="0" Minimum="32" Maximum="2000" StepFrequency="8" TickFrequency="64"
-                                        Value="{x:Bind Vm.TurboBlockFrames, Mode=OneWay}"
+                                        Value="{x:Bind Vm.TurboBlockFrames, Mode=TwoWay}"
                                         ValueChanged="OnTurboBlockChanged"
                                         HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
                                 <TextBlock Grid.Column="1" Text="{x:Bind Vm.TurboBlockLabel, Mode=OneWay}"
