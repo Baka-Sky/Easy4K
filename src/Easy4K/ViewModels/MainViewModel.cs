@@ -1192,6 +1192,20 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        // 涡轮模式复检：用户可以先切到固态盘开启涡轮、再把主页的临时目录改回机械盘，从而绕过勾选时的检查。
+        // 因此开跑前再验一次，命中机械盘就直接关掉涡轮（不阻塞本次处理，只是退回逐阶段串行）。
+        if (TurboMode)
+        {
+            var media = await Task.Run(() => StorageMediaDetector.DetectForPath(TempRoot));
+            if (media == StorageMediaDetector.MediaKind.Hdd)
+            {
+                _logger.Warn($"涡轮模式已自动关闭：临时目录「{TempRoot}」位于机械硬盘，" +
+                             "涡轮模式的多路并发读写会被随机 IO 拖慢甚至比串行更慢；本次改为逐阶段串行处理，" +
+                             "把临时目录换到固态硬盘后可重新开启");
+                TurboMode = false;
+            }
+        }
+
         // 校验临时目录缓存：与当前视频不符则阻止启动并提示（防旧缓存误导跳过步骤/产生错误结果）
         var (cacheStatus, cacheSource) = CheckTempCache(TempRoot);
         // 快捷键等路径触发启动时同样先维护阻断状态：仍不匹配 → 阻断并重新弹窗
