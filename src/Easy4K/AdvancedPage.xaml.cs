@@ -261,10 +261,10 @@ public sealed partial class AdvancedPage : Page
     /// <summary>程序回填块大小输入框时抑制写回</summary>
     private bool _turboBlockSyncing;
 
-    /// <summary>上一次已提示过的越界块大小（同一档位不重复弹窗，避免拖动时连弹）</summary>
-    private int _lastWarnedBlock = -1;
+    /// <summary>块大小越界警告本次运行只提示一次（拖动滑块不会反复打扰）</summary>
+    private bool _turboBlockWarned;
 
-    /// <summary>块大小调整：写回配置；明显越界时直接弹窗警告（同一档位只提醒一次）。</summary>
+    /// <summary>块大小调整：写回配置；明显越界时弹窗警告（本次运行只提醒一次）。</summary>
     private async void OnTurboBlockChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
         if (_turboBlockSyncing) return;
@@ -273,7 +273,7 @@ public sealed partial class AdvancedPage : Page
         value = Math.Clamp(value, 32, 2000);
         Vm.TurboBlockFrames = value;
 
-        if (value == _lastWarnedBlock) return;
+        if (_turboBlockWarned) return;
 
         string? title = null;
         string? body = null;
@@ -293,7 +293,7 @@ public sealed partial class AdvancedPage : Page
         }
         if (title is null) return;
 
-        _lastWarnedBlock = value;
+        _turboBlockWarned = true;
         var dlg = new ContentDialog
         {
             Title = title,
