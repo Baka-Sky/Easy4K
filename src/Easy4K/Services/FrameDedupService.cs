@@ -214,18 +214,30 @@ public static class FrameDedupService
     /// <summary>扫描帧目录做判决，返回结果与回填表（不改动文件）。
     /// 判决计算（第 3 阶 QR 分解、第 4 阶 Farnebäck 稠密光流）是纯 CPU 密集运算，
     /// 必须整段放到后台线程执行：否则会在 UI 线程上逐帧计算，界面直接卡死。
-    /// 进度回调内部会把进度调度回 UI 线程，因此从后台线程调用是安全的。</summary>
+    /// 进度回调内部会把进度调度回 UI 线程，因此从后台线程调用是安全的。
+    /// applySmoothing=false 时跳过块内时序平滑（由调用方掌握全局后统一做，涡轮模式按块流式判决时用）。</summary>
     public static Task<Result> AnalyzeAsync(
-        string framesDir, Options opt, Action<AnalysisProgress>? progress, CancellationToken ct)
-        => Task.Run(() => AnalyzeCoreAsync(framesDir, opt, progress, ct), ct);
-
-    private static async Task<Result> AnalyzeCoreAsync(
-        string framesDir, Options opt, Action<AnalysisProgress>? progress, CancellationToken ct)
+        string framesDir, Options opt, Action<AnalysisProgress>? progress, CancellationToken ct,
+        bool applySmoothing = true)
     {
         var files = Directory.GetFiles(framesDir, "*.png");
         Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+        return AnalyzeAsync(files, opt, progress, ct, applySmoothing);
+    }
 
-        var decisions = new List<FrameDecision>(files.Length);
+    /// <summary>按给定帧清单做判决（清单顺序即处理顺序，不改动文件）。
+    /// 涡轮模式用这个重载按块流式判决：块内清单前面加一张上一块的末帧当"对比帧"，
+    /// 判决结果与整段一次跑完全一致（判决只看相邻两帧），不需要为每块复制一份帧文件。</summary>
+    public static Task<Result> AnalyzeAsync(
+        IReadOnlyList<string> files, Options opt, Action<AnalysisProgress>? progress, CancellationToken ct,
+        bool applySmoothing = true)
+        => Task.Run(() => AnalyzeCoreAsync(files, opt, progress, ct, applySmoothing), ct);
+
+    private static async Task<Result> AnalyzeCoreAsync(
+        IReadOnlyList<string> files, Options opt, Action<AnalysisProgress>? progress, CancellationToken ct,
+        bool applySmoothing)
+    {
+        var decisions = new List<FrameDecision>(files.Count);
         byte[]? prevPixels = null;
         var prevW = 0;
         var prevH = 0;
@@ -234,7 +246,7 @@ public static class FrameDedupService
         var prevPath = "";                     // 上一帧路径 = 预览框中间的「对比帧」
         var markedPath = "";                   // 最近被判为重复的帧 = 预览框左侧的「判决帧」
         var markedIndex = 0;                   // 它的原始帧号（1 基）
-        for (var i = 0; i < files.Length; i++)
+        for (var i = 0; i < files.Count; i++)
         {
             ct.ThrowIfCancellationRequested();
             var (pixels, w, h) = await LoadBgraAsync(files[i]);
@@ -263,10 +275,10 @@ public static class FrameDedupService
             prevW = w;
             prevH = h;
 
-            if (i % 16 == 0 || i == files.Length - 1)
+            if (i % 16 == 0 || i == files.Count - 1)
             {
                 progress?.Invoke(new AnalysisProgress($"判决阶段({StageName(batchDeepest)})",
-                    i + 1, files.Length, dupSoFar,
+                    i + 1, files.Count, dupSoFar,
                     files[i], i + 1,                 // 筛选帧（右）：当前正在判决的帧
                     prevPath, i,                     // 对比帧（中）：与它作比较的上一帧
                     markedPath, markedIndex));       // 判决帧（左）：最近被判为重复的帧
@@ -277,15 +289,15 @@ public static class FrameDedupService
         }
 
         // 时序平滑：孤立重复（连续长度 < MinRunLength）撤销删除，避免动画刻意的 1 帧顿帧被吃掉
-        var lastFrame = files.Length > 0 ? files[^1] : "";
-        var lastIndex = Math.Max(0, files.Length - 1);
-        progress?.Invoke(new AnalysisProgress("时序平滑", files.Length, files.Length, dupSoFar,
-            lastFrame, files.Length, prevPath, lastIndex, markedPath, markedIndex));
-        SmoothIsolatedRuns(decisions, opt.MinRunLength);
+        var lastFrame = files.Count > 0 ? files[files.Count - 1] : "";
+        var lastIndex = Math.Max(0, files.Count - 1);
+        progress?.Invoke(new AnalysisProgress("时序平滑", files.Count, files.Count, dupSoFar,
+            lastFrame, files.Count, prevPath, lastIndex, markedPath, markedIndex));
+        if (applySmoothing) SmoothIsolatedRuns(decisions, opt.MinRunLength);
 
         var dupCount = decisions.Count(d => d.Duplicate);
-        progress?.Invoke(new AnalysisProgress("时序平滑", files.Length, files.Length, dupCount,
-            lastFrame, files.Length, prevPath, lastIndex, markedPath, markedIndex));
+        progress?.Invoke(new AnalysisProgress("时序平滑", files.Count, files.Count, dupCount,
+            lastFrame, files.Count, prevPath, lastIndex, markedPath, markedIndex));
         var expand = new List<int>(decisions.Count);
         for (var i = 0; i < decisions.Count; i++)
         {
@@ -296,8 +308,10 @@ public static class FrameDedupService
         return new Result(decisions, decisions.Count, dupCount) { ExpandMap = expand };
     }
 
-    /// <summary>时序平滑：把长度不足 minRun 的连续"重复段"整段改判为保留。</summary>
-    private static void SmoothIsolatedRuns(List<FrameDecision> decisions, int minRun)
+    /// <summary>时序平滑：把长度不足 minRun 的连续"重复段"整段改判为保留。
+    /// public 供涡轮模式使用：它按块流式判决，块边界处的重复段要等看到下一块才知道真实长度，
+    /// 所以自己拿全局判决序列统一跑这一趟。</summary>
+    public static void SmoothIsolatedRuns(List<FrameDecision> decisions, int minRun)
     {
         var i = 0;
         while (i < decisions.Count)

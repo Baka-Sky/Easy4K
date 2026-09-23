@@ -134,7 +134,7 @@
                             <Button Grid.Column="1" HorizontalAlignment="Left"
                                     Padding="3" Background="Transparent" BorderThickness="0"
                                     VerticalAlignment="Center" Click="OnTurboInfoClick"
-                                    ToolTipService.ToolTip="帧序列按块切分，超分与补帧两条 GPU 流水经有界队列同时推进&#x0a;有两块以上显卡时可开「多卡分流」：超分走 GPU 0、补帧走 GPU 1&#x0a;&#x0a;点击图标查看详细讲解"
+                                    ToolTipService.ToolTip="帧序列按块切分，超分与补帧两条 GPU 流水经有界队列同时推进&#x0a;开了帧去重时，去重判决也在 CPU 侧按块流式跑，与 GPU 重叠&#x0a;有两块以上显卡时可开「多卡分流」：超分走 GPU 0、补帧走 GPU 1&#x0a;&#x0a;点击图标查看详细讲解"
                                     AutomationProperties.Name="涡轮模式说明">
                                 <FontIcon Glyph="&#xE946;" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             </Button>

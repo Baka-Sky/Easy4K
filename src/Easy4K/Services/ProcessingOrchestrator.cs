@@ -169,29 +169,36 @@ public sealed class ProcessingOrchestrator
             }
         }
 
-        // ============ 涡轮模式：块级流水（CPU 侧任务准备 与 GPU 侧超分/补帧 同时进行） ============
+        // ============ 涡轮模式：块级流水（CPU 侧按块判决/准备 与 GPU 侧超分/补帧 同时进行） ============
         // 走通后 srFrames / ifFrames 已按全局连续编号写满，后续阶段会凭"帧数够"自动跳过，直接进入合并，
         // 合并与收尾逻辑无需任何改动；任一步失败都返回 false，本次自动回退逐阶段串行，不会把任务做废。
+        var turboDedupKept = 0;
         if (ctx.Settings.TurboMode)
         {
             if (TurboSupported(ctx))
             {
-                var turboOk = await RunTurboBlocksAsync(ctx, tempRoot, inputFrames, srFrames, ifFrames, totalFrames, ifMult, cpu, ct);
+                var (turboOk, dedupKeptInTurbo) = await RunTurboBlocksAsync(ctx, tempRoot, inputFrames, srFrames, ifFrames, totalFrames, ifMult, cpu, ct);
                 if (turboOk)
+                {
+                    turboDedupKept = dedupKeptInTurbo;
                     _logger.Success("[涡轮] 块级流水已产出全部帧，后续阶段将自动跳过并进入合并");
+                }
                 else
+                {
                     _logger.Warn("[涡轮] 块级流水未完成，本次回退为逐阶段串行处理");
+                }
             }
             else
             {
-                _logger.Warn("[涡轮] 当前组合暂不支持块级流水（需关闭帧去重、勾选超分或补帧、补帧使用 NCNN 引擎），本次按逐阶段串行处理");
+                _logger.Warn("[涡轮] 当前组合暂不支持块级流水（需勾选超分或补帧、补帧使用 NCNN 引擎），本次按逐阶段串行处理");
             }
         }
 
         // ============ 阶段1.5：帧去重（高级模式开关） ============
         // 剔除与上一帧重复的画面 → 超分/补帧只算保留帧；合并前按 map 回填，时长与帧率不变。
-        var dedupKept = 0; // 0 = 未启用/未生效
-        if (ctx.Settings.DedupEnabled)
+        // 涡轮模式下判决已经并入流水线（与 GPU 重叠跑完），这里不再重复判一遍。
+        var dedupKept = turboDedupKept; // 0 = 未启用/未生效
+        if (ctx.Settings.DedupEnabled && dedupKept == 0)
             dedupKept = await RunDedupAsync(ctx, tempRoot, inputFrames, totalFrames, ct);
 
         // 去重生效后：超分应产出 kept 帧、补帧应产出 kept×倍率 帧（都是回填前的数量）
@@ -1163,22 +1170,23 @@ public sealed class ProcessingOrchestrator
         }
     }
 
-    /// <summary>涡轮模式适用性判定：帧去重要看"上一帧"并产出全局回填表，块间状态复杂，第一版不并行；
-    /// 官方补帧引擎（python 脚本）入参结构不同，也先不并行。</summary>
+    /// <summary>涡轮模式适用性判定：官方补帧引擎（python 脚本）入参结构与 NCNN 不同，暂时不并进块级流水。
+    /// 帧去重已支持（按块流式判决，判决与 GPU 侧重叠）。</summary>
     private static bool TurboSupported(ProcessingContext ctx)
-        => !ctx.Settings.DedupEnabled
-           && (ctx.Options.SuperResolution || ctx.Options.Interpolation)
+        => (ctx.Options.SuperResolution || ctx.Options.Interpolation)
            && !(ctx.Options.Interpolation && ctx.Options.IfEngine == "Offical");
 
     /// <summary>待 GPU 处理的块：块内帧清单 + 各阶段输出的全局起始编号（块内连续编号需要整体平移）。</summary>
     private sealed record TurboBlock(int Index, List<string> Frames, int SrStartNumber, int IfStartNumber);
 
-    /// <summary>涡轮模式核心：按 turboBlockFrames 把帧序列切块。CPU 侧负责把下一块的帧拷进独立目录
-    /// （外部工具只吃目录），两条 GPU 流水用有界队列串起来——超分 worker 处理块 n+1 的同时补帧 worker
-    /// 正在处理块 n，两个外部进程真正同时跑；队列容量 2 形成背压，避免帧文件与显存双爆。
+    /// <summary>涡轮模式核心：把帧序列切成块，CPU 侧按块准备输入（开了帧去重时判决也在这里做），
+    /// 两条 GPU 流水用有界队列串起来——超分 worker 处理块 n+1 的同时补帧 worker 正在处理块 n，
+    /// 两个外部进程真正同时跑；队列容量 2 形成背压，避免帧文件与显存双爆。
     /// 产物按全局连续编号写入 srFrames / ifFrames，与逐阶段串行的目录结构完全一致，
-    /// 因此后续阶段会凭"帧数够"自动跳过，合并阶段不需要任何改动。返回 false 表示未完成（调用方回退串行）。</summary>
-    private async Task<bool> RunTurboBlocksAsync(ProcessingContext ctx, string tempRoot, string inputFrames,
+    /// 因此后续阶段会凭"帧数够"自动跳过，合并阶段不需要任何改动。
+    /// 返回 (Ok, DedupKept)：Ok=false 表示未完成（调用方回退逐阶段串行）；DedupKept 是流水线内
+    /// 做完去重后的保留帧数（未启用去重时为 0，调用方据此跳过串行去重）。</summary>
+    private async Task<(bool Ok, int DedupKept)> RunTurboBlocksAsync(ProcessingContext ctx, string tempRoot, string inputFrames,
         string srFrames, string ifFrames, long totalFrames, int ifMult, bool cpu, CancellationToken ct)
     {
         var blockFrames = Math.Clamp(ctx.Settings.TurboBlockFrames, 32, 4000);
@@ -1196,7 +1204,7 @@ public sealed class ProcessingOrchestrator
         if (files.Length == 0)
         {
             _logger.Warn("[涡轮] 输入帧目录为空，无法进行块级流水");
-            return false;
+            return (false, 0);
         }
 
         try
@@ -1209,7 +1217,7 @@ public sealed class ProcessingOrchestrator
         catch (Exception ex)
         {
             _logger.Warn($"[涡轮] 初始化临时目录失败：{ex.Message}");
-            return false;
+            return (false, 0);
         }
 
         // 多卡分流：只在两条流水都在、且用户开了分流时才去探测第二块卡；探测不通过就退回单卡
@@ -1218,9 +1226,24 @@ public sealed class ProcessingOrchestrator
             _logger.Info($"[涡轮] 线程预算按两条流水对半分：每条 -j {jThreads}" +
                          (gpuIf == 1 ? "，补帧走 GPU 1" : ""));
 
+        // 帧去重判决也并进流水线：判决是纯 CPU 运算（dHash / QR / 光流），正好与 GPU 侧重叠。
+        // 拆帧结果不完整时不做（与串行路径同一条规则），本次交给后面的串行阶段处理。
+        var streamDedup = ctx.Settings.DedupEnabled && files.Length >= totalFrames;
+        if (ctx.Settings.DedupEnabled && !streamDedup)
+            _logger.Warn($"[涡轮] 拆帧结果不完整（{files.Length}/{totalFrames} 帧），本次不做去重判决");
+        var dedupOpt = streamDedup ? FrameDedupService.Options.FromMode(ctx.Settings.DedupMode) : null;
+        var dedupModeShort = ctx.Settings.DedupMode == "uhd" ? "完美" : "性能";
+        // 全局原始判决（未做时序平滑）：下标 = 原始帧号 - 1
+        var raw = streamDedup ? new List<FrameDedupService.FrameDecision>(files.Length) : null;
+        var removedDir = Path.Combine(tempRoot, "input_frames_dedup_removed");
+        var dedupMoveFailed = 0;
+        if (streamDedup) Directory.CreateDirectory(removedDir);   // 搬移重复帧前必须先建好目标目录
+
         var blockCount = (int)Math.Ceiling(files.Length / (double)blockFrames);
         _logger.Info($"[涡轮] 块级流水开始：{files.Length} 帧 → {blockCount} 块 × {blockFrames} 帧，" +
-                     "CPU 侧准备与 GPU 侧超分/补帧同时进行");
+                     (streamDedup
+                         ? $"CPU 侧去重判决（{dedupModeShort}模式）与 GPU 侧超分/补帧同时进行"
+                         : "CPU 侧准备与 GPU 侧超分/补帧同时进行"));
 
         // 两条 GPU 流水串起来：超分 worker 处理块 n+1 的同时，补帧 worker 正在处理块 n，
         // 两个外部进程各吃一份显存、真正同时跑；CPU 侧负责把下一块的帧喂进来。
@@ -1259,20 +1282,137 @@ public sealed class ProcessingOrchestrator
 
         var ifWorker = Task.Run(async () =>
         {
+            // 押后一块再补帧：要知道"下一帧"是谁才能把块的末帧插值对。
+            // RIFE 对没有后继的末帧只能原地保持，而整段处理时它是与下一帧的插值结果 ——
+            // 押后一块就能把下一块的首帧借来当"下一帧"，块边界与整段处理结果完全一致。
+            TurboBlock? pending = null;
             await foreach (var block in ifQueue.Reader.ReadAllAsync(ct))
             {
-                if (!await InterpBlockAsync(ctx, block, turboRoot, ifFrames, ifMult, jThreads, cpu, gpuIf, ct))
-                    throw new InvalidOperationException($"第 {block.Index} 块补帧失败");
+                if (pending is not null &&
+                    !await InterpBlockAsync(ctx, pending, turboRoot, ifFrames, ifMult, jThreads, cpu, gpuIf, LookaheadOf(block), ct))
+                    throw new InvalidOperationException($"第 {pending.Index} 块补帧失败");
+                pending = block;
             }
+            // 最后一块没有"下一块"，它的末帧本来就是原地保持（整段处理时也一样）
+            if (pending is not null &&
+                !await InterpBlockAsync(ctx, pending, turboRoot, ifFrames, ifMult, jThreads, cpu, gpuIf, null, ct))
+                throw new InvalidOperationException($"第 {pending.Index} 块补帧失败");
         }, ct);
+
+        /// <summary>下一块的首帧路径：补帧拿它当"下一帧"，让本块末帧的插值与整段处理一致。</summary>
+        string LookaheadOf(TurboBlock next)
+        {
+            var dir = Path.Combine(turboRoot, $"block_{next.Index:D4}",
+                ctx.Options.SuperResolution ? "sr_out" : "sr_in");
+            return Path.Combine(dir, "00000001.png");
+        }
 
         var srNumber = 1;
         var ifNumber = 1;
+
+        // ---- 开帧去重时 CPU 侧的额外工作（判决与 GPU 侧重叠）----
+        // 判决按块流水：块末尾的重复段要看到下一块才知道真实长度（时序平滑会把孤立的短重复段撤销），
+        // 所以「判决」跑在前面、「定稿交付给 GPU」晚一块 —— GPU 一直在吃已经定稿的块，不会等整段判完。
+
+        async Task DecideDedupBlockAsync(int b)
+        {
+            var s = b * blockFrames;
+            var e = Math.Min((b + 1) * blockFrames, files.Length);
+            var carry = s > 0;   // 首块没有可比对象
+            var batch = new List<string>(e - s + 1);
+            // 把上一块的末帧放在清单最前面当"对比帧"：判决只看相邻两帧，这样块内判决与整段一次跑完全一致，
+            // 也不用为每块复制一份帧文件。
+            if (carry) batch.Add(files[s - 1]);
+            for (var i = s; i < e; i++) batch.Add(files[i]);
+
+            var result = await FrameDedupService.AnalyzeAsync(batch, dedupOpt!, pr =>
+            {
+                // 局部编号（含对比帧）→ 全局原始帧号
+                var off = carry ? 1 : 0;
+                ProgressChanged?.Invoke(new ProcessProgress
+                {
+                    Stage = ProcessStage.Splitting,
+                    StageText = $"[涡轮] 帧去重({dedupModeShort}) {pr.Phase} 已判重{pr.DuplicateCount}帧",
+                    Current = s + Math.Max(0, pr.Done - off),
+                    Total = files.Length,
+                    PercentDisplay = false,
+                    FrameCompareMode = true,
+                    LatestFramePath = pr.CurrentFramePath,
+                    CompareFramePath = pr.CompareFramePath,
+                    CompareFrameIndex = s + Math.Max(0, pr.CompareIndex - off),
+                    VerdictFramePath = pr.VerdictFramePath,
+                    VerdictFrameIndex = s + Math.Max(0, pr.VerdictIndex - off)
+                });
+            }, ct, applySmoothing: false);
+
+            // 丢掉对比帧那一条（它属于上一块），其余按全局帧号补上索引
+            var skip = carry ? 1 : 0;
+            for (var k = skip; k < result.Decisions.Count; k++)
+                raw!.Add(result.Decisions[k] with { Index = s + (k - skip) + 1 });
+        }
+
+        // 定稿一块：此时下一块已判完，本块末尾重复段的真实长度确定，可以做时序平滑；
+        // 随后把保留帧交给超分流水，把重复帧移出 input_frames。
+        async Task ReleaseDedupBlockAsync(int b)
+        {
+            var s = b * blockFrames;
+            var e = Math.Min((b + 1) * blockFrames, files.Length);
+            // 已知范围 = 本块 + 下一块。再往后的重复段光下一块就已经攒够 blockFrames 帧（≥32），
+            // 必定超过 MinRunLength（3），撤不撤销的结论不会再变，所以不必再等。
+            var horizon = Math.Min(Math.Min((b + 2) * blockFrames, files.Length), raw!.Count);
+            var smoothed = raw.GetRange(0, horizon);
+            FrameDedupService.SmoothIsolatedRuns(smoothed, dedupOpt!.MinRunLength);
+
+            // 重复帧移出 input_frames（保留在 removed 目录，便于排查/回退）。搬不动就改判为保留，
+            // 并让它一起进超分 —— 判决表、磁盘、超分产物三者必须一致，否则成品帧数会缩水。
+            for (var i = s; i < e; i++)
+            {
+                if (!smoothed[i].Duplicate) continue;
+                var dst = Path.Combine(removedDir, $"{i + 1:D8}.png");
+                if (!TryMoveFrame(files[i], dst))
+                {
+                    raw[i] = raw[i] with { Duplicate = false };
+                    dedupMoveFailed++;
+                }
+            }
+
+            var kept = new List<string>();
+            for (var i = s; i < e; i++)
+                if (!raw[i].Duplicate) kept.Add(files[i]);
+
+            // 整块都是重复帧（动画定格段）时没有帧要送去超分，跳过这一块但照样报进度
+            if (kept.Count > 0)
+            {
+                var block = new TurboBlock(b + 1, kept, srNumber, ifNumber);
+                srNumber += kept.Count;
+                ifNumber += ctx.Options.Interpolation ? kept.Count * ifMult : kept.Count;
+
+                // CPU 侧准备：把块帧拷进独立目录（外部工具只吃目录），这一步与 GPU 的处理同时进行
+                await PrepareBlockAsync(block, turboRoot, ct);
+                await srQueue.Writer.WriteAsync(block, ct);   // 队列满 → 在这里等 GPU 追上来
+            }
+
+            ProgressChanged?.Invoke(new ProcessProgress
+            {
+                Stage = ProcessStage.SuperRes,
+                StageText = $"[涡轮] 已提交 {b + 1}/{blockCount} 块（保留 {srNumber - 1} 帧）",
+                Current = b + 1,
+                Total = blockCount
+            });
+        }
+
         try
         {
             for (var b = 0; b < blockCount; b++)
             {
                 ct.ThrowIfCancellationRequested();
+
+                if (streamDedup)
+                {
+                    await DecideDedupBlockAsync(b);
+                    if (b > 0) await ReleaseDedupBlockAsync(b - 1);   // 上一块的末尾重复段长度已确定
+                    continue;
+                }
 
                 var frames = new List<string>();
                 for (var i = b * blockFrames; i < Math.Min((b + 1) * blockFrames, files.Length); i++)
@@ -1296,6 +1436,8 @@ public sealed class ProcessingOrchestrator
                 });
             }
 
+            if (streamDedup) await ReleaseDedupBlockAsync(blockCount - 1);
+
             srQueue.Writer.Complete();
             await Task.WhenAll(srWorker, ifWorker);
         }
@@ -1311,19 +1453,63 @@ public sealed class ProcessingOrchestrator
             ifQueue.Writer.TryComplete();
             try { await Task.WhenAll(srWorker, ifWorker); } catch { }
             _logger.Warn($"[涡轮] {ex.Message}，回退逐阶段串行");
-            return false;
+            return (false, 0);
         }
 
-        var srDone = !ctx.Options.SuperResolution || CountFrames(srFrames) >= files.Length;
-        var ifDone = !ctx.Options.Interpolation || CountFrames(ifFrames) >= files.Length * ifMult;
+        // 去重后 SR 只喂了保留帧，所以核对基准是"定稿后的保留帧数"而不是原始帧数
+        var expectedKept = files.Length;
+        if (streamDedup)
+        {
+            FrameDedupService.SmoothIsolatedRuns(raw!, dedupOpt!.MinRunLength);
+            expectedKept = raw!.Where(d => !d.Duplicate).Count();
+        }
+
+        var srDone = !ctx.Options.SuperResolution || CountFrames(srFrames) >= expectedKept;
+        var ifDone = !ctx.Options.Interpolation || CountFrames(ifFrames) >= expectedKept * ifMult;
         if (!srDone || !ifDone)
         {
-            _logger.Warn($"[涡轮] 产物数量不足（超分 {CountFrames(srFrames)} 帧 / 补帧 {CountFrames(ifFrames)} 帧），回退逐阶段串行");
-            return false;
+            // 判决表、超分产物、补帧产物对不上号：一个都不要用，整段回退串行重跑
+            _logger.Warn($"[涡轮] 产物数量对不上（超分 {CountFrames(srFrames)} 帧 / 补帧 {CountFrames(ifFrames)} 帧，" +
+                         $"应有 {expectedKept} × {ifMult}），回退逐阶段串行");
+            return (false, 0);
+        }
+
+        var dedupKept = 0;
+        if (streamDedup)
+        {
+            dedupKept = expectedKept;
+            // 回填位置表：第 k 个输出槽位应取"保留序列"里的第几帧（1 基）
+            var expandPos = new List<int>(raw!.Count);
+            var seenKept = 0;
+            foreach (var d in raw!)
+            {
+                if (!d.Duplicate) seenKept++;
+                expandPos.Add(Math.Max(1, seenKept));
+            }
+            var dropped = raw!.Count - dedupKept;
+            File.WriteAllText(DedupMapPath(tempRoot), System.Text.Json.JsonSerializer.Serialize(new
+            {
+                mode = ctx.Settings.DedupMode,
+                total = raw!.Count,
+                keptCount = dedupKept,
+                duplicateCount = dropped,
+                expandPos
+            }));
+
+            _logger.Success($"[涡轮] 帧去重（{dedupModeShort}模式）判决已并入流水线：剔除 {dropped} 帧，" +
+                            $"实际处理 {dedupKept} 帧（省 {(double)dropped / raw!.Count:P1}），重复帧保留在 {removedDir}");
+            if (dedupMoveFailed > 0)
+                _logger.Warn($"帧去重：{dedupMoveFailed} 帧因文件被占用无法移出，已改判为保留（成品帧数与时长不受影响）");
+            // 各阶淘汰量（论文四阶级联的可观测性：出问题时能一眼看出卡在哪一阶）
+            _logger.Info($"[涡轮] 各阶判决：像素差淘汰 {raw!.Where(d => d.Decided == FrameDedupService.Stage.PixelDiff).Count()}，" +
+                         $"dHash 淘汰 {raw!.Where(d => d.Decided == FrameDedupService.Stage.Hash).Count()}，" +
+                         $"QR 淘汰 {raw!.Where(d => d.Decided == FrameDedupService.Stage.Qr).Count()}，" +
+                         $"光流淘汰 {raw!.Where(d => d.Decided == FrameDedupService.Stage.Flow).Count()}，" +
+                         $"四阶全过判重 {raw!.Where(d => d.Decided == FrameDedupService.Stage.Duplicate).Count()}");
         }
 
         _logger.Success($"[涡轮] 块级流水完成：{blockCount} 块全部处理完毕，超分 {CountFrames(srFrames)} 帧、补帧 {CountFrames(ifFrames)} 帧");
-        return true;
+        return (true, dedupKept);
     }
 
     /// <summary>多卡分流探测：拿一块真实输入帧跑一次 Real-ESRGAN 的 -g 1，跑通说明 Vulkan 设备 1 存在。
@@ -1436,9 +1622,11 @@ public sealed class ProcessingOrchestrator
     }
 
     /// <summary>补帧流水：处理一块，结果按全局连续编号并入 ifFrames（未勾选补帧时跳过）；块目录用完即删省空间。
-    /// gpuIndex &gt; 0 表示多卡分流，补帧走另一块显卡。</summary>
+    /// gpuIndex &gt; 0 表示多卡分流，补帧走另一块显卡。
+    /// lookaheadFrame：下一块的首帧。借它当"下一帧"多算一份插值，本块末帧的结果才与整段处理一致；
+    /// 多算出来的那几帧丢掉不算（只并入前 Frames.Count × ifMult 帧）。</summary>
     private async Task<bool> InterpBlockAsync(ProcessingContext ctx, TurboBlock block, string turboRoot,
-        string ifFrames, int ifMult, string jThreads, bool cpu, int gpuIndex, CancellationToken ct)
+        string ifFrames, int ifMult, string jThreads, bool cpu, int gpuIndex, string? lookaheadFrame, CancellationToken ct)
     {
         var blockDir = Path.Combine(turboRoot, $"block_{block.Index:D4}");
         var ifOut = Path.Combine(blockDir, "if_out");
@@ -1455,17 +1643,25 @@ public sealed class ProcessingOrchestrator
                 ? Path.Combine(blockDir, "sr_out")
                 : Path.Combine(blockDir, "sr_in");
             var ifCount = block.Frames.Count * ifMult;
-            var args = RifeCommandBuilder.Build(ifInput, ifOut, ctx.IfModel, ifMult, ifCount, jThreads,
+            // 借下一块的首帧当"下一帧"：多喂一帧进去，末帧的插值就与整段处理一致。
+            // 结果多出来的那一份插值丢弃，只并入前 ifCount 帧。
+            var toolCount = ifCount;
+            if (!string.IsNullOrEmpty(lookaheadFrame) && File.Exists(lookaheadFrame))
+            {
+                toolCount = ifCount + ifMult;
+                File.Copy(lookaheadFrame, Path.Combine(ifInput, $"{block.Frames.Count + 1:D8}.png"), overwrite: true);
+            }
+            var args = RifeCommandBuilder.Build(ifInput, ifOut, ctx.IfModel, ifMult, toolCount, jThreads,
                 ctx.Settings.LowerQualityForVram, useCpu: cpu, gpuIndex: gpuIndex);
             var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating,
-                $"[涡轮] 补帧块 {block.Index}", ifCount, ctx.Tools.RifeExe, args, ifOut, ct);
+                $"[涡轮] 补帧块 {block.Index}", toolCount, ctx.Tools.RifeExe, args, ifOut, ct);
             if (exit != 0)
             {
                 ct.ThrowIfCancellationRequested();
                 _logger.Warn($"[涡轮] 补帧块 {block.Index} 失败（exit={exit}）");
                 return false;
             }
-            await MergeBlockFramesAsync(ifOut, ifFrames, block.IfStartNumber, ct);
+            await MergeBlockFramesAsync(ifOut, ifFrames, block.IfStartNumber, ct, ifCount);
             return true;
         }
         catch (OperationCanceledException)
@@ -1484,16 +1680,18 @@ public sealed class ProcessingOrchestrator
         }
     }
 
-    /// <summary>把块产物按全局连续编号并入最终目录（工具输出的是块内 1..N 连续编号，需要整体平移）。</summary>
-    private static async Task MergeBlockFramesAsync(string srcDir, string dstDir, int startNumber, CancellationToken ct)
+    /// <summary>把块产物按全局连续编号并入最终目录（工具输出的是块内 1..N 连续编号，需要整体平移）。
+    /// maxCount：最多并入多少帧 —— 补帧借了下一块的首帧多算一份插值，多出来的要丢掉。</summary>
+    private static async Task MergeBlockFramesAsync(string srcDir, string dstDir, int startNumber,
+        CancellationToken ct, int maxCount = int.MaxValue)
     {
         var files = Directory.GetFiles(srcDir, "*.png");
         Array.Sort(files, StringComparer.OrdinalIgnoreCase);
         Directory.CreateDirectory(dstDir);
-
         await Task.Run(() =>
         {
-            for (var i = 0; i < files.Length; i++)
+            var n = Math.Min(files.Length, maxCount);
+            for (var i = 0; i < n; i++)
             {
                 ct.ThrowIfCancellationRequested();
                 File.Copy(files[i], Path.Combine(dstDir, $"{startNumber + i:D8}.png"), overwrite: true);
