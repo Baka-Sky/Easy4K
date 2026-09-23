@@ -136,6 +136,7 @@ public partial class MainViewModel : ObservableObject
         _dedupMode = _app.DedupMode;
         _audioSrEnabled = _app.AudioSrEnabled;
         _audioSrPrecision = string.Equals(_app.AudioSrPrecision, "fp32", StringComparison.OrdinalIgnoreCase) ? "fp32" : "fp16";
+        _turboMode = _app.TurboMode;
         _superResolution = _app.DefaultSuperResolution;
         _interpolation = _app.DefaultInterpolation;
         _mergeVideo = _app.DefaultMergeVideo;
@@ -337,10 +338,22 @@ public partial class MainViewModel : ObservableObject
     /// <summary>精度档：fp16=低精度性能模式（仅 GPU，禁 CPU）；fp32=高精度完美模式（CPU/GPU 均可）</summary>
     [ObservableProperty] private string _audioSrPrecision = "fp16";
 
+    /// <summary>涡轮模式：把勾选的所有操作同时进行——CPU 侧（去重判决 / 回填）与 GPU 侧（超分 / 补帧）按块并行，音频链路独立并行</summary>
+    [ObservableProperty] private bool _turboMode;
+
     partial void OnAudioSrEnabledChanged(bool value)
     {
         _app.AudioSrEnabled = value;
         _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnTurboModeChanged(bool value)
+    {
+        _app.TurboMode = value;
+        _settings.Save(_app, _pathConfig);
+        _logger.Info(value
+            ? $"涡轮模式已开启：帧序列按 {Math.Max(32, _app.TurboBlockFrames)} 帧切块，CPU 侧（去重判决 / 回填）与 GPU 侧（超分 / 补帧）将同时进行；请确保临时目录位于固态硬盘"
+            : "涡轮模式已关闭：恢复逐阶段串行处理");
     }
 
     partial void OnAudioSrPrecisionChanged(string value)
@@ -1811,6 +1824,7 @@ public partial class MainViewModel : ObservableObject
         if (Interpolation) parts.Add("补帧");
         if (DedupEnabled) parts.Add(DedupMode == "uhd" ? "帧去重(完美)" : "帧去重(性能)");
         if (AudioSrEnabled) parts.Add(AudioSrPrecision == "fp32" ? "音频超分(FP32)" : "音频超分(FP16)");
+        if (TurboMode) parts.Add("涡轮模式");
         if (MergeVideo) parts.Add("合并视频");
         if (MergeAudio) parts.Add("合并音频");
         if (SdrToHdr) parts.Add("SDR→HDR");

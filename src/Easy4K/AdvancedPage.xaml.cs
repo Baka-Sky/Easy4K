@@ -44,6 +44,9 @@ public sealed partial class AdvancedPage : Page
         Loaded += (_, _) => ApplyCardArt();
         ActualThemeChanged += (_, _) => ApplyCardArt();
 
+        // 涡轮模式的磁盘检查只在用户手动切换时触发：等首屏绑定回填完成后再放行
+        Loaded += (_, _) => DispatcherQueue.TryEnqueue(() => _turboUiReady = true);
+
         // 去重模式单选：程序回填时不写回，避免构造期覆盖配置
         _dedupSyncing = true;
         DedupPerfRb.IsChecked = Vm.DedupMode != "uhd";
@@ -248,6 +251,43 @@ public sealed partial class AdvancedPage : Page
         UpdateAudioSrHint();
     }
 
+    /// <summary>页面初始化回填开关状态时也会触发 Toggled，要等绑定完成后再允许弹磁盘提示</summary>
+    private bool _turboUiReady;
+
+    /// <summary>勾选涡轮模式时检查临时目录所在磁盘：机械盘撑不住多路并发读写，弹窗确认，选「否」自动关闭。</summary>
+    private async void OnTurboToggled(object sender, RoutedEventArgs e)
+    {
+        if (!_turboUiReady) return;
+        if (!TurboSwitch.IsOn) return;   // 关闭时不需要检查
+
+        var kind = await Task.Run(() => StorageMediaDetector.DetectForPath(Vm.TempRoot));
+        if (kind != StorageMediaDetector.MediaKind.Hdd) return;
+
+        var dlg = new ContentDialog
+        {
+            Title = "⚠ 检测到机械硬盘",
+            Content = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Text =
+                    "涡轮模式会让拆帧、去重判决、回填、超分、补帧同时读写临时目录，机械硬盘的随机读写能力撑不住这种吞吐，" +
+                    "开启后很可能比普通模式更慢。\n\n" +
+                    $"当前临时目录：\n{Vm.TempRoot}\n\n" +
+                    "该目录位于机械硬盘（HDD）。建议先改到固态硬盘（SSD / NVMe）再开启。"
+            },
+            PrimaryButtonText = "仍要开启",
+            CloseButtonText = "否",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
+        };
+
+        if (await dlg.ShowLocalizedAsync() != ContentDialogResult.Primary)
+        {
+            TurboSwitch.IsOn = false;
+            Vm.TurboMode = false;   // 选「否」自动关闭涡轮模式
+        }
+    }
+
     /// <summary>ⓘ 提示：AudioSR 是什么、两档精度的差别、为什么 FP16 不能用 CPU。</summary>
     private async void OnAudioSrInfoClick(object sender, RoutedEventArgs e)
     {
@@ -282,6 +322,46 @@ public sealed partial class AdvancedPage : Page
                         "【失败与回退】\n" +
                         "任何一步失败（权重包缺失、显卡不可用、推理报错）都只影响音频：本次会自动回退成原音轨 + ffmpeg 重采样，" +
                         "视频处理结果照常产出，不会让整条流水线失败。"
+                }
+            },
+            CloseButtonText = "关闭",
+            XamlRoot = XamlRoot
+        };
+        await dlg.ShowLocalizedAsync();
+    }
+
+    /// <summary>涡轮模式：把 CPU 侧与 GPU 侧的工作按块拆开同时开工。</summary>
+    private async void OnTurboInfoClick(object sender, RoutedEventArgs e)
+    {
+        var dlg = new ContentDialog
+        {
+            Title = "涡轮模式：让所有阶段同时开工",
+            Content = new ScrollViewer
+            {
+                MaxHeight = 420,
+                Content = new TextBlock
+                {
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 12,
+                    Text =
+                        "平时处理是「一段一段排队」：拆帧全部跑完才轮到超分，超分跑完才轮到补帧 —— 在拆帧、判决、回填、合并这些" +
+                        "不碰显卡的时段里，GPU 其实是空转的。\n\n" +
+                        "【涡轮模式做了什么】\n" +
+                        "把帧序列切成若干块，让两条流水线同时推进：\n" +
+                        "· CPU 侧：拆帧 → 逐帧判决（帧去重）→ 回填展开\n" +
+                        "· GPU 侧：超分 → 补帧\n" +
+                        "两侧之间用有界队列衔接：GPU 侧处理第 N 块时，CPU 侧已经在判第 N+1 块，队列满了上游会自动等一等" +
+                        "（背压），不会把内存吃爆。音频超分则作为独立链路全程并行，不与视频抢同一个队列。\n\n" +
+                        "【为什么要求固态临时目录】\n" +
+                        "同时开工意味着同一时刻会有多路读写：拆帧在写 PNG、超分在读 PNG 并写新 PNG、补帧再读写一轮、" +
+                        "合并同时在编码。机械硬盘的随机读写会成为整条流水线的瓶颈，甚至拖到比不开涡轮还慢；\n" +
+                        "固态盘上这些读写能真正重叠，收益才明显。\n\n" +
+                        "【保留的能力】\n" +
+                        "断点续传按块判断（块目录帧数够就跳过）、安全帧率与降级重试照常生效、缺陷帧被占用时仍会改判为保留，" +
+                        "成片时长、帧率与音频对齐与普通模式完全一致。\n\n" +
+                        "【什么时候别开】\n" +
+                        "临时目录在机械盘或网络盘、显存吃紧（同时驻留超分与补帧进程）、或素材很短（并行还没热起来就结束了）。" +
+                        "关闭涡轮即回到与原来完全一致的处理方式。"
                 }
             },
             CloseButtonText = "关闭",

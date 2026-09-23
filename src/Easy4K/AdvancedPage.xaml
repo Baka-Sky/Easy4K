@@ -122,6 +122,35 @@
                     </Grid>
                 </Border>
 
+                <!-- 涡轮模式：把 CPU 侧（拆帧/去重判决/回填）与 GPU 侧（超分/补帧）按块同时开工，音频链路再独立并行 -->
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel Spacing="6">
+                        <Grid ColumnSpacing="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="涡轮模式" Style="{StaticResource SectionTitle}" Margin="0"/>
+                            <Button Grid.Column="1" HorizontalAlignment="Left"
+                                    Padding="3" Background="Transparent" BorderThickness="0"
+                                    VerticalAlignment="Center" Click="OnTurboInfoClick"
+                                    ToolTipService.ToolTip="帧序列按块切分，CPU 侧（拆帧 / 去重判决 / 回填）与 GPU 侧（超分 / 补帧）同时开工，音频超分独立并行&#x0a;块大小见 appsettings.json 的 turboBlockFrames&#x0a;&#x0a;点击图标查看详细讲解"
+                                    AutomationProperties.Name="涡轮模式说明">
+                                <FontIcon Glyph="&#xE946;" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </Button>
+                        </Grid>
+
+                        <ToggleSwitch x:Name="TurboSwitch" OnContent="已开启" OffContent="已关闭"
+                                      IsOn="{x:Bind Vm.TurboMode, Mode=TwoWay}" Toggled="OnTurboToggled" FontSize="12"/>
+
+                        <TextBlock TextWrapping="Wrap" FontSize="10" Opacity="0.6"
+                                   Text="将勾选的所有操作同时进行。由于数据吞吐巨大，本功能要求临时目录必须为固态存储介质。"/>
+
+                        <TextBlock x:Name="TurboHint" FontSize="10" Opacity="0.6" TextWrapping="Wrap"
+                                   Text="块大小默认 256 帧（appsettings.json 的 turboBlockFrames 可调，单卡建议 128~512）：块越小并行度越高，但外部工具重复加载模型的次数也越多。"/>
+                    </StackPanel>
+                </Border>
+
                 <!-- 报告：HTML 报告保存目录（排版同主页的临时目录选择） -->
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel Spacing="6">
