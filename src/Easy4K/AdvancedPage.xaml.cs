@@ -479,13 +479,16 @@ public sealed partial class AdvancedPage : Page
         await dlg.ShowLocalizedAsync();
     }
 
-    /// <summary>CPU 处理模式开启/关闭时，禁用/启用安全帧率、降低画质、GPU加速三个选项。</summary>
+    /// <summary>CPU 处理模式开启/关闭时，禁用/启用安全帧率、降低画质、GPU加速、硬件编码 CQ/QP 这些依赖显卡的选项。
+    /// CPU 模式下合并一律走 libx265（连硬件编码器都不挑），留着 CQ/QP 可勾只会让人以为设了却没用。</summary>
     private void UpdateCpuDependentCheckBoxes()
     {
         var enabled = !Vm.UseCpuProcessing;
         SafeFrameRateCb.IsEnabled = enabled;
         LowerQualityCb.IsEnabled = enabled;
         GpuAccelerationCb.IsEnabled = enabled;
+        HwCqCb.IsEnabled = enabled;
+        HwQpCb.IsEnabled = enabled;
     }
 
     /// <summary>VM 属性兜底：CPU 处理模式变化时同步勾选状态与联动禁用。</summary>

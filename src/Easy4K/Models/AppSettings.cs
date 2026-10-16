@@ -44,9 +44,6 @@ public sealed class AppSettings
     /// <summary>硬件编码的 CQ / QP 取值 0~51：越小画质越好、码率越高（默认 18）</summary>
     public int HwQuality { get; set; } = 18;
 
-    /// <summary>强制使用 AMD AMF 硬件编码（仅 AMD 显卡可勾）：跳过 NVENC/QSV 优先探测，直接走 hevc_amf</summary>
-    public bool ForceAmfEncode { get; set; }
-
     /// <summary>保留原视频内嵌字幕：合并成片时把原文件里的字幕流复制过去（仅检测到字幕时可开）</summary>
     public bool KeepSubtitles { get; set; }
 

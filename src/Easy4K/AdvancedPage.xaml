@@ -213,7 +213,7 @@
                         <TextBlock Text="{x:Bind Vm.ThreadWarnText, Mode=OneWay}" Foreground="Orange"
                                    FontSize="11" TextWrapping="Wrap" Visibility="{x:Bind Vm.ThreadWarnVis, Mode=OneWay}"/>
 
-                        <!-- 编码质量：CPU 编码的 CRF、硬件编码的 CQ/QP（互斥）、强制 AMD AMF -->
+                        <!-- 编码质量：CPU 编码的 CRF、硬件编码的 CQ/QP（互斥，编码器由显卡自动选择） -->
                         <Grid ColumnSpacing="8" Margin="0,6,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
@@ -241,13 +241,9 @@
                             <TextBlock Grid.Column="0" Text="CQ / QP 值" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
                             <NumberBox Grid.Column="1" Value="{x:Bind Vm.HwQuality, Mode=TwoWay}" Minimum="0" Maximum="51" SmallChange="1"
                                        SpinButtonPlacementMode="Compact" Width="120"/>
-                            <TextBlock Grid.Column="2" Text="取值范围 0~51，数值越小画质越好、码率越高；未勾选 CQ/QP 时用默认档。两者互斥：开一个另一个自动关闭。"
+                            <TextBlock Grid.Column="2" Text="取值范围 0~51，数值越小画质越好、码率越高；未勾选 CQ/QP 时用默认档。两者互斥：开一个另一个自动关闭。仅硬件编码生效（编码器由显卡自动选择：N 卡 NVENC / A 卡 AMF），CPU 处理模式下不可用。"
                                        VerticalAlignment="Center" FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
                         </Grid>
-                        <CheckBox x:Name="ForceAmfCb" FontSize="12"
-                                  Content="使用 AMD AMF 硬件编码"
-                                  IsChecked="{x:Bind Vm.ForceAmfEncode, Mode=TwoWay}"
-                                  IsEnabled="{x:Bind Vm.AmfEncodeEnabled, Mode=OneWay}"/>
                         <CheckBox x:Name="SkipStartupSelfTestCb" Content="跳过测试（每次点开始处理不再先用 1 秒测试视频验证勾选流程，直接处理）"
                                   IsChecked="{x:Bind Vm.SkipStartupSelfTest, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="SafeFrameRateCb" Content="开启安全帧率 (NCNN 遇到设备丢失/显存/内存溢出时强制停止)" IsChecked="{x:Bind Vm.UseSafeFrameRate, Mode=TwoWay}" FontSize="12"/>

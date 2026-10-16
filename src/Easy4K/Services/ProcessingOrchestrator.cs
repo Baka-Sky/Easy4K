@@ -473,15 +473,12 @@ public sealed class ProcessingOrchestrator
 
             var fpsForMerge = ctx.Options.Interpolation ? outFps : ctx.Video.FrameRate;
             var total = ctx.Options.Interpolation ? targetFrames : totalFrames;
-            // 勾选「使FFmpeg尝试使用GPU加速」→ GPU 编码优先（NVIDIA NVENC → AMD AMF → Intel QSV），失败自动回退 CPU libx265
-            // 勾选「使用 AMD AMF 硬件编码」→ 直接锁定 AMF（界面在检测到 N 卡时会禁用该项）；CQ/QP 与 CPU CRF 都来自高级页。
+            // 勾选「使FFmpeg尝试使用GPU加速」→ 自动挑硬件编码器（N 卡 NVENC / A 卡 AMF / Intel QSV），失败回退 CPU libx265。
+            // CPU 处理模式下一律走 CPU 编码：CPU 模式意味着"不要碰显卡"，再挑硬件编码器自相矛盾。
+            // CQ/QP 与 CPU CRF 都来自高级页。
             var cpuArgs = CpuEncodeArgs(ctx.Settings.EncodePreset, ctx.Settings.Crf);
-            // 勾了「使用 AMD AMF 硬件编码」就等同于"要硬件编码"：即使「使FFmpeg尝试使用GPU加速」没勾也照走 AMF，
-            // 否则用户勾了 AMF 却仍在 CPU 编码 —— 两个选项看着互相打架，还看不出为什么没生效。
-            var wantHwEnc = ctx.Settings.UseGpuAcceleration || ctx.Settings.ForceAmfEncode;
-            var hwEnc = wantHwEnc
-                ? DetectHardwareEncoder(ctx.Tools.FFmpegExe, ctx.Gpu, ctx.Settings.ForceAmfEncode)
-                : null;
+            var wantHwEnc = ctx.Settings.UseGpuAcceleration && !ctx.Settings.UseCpuProcessing;
+            var hwEnc = wantHwEnc ? DetectHardwareEncoder(ctx.Tools.FFmpegExe, ctx.Gpu) : null;
             var hwArgs = hwEnc is null ? null : HwEncodeArgs(hwEnc, ctx.Settings.HwQualityMode, ctx.Settings.HwQuality);
             if (wantHwEnc && hwEnc is null)
                 _logger.Warn("未检测到可用的 GPU 编码器（NVENC/AMF/QSV），本次合并视频使用 CPU 编码（libx265）");
@@ -2510,12 +2507,11 @@ public sealed class ProcessingOrchestrator
     private static string? _detectedHwEncoder;
 
     /// <summary>探测 FFmpeg 可用的 GPU 硬件编码器（NVENC → AMF → QSV，覆盖 NVIDIA/AMD/Intel），返回编码器名。
+    /// 编码器由显卡自动决定（N 卡 NVENC / A 卡 AMF / Intel QSV），界面不再提供手动选择。
     /// 探测结果静态缓存，仅首次运行 ffmpeg -encoders 查询一次；探测不到返回 null（调用方回退 CPU）。
-    /// forceAmf 为真时直接锁定 hevc_amf（高级页「使用 AMD AMF 编码」，仅 AMD 显卡可勾）。
     /// 注意：编码器"编译进 FFmpeg"不代表硬件可用，实际失败时上层会自动回退 CPU 重试。</summary>
-    private static string? DetectHardwareEncoder(string ffmpegExe, GpuInfo gpu, bool forceAmf = false)
+    private static string? DetectHardwareEncoder(string ffmpegExe, GpuInfo gpu)
     {
-        if (forceAmf) return "hevc_amf";
         if (_detectedHwEncoder is not null)
             return string.IsNullOrEmpty(_detectedHwEncoder) ? null : _detectedHwEncoder;
         try

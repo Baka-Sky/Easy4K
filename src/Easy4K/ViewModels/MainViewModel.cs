@@ -95,11 +95,10 @@ public partial class MainViewModel : ObservableObject
         _noReport = !app.ReportEnabled;
         _skipStartupSelfTest = !app.StartupSelfTest;
         _threadCount = Math.Clamp(app.ThreadCount, 1, 32);
-        // 编码质量（高级页）：CRF / CQ-QP / AMD AMF / 保留字幕
+        // 编码质量（高级页）：CRF / CQ-QP / 保留字幕
         _crf = Math.Clamp(app.Crf, 0, 51);
         _hwQuality = Math.Clamp(app.HwQuality, 0, 51);
         _hwQualityMode = app.HwQualityMode ?? "";
-        _forceAmfEncode = app.ForceAmfEncode;
         _keepSubtitles = app.KeepSubtitles;
         _hdrSaturation = Math.Clamp(app.HdrSaturation, 0, 200);
         _hdrContrast = Math.Clamp(app.HdrContrast, 0, 200);
@@ -726,22 +725,6 @@ public partial class MainViewModel : ObservableObject
         get => HwQualityMode == "qp";
         set => HwQualityMode = value ? "qp" : (HwQualityMode == "qp" ? "" : HwQualityMode);
     }
-
-    /// <summary>强制使用 AMD AMF 硬件编码（仅 AMD 显卡可勾）</summary>
-    [ObservableProperty] private bool _forceAmfEncode;
-
-    partial void OnForceAmfEncodeChanged(bool value)
-    {
-        _app.ForceAmfEncode = value;
-        _settings.Save(_app, _pathConfig);
-        // AMF 本身就是一种 GPU 硬件编码：勾上它就必须同时打开「使FFmpeg尝试使用GPU加速」，
-        // 否则会出现"勾了 AMF 却还在用 CPU 编码"——两个选项互相打架，用户看不出为什么没生效。
-        if (value && !UseGpuAcceleration) UseGpuAcceleration = true;
-    }
-
-    /// <summary>是否允许开启「使用 AMD AMF 硬件编码」：检测到 NVIDIA 显卡就直接禁用（AMF 是 AMD 的编码器）。
-    /// 显卡名字探测不到时不拦，交给实际编码失败后的自动回退处理。</summary>
-    public bool AmfEncodeEnabled => _gpu?.IsNvidia != true;
 
     /// <summary>保留原视频内嵌字幕（仅检测到字幕时可勾）</summary>
     [ObservableProperty] private bool _keepSubtitles;
