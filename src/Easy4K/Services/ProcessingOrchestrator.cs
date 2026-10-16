@@ -1799,27 +1799,35 @@ public sealed class ProcessingOrchestrator
             FullMode = BoundedChannelFullMode.Wait
         });
 
+        // 故障联动：任一 worker 抛异常时必须取消整条流水，否则另一侧会因为输出队列满（容量 2 + Wait）
+        // 永久阻塞在 WriteAsync 上 —— 表现是"处理卡住不动"，而不是报错退出，用户完全不知道该重试还是清理。
+        // turboToken 用于本流水内部的所有读写与子进程调用；用户按停止走的是外层 ct，两者区分开，
+        // 这样"用户主动停止"与"worker 报错"能在最后分辨，前者不掩盖、后者不漏报。
+        using var turboCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var turboToken = turboCts.Token;
+
         var srWorker = Task.Run(async () =>
         {
             try
             {
-                await foreach (var block in srQueue.Reader.ReadAllAsync(ct))
+                await foreach (var block in srQueue.Reader.ReadAllAsync(turboToken))
                 {
-                    if (!await SuperResBlockAsync(ctx, block, turboRoot, srFrames, jThreads, cpu, ct,
+                    if (!await SuperResBlockAsync(ctx, block, turboRoot, srFrames, jThreads, cpu, turboToken,
                             p => hub.Advance("sr", p.Current, p.LatestFramePath,
                                              block.SrStartNumber + Math.Max(0, p.Current - 1))))
                         throw new InvalidOperationException($"第 {block.Index} 块超分失败");
                     hub.CommitBlock("sr", block.Frames.Count);
-                    await ifQueue.Writer.WriteAsync(block, ct);
+                    await ifQueue.Writer.WriteAsync(block, turboToken);
                 }
                 ifQueue.Writer.Complete();
             }
             catch (Exception ex)
             {
                 ifQueue.Writer.TryComplete(ex);
+                turboCts.Cancel();   // 联动：让补帧侧与生产侧都不要再等
                 throw;
             }
-        }, ct);
+        }, turboToken);
 
         // 补帧流水的进度上报：进度中枢按「源帧」计量，所以把"已产出的输出帧数"换算回源帧数；
         // 借了下一块的首帧会多算一份插值，这里按本块补帧实际处理的帧数（去重时 = 保留帧数）封顶。
@@ -1835,15 +1843,19 @@ public sealed class ProcessingOrchestrator
 
         var ifWorker = Task.Run(async () =>
         {
+            // 补帧侧原来没有 try/catch：它一旦抛异常就没人再读 ifQueue，超分侧会永久阻塞在 WriteAsync 上。
+            // 现在失败时同时把上游队列关掉 + 取消整条流水，故障表现为明确报错而不是卡死。
+            try
+            {
             // 押后一块再补帧：要知道"下一帧"是谁才能把块的末帧插值对。
             // RIFE 对没有后继的末帧只能原地保持，而整段处理时它是与下一帧的插值结果 ——
             // 押后一块就能把下一块的首帧借来当"下一帧"，块边界与整段处理结果完全一致。
             TurboBlock? pending = null;
-            await foreach (var block in ifQueue.Reader.ReadAllAsync(ct))
+            await foreach (var block in ifQueue.Reader.ReadAllAsync(turboToken))
             {
                 if (pending is not null)
                 {
-                    if (!await InterpBlockAsync(ctx, pending, turboRoot, ifFrames, ifMult, jThreads, cpu, LookaheadOf(block), ct, ReportIf(pending)))
+                    if (!await InterpBlockAsync(ctx, pending, turboRoot, ifFrames, ifMult, jThreads, cpu, LookaheadOf(block), turboToken, ReportIf(pending)))
                         throw new InvalidOperationException($"第 {pending.Index} 块补帧失败");
                     hub.CommitBlock("if", pending.IfFrameCount);
                 }
@@ -1852,11 +1864,18 @@ public sealed class ProcessingOrchestrator
             // 最后一块没有"下一块"，它的末帧本来就是原地保持（整段处理时也一样）
             if (pending is not null)
             {
-                if (!await InterpBlockAsync(ctx, pending, turboRoot, ifFrames, ifMult, jThreads, cpu, null, ct, ReportIf(pending)))
+                if (!await InterpBlockAsync(ctx, pending, turboRoot, ifFrames, ifMult, jThreads, cpu, null, turboToken, ReportIf(pending)))
                     throw new InvalidOperationException($"第 {pending.Index} 块补帧失败");
                 hub.CommitBlock("if", pending.IfFrameCount);
             }
-        }, ct);
+            }
+            catch (Exception ex)
+            {
+                srQueue.Writer.TryComplete(ex);
+                turboCts.Cancel();     // 联动：让超分侧与生产侧都不要再等
+                throw;
+            }
+        }, turboToken);
 
         /// <summary>下一块里"第一个保留帧"的产物路径：补帧拿它当"下一帧"，让本块末帧的插值与整段一致。
         /// 去重时该块超分产物是全帧，所以必须按保留帧下标取，不能直接取 00000001。</summary>
@@ -1950,7 +1969,7 @@ public sealed class ProcessingOrchestrator
 
             // CPU 侧准备：把块帧拷进独立目录（外部工具只吃目录），这一步与 GPU 的处理同时进行
             await PrepareBlockAsync(block, turboRoot, ct);
-            await srQueue.Writer.WriteAsync(block, ct);   // 队列满 → 在这里等 GPU 追上来
+            await srQueue.Writer.WriteAsync(block, turboToken);   // 队列满 → 在这里等 GPU 追上来（worker 报错时靠联动取消解开）
 
             // 被剔除的源帧不会再进补帧：对它视作已处理完。超分全算时超分不需要记账，否则超分也要记。
             var dropped = (e - s) - (keptOffsets?.Count ?? allFrames.Count);
@@ -1982,18 +2001,36 @@ public sealed class ProcessingOrchestrator
                 // CPU 侧准备：把块帧拷进独立目录（外部工具只吃目录），这一步与 GPU 的处理同时进行
                 await PrepareBlockAsync(block, turboRoot, ct);
 
-                await srQueue.Writer.WriteAsync(block, ct);   // 队列满 → 在这里等 GPU 追上来
+                await srQueue.Writer.WriteAsync(block, turboToken);   // 队列满 → 在这里等 GPU 追上来（worker 报错时靠联动取消解开）
             }
 
             if (streamDedup) await ReleaseDedupBlockAsync(blockCount - 1);
 
             srQueue.Writer.Complete();
-            await Task.WhenAll(srWorker, ifWorker);
+            // 优先抛出 worker 里的真实异常：一侧失败会联动取消另一侧，另一侧抛的是 OperationCanceledException，
+            // 直接 await Task.WhenAll 可能把"被取消"当成结论，用户就只看到"已取消"而不知道真实原因。
+            var workers = Task.WhenAll(srWorker, ifWorker);
+            try { await workers; }
+            catch
+            {
+                var real = workers.Exception?.InnerExceptions.FirstOrDefault(e => e is not OperationCanceledException);
+                if (real is not null) throw real;
+                throw;
+            }
         }
         catch (OperationCanceledException)
         {
             srQueue.Writer.TryComplete();
             ifQueue.Writer.TryComplete();
+            // 联动取消（不是用户按停止）时，把 worker 里的真实异常捞出来抛：
+            // 否则用户看到的是"处理已取消"，完全不知道真实原因（也分不清该重试还是该清临时目录）。
+            if (!ct.IsCancellationRequested && turboCts.IsCancellationRequested)
+            {
+                var done = Task.WhenAll(srWorker, ifWorker);
+                try { await done; } catch { /* 只为取出真实异常 */ }
+                var real = done.Exception?.InnerExceptions.FirstOrDefault(e => e is not OperationCanceledException);
+                if (real is not null) throw real;
+            }
             throw;
         }
         catch (Exception ex)
