@@ -377,8 +377,16 @@ public sealed class ProcessingOrchestrator
                         _logger.Warn($"CPU 处理模式对 PyTorch 轨补帧族不生效（{ctx.IfModel} 上游只有 CUDA 实现），本次仍走 GPU");
                     vfiExe = ctx.Tools.TorchPythonExe;
                     // 高级性能选项同样要落到这条轨上：处理线程 → torch/OpenCV 线程数，降低画质 → FP16 推理。
+                    // 另外两点必须讲清楚（原先把「安全帧率」错当成驱动的 --scdet 开关）：
+                    // · 「安全帧率」在这条轨上没有对应语义：PyTorch 驱动本来就是一出错就非零退出、不会降级重试，
+                    //   所以它既不该控制场景检测，也没有额外行为，这里只在开启时提示一句。
+                    // · 场景切换检测（切镜处不插帧）命中时驱动会**写入源帧本身**（物理帧）。阈值偏低时快速运动会被
+                    //   误判成切镜，于是在运动段插入物理帧 → 观感就是顿挫/鬼影。所以这里默认**不开**，
+                    //   需要时由后续单独的开关 + 实测标定阈值再启用。
+                    if (ctx.Settings.UseSafeFrameRate && ctx.Settings.UseCpuProcessing == false)
+                        _logger.Info("PyTorch 轨补帧：安全帧率无额外作用（该轨出错即停，不做降级重试）；场景切换检测默认关闭以免运动中插物理帧");
                     args = VfiTorchCommandBuilder.Build(ctx.Tools.VfiDriverScript, ctx.IfDriverKey, inputDirForIf, ifFrames,
-                        ifTarget, VfiTorchCommandBuilder.ScaleFor(ctx.Video.Width), ctx.Settings.UseSafeFrameRate,
+                        ifTarget, VfiTorchCommandBuilder.ScaleFor(ctx.Video.Width), sceneDetect: false,
                         threads: Math.Clamp(ctx.Settings.ThreadCount, 1, 32), fp16: ctx.Settings.LowerQualityForVram);
                     _logger.Command($"python-torch {args}");
                 }
