@@ -573,6 +573,9 @@ public sealed class RemoteControlServer
                 dedup = _vm.DedupEnabled,
                 audioSr = _vm.AudioSrEnabled,
                 turboMode = _vm.TurboMode,
+                // 保留原视频内嵌字幕：hasSubtitles 让客户端知道该不该解锁这个开关（服务端探测到的当前视频字幕流）
+                keepSubtitles = _vm.KeepSubtitles,
+                hasSubtitles = _vm.HasSubtitles,
                 hdrEnabled = _vm.IsHdrEnabled,
                 ifMultiplierLocked = _vm.IfMultiplierLocked
             },
@@ -993,6 +996,8 @@ public sealed class RemoteControlServer
         _vm.AudioSrEnabled = Bool("audioSr", _vm.AudioSrEnabled);
         if (_vm.IsHdrEnabled) _vm.SdrToHdr = Bool("sdrToHdr", _vm.SdrToHdr);
         _vm.TurboMode = Bool("turboMode", _vm.TurboMode);
+        // 保留内嵌字幕：服务端最终仍会按「当前视频确实有字幕流」再兜一道（见 ProcessingOptions 组装处）
+        _vm.KeepSubtitles = Bool("keepSubtitles", _vm.KeepSubtitles);
 
         // 路径
         var outRoot = Str("outputRoot", "");
@@ -1031,6 +1036,9 @@ public sealed class RemoteControlServer
                 dedup = _vm.DedupEnabled,
                 audioSr = _vm.AudioSrEnabled,
                 turboMode = _vm.TurboMode,
+                // 保留原视频内嵌字幕：hasSubtitles 让客户端知道该不该解锁这个开关（服务端探测到的当前视频字幕流）
+                keepSubtitles = _vm.KeepSubtitles,
+                hasSubtitles = _vm.HasSubtitles,
                 // RIFE v2/v3 这类老模型只支持 ×2，客户端据此把「补帧倍率」按钮隐藏/禁用
                 ifMultiplierLocked = _vm.IfMultiplierLocked
             },
