@@ -474,13 +474,16 @@ public sealed class ProcessingOrchestrator
             var fpsForMerge = ctx.Options.Interpolation ? outFps : ctx.Video.FrameRate;
             var total = ctx.Options.Interpolation ? targetFrames : totalFrames;
             // 勾选「使FFmpeg尝试使用GPU加速」→ GPU 编码优先（NVIDIA NVENC → AMD AMF → Intel QSV），失败自动回退 CPU libx265
-            // 「使用 AMD AMF 编码」开启时直接锁定 AMF；CQ/QP 与 CPU CRF 都来自高级页。
+            // 勾选「使用 AMD AMF 硬件编码」→ 直接锁定 AMF（界面在检测到 N 卡时会禁用该项）；CQ/QP 与 CPU CRF 都来自高级页。
             var cpuArgs = CpuEncodeArgs(ctx.Settings.EncodePreset, ctx.Settings.Crf);
-            var hwEnc = ctx.Settings.UseGpuAcceleration
-                ? DetectHardwareEncoder(ctx.Tools.FFmpegExe, ctx.Gpu, ctx.Settings.ForceAmfEncode && ctx.Gpu.IsAmd)
+            // 勾了「使用 AMD AMF 硬件编码」就等同于"要硬件编码"：即使「使FFmpeg尝试使用GPU加速」没勾也照走 AMF，
+            // 否则用户勾了 AMF 却仍在 CPU 编码 —— 两个选项看着互相打架，还看不出为什么没生效。
+            var wantHwEnc = ctx.Settings.UseGpuAcceleration || ctx.Settings.ForceAmfEncode;
+            var hwEnc = wantHwEnc
+                ? DetectHardwareEncoder(ctx.Tools.FFmpegExe, ctx.Gpu, ctx.Settings.ForceAmfEncode)
                 : null;
             var hwArgs = hwEnc is null ? null : HwEncodeArgs(hwEnc, ctx.Settings.HwQualityMode, ctx.Settings.HwQuality);
-            if (ctx.Settings.UseGpuAcceleration && hwEnc is null)
+            if (wantHwEnc && hwEnc is null)
                 _logger.Warn("未检测到可用的 GPU 编码器（NVENC/AMF/QSV），本次合并视频使用 CPU 编码（libx265）");
             else
                 _logger.Info(hwEnc is null

@@ -734,10 +734,14 @@ public partial class MainViewModel : ObservableObject
     {
         _app.ForceAmfEncode = value;
         _settings.Save(_app, _pathConfig);
+        // AMF 本身就是一种 GPU 硬件编码：勾上它就必须同时打开「使FFmpeg尝试使用GPU加速」，
+        // 否则会出现"勾了 AMF 却还在用 CPU 编码"——两个选项互相打架，用户看不出为什么没生效。
+        if (value && !UseGpuAcceleration) UseGpuAcceleration = true;
     }
 
-    /// <summary>本机是否为 AMD 显卡：「使用 AMD AMF 编码」只对 A 卡开放</summary>
-    public bool IsAmdGpu => _gpu?.IsAmd == true;
+    /// <summary>是否允许开启「使用 AMD AMF 硬件编码」：检测到 NVIDIA 显卡就直接禁用（AMF 是 AMD 的编码器）。
+    /// 显卡名字探测不到时不拦，交给实际编码失败后的自动回退处理。</summary>
+    public bool AmfEncodeEnabled => _gpu?.IsNvidia != true;
 
     /// <summary>保留原视频内嵌字幕（仅检测到字幕时可勾）</summary>
     [ObservableProperty] private bool _keepSubtitles;
