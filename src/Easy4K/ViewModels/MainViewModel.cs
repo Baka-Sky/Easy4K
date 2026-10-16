@@ -262,6 +262,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(OutputResolutionText))]
     [NotifyPropertyChangedFor(nameof(FinalOutputName))]
+    [NotifyPropertyChangedFor(nameof(SrSceneText))]
     private int _srScale = 2;
 
     /// <summary>超分「算法」索引（取值见 SrCatalog.Families）。
@@ -278,7 +279,9 @@ public partial class MainViewModel : ObservableObject
     public string SrFamilyScene => SrCatalog.At(SrEngineIndex)?.Scene ?? "";
 
     /// <summary>当前所选超分模型适合的场景 + 推荐星级，显示在超分设置面板右下角。
-    /// 模型自己有说明就用模型的，否则回落到该算法的整体说明与星级。</summary>
+    /// 模型自己有说明就用模型的，否则回落到该算法的整体说明与星级。
+    /// 末尾固定带上当前生效倍率：CUGAN / waifu2x / SRMD 这些一个变体覆盖多档倍率的模型，
+    /// 切倍率时模型不变、说明也不变，看不出实际按几倍跑；带上倍率后这行总能反映当前设置。</summary>
     public string SrSceneText
     {
         get
@@ -287,7 +290,8 @@ public partial class MainViewModel : ObservableObject
             var stars = SrCatalog.StarsOf(SrModel);
             if (stars == 0) stars = SrCatalog.At(SrEngineIndex)?.Stars ?? 0;
             if (string.IsNullOrEmpty(scene)) return "";
-            return stars > 0 ? $"{scene} · {ModelRating.Stars(stars)}" : scene;
+            var head = stars > 0 ? $"{scene} · {ModelRating.Stars(stars)}" : scene;
+            return $"{head} · 当前 ×{SrScale}";
         }
     }
 
