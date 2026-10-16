@@ -128,6 +128,11 @@
                             <CheckBox Content="补帧" IsChecked="{x:Bind Vm.Interpolation, Mode=TwoWay}" FontSize="12"/>
                             <CheckBox Content="合并视频 (依赖拆帧)" IsChecked="{x:Bind Vm.MergeVideo, Mode=TwoWay}" FontSize="12"/>
                             <CheckBox Content="SDR -> HDR 转换" IsChecked="{x:Bind Vm.SdrToHdr, Mode=TwoWay}" IsEnabled="{x:Bind Vm.IsHdrEnabled, Mode=OneWay}" FontSize="12"/>
+                            <!-- 只在检测到字幕流时可勾：没有字幕时禁用以免造成"勾了但没用"的误解 -->
+                            <CheckBox Content="保留原视频内嵌字幕" IsChecked="{x:Bind Vm.KeepSubtitles, Mode=TwoWay}"
+                                      IsEnabled="{x:Bind Vm.KeepSubtitlesEnabled, Mode=OneWay}" FontSize="12"/>
+                            <TextBlock Text="仅在原视频确实带字幕流时可勾；成片是从帧序列重建的，字幕会从原文件复制过来（合并产物为 mkv）。"
+                                       FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>
                 </Grid>

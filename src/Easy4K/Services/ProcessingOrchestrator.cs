@@ -474,24 +474,29 @@ public sealed class ProcessingOrchestrator
             var fpsForMerge = ctx.Options.Interpolation ? outFps : ctx.Video.FrameRate;
             var total = ctx.Options.Interpolation ? targetFrames : totalFrames;
             // 勾选「使FFmpeg尝试使用GPU加速」→ GPU 编码优先（NVIDIA NVENC → AMD AMF → Intel QSV），失败自动回退 CPU libx265
-            var hwEnc = ctx.Settings.UseGpuAcceleration ? DetectHardwareEncoder(ctx.Tools.FFmpegExe, ctx.Gpu) : null;
+            // 「使用 AMD AMF 编码」开启时直接锁定 AMF；CQ/QP 与 CPU CRF 都来自高级页。
+            var cpuArgs = CpuEncodeArgs(ctx.Settings.EncodePreset, ctx.Settings.Crf);
+            var hwEnc = ctx.Settings.UseGpuAcceleration
+                ? DetectHardwareEncoder(ctx.Tools.FFmpegExe, ctx.Gpu, ctx.Settings.ForceAmfEncode && ctx.Gpu.IsAmd)
+                : null;
+            var hwArgs = hwEnc is null ? null : HwEncodeArgs(hwEnc, ctx.Settings.HwQualityMode, ctx.Settings.HwQuality);
             if (ctx.Settings.UseGpuAcceleration && hwEnc is null)
                 _logger.Warn("未检测到可用的 GPU 编码器（NVENC/AMF/QSV），本次合并视频使用 CPU 编码（libx265）");
             else
                 _logger.Info(hwEnc is null
-                    ? "开始合并视频（编码：CPU libx265）"
-                    : $"开始合并视频（编码：GPU {hwEnc.Split(' ')[0]}）");
+                    ? $"开始合并视频（编码：CPU libx265，CRF {Math.Clamp(ctx.Settings.Crf, 0, 51)}）"
+                    : $"开始合并视频（编码：GPU {hwEnc}，质量模式 {QualityModeText(ctx.Settings.HwQualityMode)} {Math.Clamp(ctx.Settings.HwQuality, 0, 51)}）");
             var args = FFmpegCommandBuilder.MergeFrames(framesForMerge, tempVideo, fpsForMerge,
-                hwEnc ?? CpuEncodeArgs(ctx.Settings.EncodePreset));
+                hwArgs ?? cpuArgs, SubtitleSource(ctx));
             _logger.Command($"ffmpeg {args}");
             var exit = await RunStageWithProgress(ProcessStage.Merging, "合并中", total,
                 ctx.Tools.FFmpegExe, args, ParseFfmpegFrame, null, ct);
             if (exit != 0 && hwEnc is not null)
             {
                 // 硬件编码失败 → 自动回退 CPU 编码重试（NVIDIA/AMD/Intel 都可能有编码器不可用的情况）
-                _logger.Warn($"硬件编码 {hwEnc.Split(' ')[0]} 失败，自动回退到 CPU 编码（libx265）");
+                _logger.Warn($"硬件编码 {hwEnc} 失败，自动回退到 CPU 编码（libx265）");
                 args = FFmpegCommandBuilder.MergeFrames(framesForMerge, tempVideo, fpsForMerge,
-                    CpuEncodeArgs(ctx.Settings.EncodePreset));
+                    cpuArgs, SubtitleSource(ctx));
                 _logger.Command($"ffmpeg {args}");
                 exit = await RunStageWithProgress(ProcessStage.Merging, "合并中(已回退)", total,
                     ctx.Tools.FFmpegExe, args, ParseFfmpegFrame, null, ct);
@@ -2421,23 +2426,56 @@ public sealed class ProcessingOrchestrator
 
     // ---- GPU 编码探测（合并阶段） ----
 
-    /// <summary>CPU 编码参数（通用回退方案）</summary>
-    private static string CpuEncodeArgs(string preset) => $"libx265 -preset {preset} -crf 18";
+    /// <summary>CPU 编码参数（通用回退方案）。crf 来自高级页「CPU CRF」：0~51，越小越不压缩、体积越大。</summary>
+    private static string CpuEncodeArgs(string preset, int crf) =>
+        $"libx265 -preset {preset} -crf {Math.Clamp(crf, 0, 51)}";
 
     /// <summary>候选 GPU 硬件编码器（按 NVIDIA → AMD → Intel 顺序），失败时上层会自动回退 CPU。</summary>
-    private static readonly string[] HwEncoderCandidates =
+    private static readonly string[] HwEncoderCandidates = { "hevc_nvenc", "hevc_amf", "hevc_qsv" };
+
+    /// <summary>按「编码器 + 质量模式」生成参数。
+    /// mode："" = 默认档（与历史行为一致，CQ 18）/ "cq" = 恒定质量 / "qp" = 固定量化参数；quality 取 0~51，越小画质越好。
+    /// 注意 AMF 没有独立的 CQ 参数，CQ 与 QP 在 AMF 上都落到 cqp 的 qp_i/qp_p。</summary>
+    private static string HwEncodeArgs(string encoder, string mode, int quality)
     {
-        "hevc_nvenc -preset p7 -tune hq -rc vbr -cq 18",
-        "hevc_amf -quality quality -rc cqp -qp_i 18 -qp_p 18",
-        "hevc_qsv -preset medium -global_quality 18"
+        var q = Math.Clamp(quality, 0, 51);
+        return encoder switch
+        {
+            "hevc_nvenc" => mode == "qp"
+                ? $"hevc_nvenc -preset p7 -tune hq -rc constqp -qp {q}"
+                : $"hevc_nvenc -preset p7 -tune hq -rc vbr -cq {q}",
+            "hevc_amf" => $"hevc_amf -quality quality -rc cqp -qp_i {q} -qp_p {q}",
+            "hevc_qsv" => mode == "qp"
+                ? $"hevc_qsv -preset medium -q {q}"
+                : $"hevc_qsv -preset medium -global_quality {q}",
+            _ => encoder
+        };
+    }
+
+    /// <summary>质量模式显示名（用于合并日志）</summary>
+    private static string QualityModeText(string mode) => mode switch
+    {
+        "cq" => "CQ 恒定质量",
+        "qp" => "QP 固定量化",
+        _ => "默认"
     };
+
+    /// <summary>「保留原视频内嵌字幕」生效时的字幕来源：成片是从帧序列重建的，原文件的字幕不会自己跟过来，
+    /// 必须把原文件当第二个输入映射。未勾选 / 原文件没有字幕流 / 没有输入文件时返回 null（不映射，行为与历史一致）。</summary>
+    private static string? SubtitleSource(ProcessingContext ctx) =>
+        ctx.Options.KeepSubtitles && ctx.Video.HasSubtitles && !string.IsNullOrWhiteSpace(ctx.InputVideo)
+            ? ctx.InputVideo
+            : null;
+
     private static string? _detectedHwEncoder;
 
-    /// <summary>探测 FFmpeg 可用的 GPU 硬件编码器（NVENC → AMF → QSV，覆盖 NVIDIA/AMD/Intel）。
+    /// <summary>探测 FFmpeg 可用的 GPU 硬件编码器（NVENC → AMF → QSV，覆盖 NVIDIA/AMD/Intel），返回编码器名。
     /// 探测结果静态缓存，仅首次运行 ffmpeg -encoders 查询一次；探测不到返回 null（调用方回退 CPU）。
+    /// forceAmf 为真时直接锁定 hevc_amf（高级页「使用 AMD AMF 编码」，仅 AMD 显卡可勾）。
     /// 注意：编码器"编译进 FFmpeg"不代表硬件可用，实际失败时上层会自动回退 CPU 重试。</summary>
-    private static string? DetectHardwareEncoder(string ffmpegExe, GpuInfo gpu)
+    private static string? DetectHardwareEncoder(string ffmpegExe, GpuInfo gpu, bool forceAmf = false)
     {
+        if (forceAmf) return "hevc_amf";
         if (_detectedHwEncoder is not null)
             return string.IsNullOrEmpty(_detectedHwEncoder) ? null : _detectedHwEncoder;
         try
@@ -2457,15 +2495,14 @@ public sealed class ProcessingOrchestrator
             p.Start();
             var text = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
             p.WaitForExit(5000);
-            foreach (var cand in HwEncoderCandidates)
+            foreach (var name in HwEncoderCandidates)
             {
-                var name = cand.Split(" ")[0];
                 // 非 NVIDIA 显卡直接跳过 NVENC（否则每次合并都会白尝试失败再回退）
                 if (!gpu.IsNvidia && name.StartsWith("hevc_nvenc", StringComparison.OrdinalIgnoreCase)) continue;
                 if (text.Contains(name, StringComparison.OrdinalIgnoreCase))
                 {
-                    _detectedHwEncoder = cand;
-                    return cand;
+                    _detectedHwEncoder = name;
+                    return name;
                 }
             }
         }

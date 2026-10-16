@@ -20,6 +20,9 @@ public sealed class VideoInfo
     public string BitRateText => $"{BitRate / 1000} kbps";
     public bool HasAudio => !string.IsNullOrWhiteSpace(AudioCodec) && !AudioCodec.Equals("none", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>是否存在字幕流（ffprobe 探测结果）。决定主页「保留原视频内嵌字幕」是否可勾。</summary>
+    public bool HasSubtitles { get; set; }
+
     public bool IsValid => Width > 0 && Height > 0 && FrameRate > 0;
 
     /// <summary>根据原始分辨率和超分倍率推断输出分辨率名称</summary>

@@ -9,6 +9,8 @@ public sealed class ProcessingOptions
     public bool MergeVideo { get; set; } = true;
     public bool MergeAudio { get; set; } = true;       // 合并原视频音频到最终视频（从原视频提取）
     public bool SdrToHdr { get; set; } = false;
+    /// <summary>保留原视频内嵌字幕：合并成片时把原文件里的字幕流映射并复制过去（仅原视频检测到字幕时可勾）</summary>
+    public bool KeepSubtitles { get; set; }
     /// <summary>补帧目标帧率（&gt;0 时优先于倍率：输出 fps 精确等于该值，总帧数按 源帧数×比例 四舍五入；
     /// 用于避免 23.976×2=47.952 这种带小数的成片帧率）。0 = 按倍率。</summary>
     public double TargetFps { get; set; }

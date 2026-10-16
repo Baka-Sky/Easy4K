@@ -35,6 +35,21 @@ public sealed class AppSettings
 
     public string EncodePreset { get; set; } = "medium";
 
+    /// <summary>CPU 编码（libx265）的 CRF 质量档 0~51：越小越不压缩，画质越好但成片体积越大（默认 18）</summary>
+    public int Crf { get; set; } = 18;
+
+    /// <summary>硬件编码质量模式："" = 用默认档 / "cq" = 恒定质量（NVENC -cq、AMF -qp_i/-qp_p、QSV -global_quality）/ "qp" = 固定量化参数（NVENC -rc constqp -qp、AMF cqp、QSV -q）。两者互斥。</summary>
+    public string HwQualityMode { get; set; } = "";
+
+    /// <summary>硬件编码的 CQ / QP 取值 0~51：越小画质越好、码率越高（默认 18）</summary>
+    public int HwQuality { get; set; } = 18;
+
+    /// <summary>强制使用 AMD AMF 硬件编码（仅 AMD 显卡可勾）：跳过 NVENC/QSV 优先探测，直接走 hevc_amf</summary>
+    public bool ForceAmfEncode { get; set; }
+
+    /// <summary>保留原视频内嵌字幕：合并成片时把原文件里的字幕流复制过去（仅检测到字幕时可开）</summary>
+    public bool KeepSubtitles { get; set; }
+
     public string Language { get; set; } = "zh-CN";
     public string Theme { get; set; } = "system";
     /// <summary>图片背景主题（theme=image）使用的背景图路径，空 = 未选择（退化为普通亚克力）</summary>

@@ -24,14 +24,21 @@ public static class FFmpegCommandBuilder
     }
 
     /// <summary>把 PNG 序列合成视频。BUG-08：自动探测起始帧编号。
-    /// encArgs 由上层决定（GPU 硬件编码或 CPU libx265）；-threads 0 = 使用全部 CPU 核心，不限制。</summary>
-    public static string MergeFrames(string framesDir, string outputVideo, double fps, string encArgs)
+    /// encArgs 由上层决定（GPU 硬件编码或 CPU libx265）；-threads 0 = 使用全部 CPU 核心，不限制。
+    /// subtitleSource 非空时把该文件作为第二个输入，只取它的字幕流原样复制（-map 1:s?，没有字幕也不报错）：
+    /// 成片是从帧序列重建的，原文件里的字幕不会自己跟过来，必须显式映射；
+    /// 合并产物是 matroska，所以字幕可以直接 -c:s copy（mp4 不支持大多数字幕格式的 copy）。</summary>
+    public static string MergeFrames(string framesDir, string outputVideo, double fps, string encArgs,
+        string? subtitleSource = null)
     {
         var pattern = Path.Combine(framesDir, "%08d.png").Replace('\\', '/');
         var startNum = DetectStartNumber(framesDir);
         // 帧率固定用不变区域格式化：目标帧率可以是小数（如 59.94），缺了这一步在部分区域设置下会写成 "59,94"
         var fpsText = fps.ToString("0.##", CultureInfo.InvariantCulture);
-        var args = $"-y -framerate {fpsText} -start_number {startNum} -i \"{pattern}\" " +
+        var sub = string.IsNullOrWhiteSpace(subtitleSource)
+            ? ""
+            : $" -i \"{subtitleSource}\" -map 0:v:0 -map 1:s? -c:s copy";
+        var args = $"-y -framerate {fpsText} -start_number {startNum} -i \"{pattern}\"{sub} " +
                    $"-c:v {encArgs} -threads 0 -pix_fmt yuv420p -an \"{outputVideo}\"";
         return args;
     }

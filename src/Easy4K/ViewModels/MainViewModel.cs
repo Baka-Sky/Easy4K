@@ -95,6 +95,12 @@ public partial class MainViewModel : ObservableObject
         _noReport = !app.ReportEnabled;
         _skipStartupSelfTest = !app.StartupSelfTest;
         _threadCount = Math.Clamp(app.ThreadCount, 1, 32);
+        // 编码质量（高级页）：CRF / CQ-QP / AMD AMF / 保留字幕
+        _crf = Math.Clamp(app.Crf, 0, 51);
+        _hwQuality = Math.Clamp(app.HwQuality, 0, 51);
+        _hwQualityMode = app.HwQualityMode ?? "";
+        _forceAmfEncode = app.ForceAmfEncode;
+        _keepSubtitles = app.KeepSubtitles;
         _hdrSaturation = Math.Clamp(app.HdrSaturation, 0, 200);
         _hdrContrast = Math.Clamp(app.HdrContrast, 0, 200);
         _suppressRedWarning = app.SuppressRedWarning;
@@ -675,6 +681,79 @@ public partial class MainViewModel : ObservableObject
     public Microsoft.UI.Xaml.Visibility ThreadWarnVis
         => ThreadCount > 8 ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
 
+    // ===================== 编码质量（高级页） =====================
+
+    /// <summary>CPU 编码（libx265）CRF 0~51：越小越不压缩，画质越好但成片体积越大</summary>
+    [ObservableProperty] private int _crf = 18;
+
+    partial void OnCrfChanged(int value)
+    {
+        _app.Crf = Math.Clamp(value, 0, 51);
+        _settings.Save(_app, _pathConfig);
+    }
+
+    /// <summary>硬件编码质量模式："" 默认档 / "cq" 恒定质量 / "qp" 固定量化参数（二者互斥）</summary>
+    [ObservableProperty] private string _hwQualityMode = "";
+
+    /// <summary>硬件编码 CQ / QP 取值 0~51：越小画质越好、码率越高</summary>
+    [ObservableProperty] private int _hwQuality = 18;
+
+    partial void OnHwQualityChanged(int value)
+    {
+        _app.HwQuality = Math.Clamp(value, 0, 51);
+        _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnHwQualityModeChanged(string value)
+    {
+        _app.HwQualityMode = value ?? "";
+        _settings.Save(_app, _pathConfig);
+        // 互斥：模式一变，两个勾选框的选中态都要重算（开一个另一个自动弹起）
+        OnPropertyChanged(nameof(HwCqEnabled));
+        OnPropertyChanged(nameof(HwQpEnabled));
+    }
+
+    /// <summary>CQ 恒定质量模式：硬件按画面复杂度动态调整量化参数，画质更稳定</summary>
+    public bool HwCqEnabled
+    {
+        get => HwQualityMode == "cq";
+        set => HwQualityMode = value ? "cq" : (HwQualityMode == "cq" ? "" : HwQualityMode);
+    }
+
+    /// <summary>QP 固定量化参数：直接指定压缩力度</summary>
+    public bool HwQpEnabled
+    {
+        get => HwQualityMode == "qp";
+        set => HwQualityMode = value ? "qp" : (HwQualityMode == "qp" ? "" : HwQualityMode);
+    }
+
+    /// <summary>强制使用 AMD AMF 硬件编码（仅 AMD 显卡可勾）</summary>
+    [ObservableProperty] private bool _forceAmfEncode;
+
+    partial void OnForceAmfEncodeChanged(bool value)
+    {
+        _app.ForceAmfEncode = value;
+        _settings.Save(_app, _pathConfig);
+    }
+
+    /// <summary>本机是否为 AMD 显卡：「使用 AMD AMF 编码」只对 A 卡开放</summary>
+    public bool IsAmdGpu => _gpu?.IsAmd == true;
+
+    /// <summary>保留原视频内嵌字幕（仅检测到字幕时可勾）</summary>
+    [ObservableProperty] private bool _keepSubtitles;
+
+    partial void OnKeepSubtitlesChanged(bool value)
+    {
+        _app.KeepSubtitles = value;
+        _settings.Save(_app, _pathConfig);
+    }
+
+    /// <summary>当前输入视频是否有字幕流：没有就禁用「保留原视频内嵌字幕」</summary>
+    public bool HasSubtitles => Video?.HasSubtitles == true;
+
+    /// <summary>字幕复选框是否可用（有字幕才能勾；勾选项在没字幕时自动取消）</summary>
+    public bool KeepSubtitlesEnabled => HasSubtitles;
+
     /// <summary>安全帧率降级状态（供 ProgressPage 显示降级横幅）</summary>
     [ObservableProperty]
     private bool _isDegraded;
@@ -725,7 +804,15 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanStart))]
     [NotifyPropertyChangedFor(nameof(CanStartReason))]
     [NotifyPropertyChangedFor(nameof(StartBlockReasonVis))]
+    [NotifyPropertyChangedFor(nameof(HasSubtitles))]
+    [NotifyPropertyChangedFor(nameof(KeepSubtitlesEnabled))]
     private VideoInfo? _video;
+
+    /// <summary>换视频后重算「保留内嵌字幕」：新视频没有字幕流就把勾去掉，避免勾着一个不可能生效的选项。</summary>
+    partial void OnVideoChanged(VideoInfo? value)
+    {
+        if (KeepSubtitles && value?.HasSubtitles != true) KeepSubtitles = false;
+    }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VramWarning))]
@@ -1795,7 +1882,9 @@ public partial class MainViewModel : ObservableObject
                 TargetFps = TargetFpsActive ? TargetFps : 0,
                 // 音频超分：CPU 处理模式下不允许 FP16（UI 已拦截，这里再兜一道，避免配置被外部改动后带病启动）
                 AudioSr = AudioSrEnabled,
-                AudioSrPrecision = AudioSrPrecision == "fp16" && UseCpuProcessing ? "fp32" : AudioSrPrecision
+                AudioSrPrecision = AudioSrPrecision == "fp16" && UseCpuProcessing ? "fp32" : AudioSrPrecision,
+                // 保留内嵌字幕：只有原视频确实有字幕流时才映射（没字幕还勾着也不会报错，但没必要带上无用参数）
+                KeepSubtitles = KeepSubtitles && HasSubtitles
             },
             SrModel = SrModel,
             SrScale = SrScale,

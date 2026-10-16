@@ -59,7 +59,18 @@ public sealed class VideoInfoDetector
         info.AudioCodec = audioCodec;
         info.AudioSampleRate = audioRate;
 
+        // 字幕：有字幕流才允许勾「保留原视频内嵌字幕」，否则该项在界面上保持禁用
+        info.HasSubtitles = DetectSubtitles(videoPath);
+
         return info.IsValid ? info : null;
+    }
+
+    /// <summary>是否存在字幕流（内嵌或外挂软字幕都算，不看具体格式）。ffprobe 无字幕流时返回空。</summary>
+    private bool DetectSubtitles(string videoPath)
+    {
+        var args = $"-v error -select_streams s -show_entries stream=index -of csv=p=0 \"{videoPath}\"";
+        var (stdout, _, exit) = RunCaptured(_tools.FFprobeExe, args);
+        return exit == 0 && !string.IsNullOrWhiteSpace(stdout);
     }
 
     /// <summary>取音轨的编解码器与采样率（无音轨时返回 "" / 0）。</summary>

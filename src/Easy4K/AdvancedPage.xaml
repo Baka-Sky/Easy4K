@@ -212,10 +212,46 @@
                                    FontSize="10" Opacity="0.6"/>
                         <TextBlock Text="{x:Bind Vm.ThreadWarnText, Mode=OneWay}" Foreground="Orange"
                                    FontSize="11" TextWrapping="Wrap" Visibility="{x:Bind Vm.ThreadWarnVis, Mode=OneWay}"/>
+
+                        <!-- 编码质量：CPU 编码的 CRF、硬件编码的 CQ/QP（互斥）、强制 AMD AMF -->
+                        <Grid ColumnSpacing="8" Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="CPU CRF" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                            <NumberBox Grid.Column="1" Value="{x:Bind Vm.Crf, Mode=TwoWay}" Minimum="0" Maximum="51" SmallChange="1"
+                                       SpinButtonPlacementMode="Compact" Width="120"/>
+                            <TextBlock Grid.Column="2" Text="数值越小越不压缩：画质更好，但成片体积更大（0~51，默认 18）"
+                                       VerticalAlignment="Center" FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                        </Grid>
+                        <CheckBox x:Name="HwCqCb" FontSize="12"
+                                  Content="硬件编码 CQ（恒定质量模式：硬件按画面复杂度动态调整量化参数，画质更稳定）"
+                                  IsChecked="{x:Bind Vm.HwCqEnabled, Mode=TwoWay}"/>
+                        <CheckBox x:Name="HwQpCb" FontSize="12"
+                                  Content="硬件编码 QP（固定量化参数：直接指定压缩力度）"
+                                  IsChecked="{x:Bind Vm.HwQpEnabled, Mode=TwoWay}"/>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="CQ / QP 值" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                            <NumberBox Grid.Column="1" Value="{x:Bind Vm.HwQuality, Mode=TwoWay}" Minimum="0" Maximum="51" SmallChange="1"
+                                       SpinButtonPlacementMode="Compact" Width="120"/>
+                            <TextBlock Grid.Column="2" Text="取值范围 0~51，数值越小画质越好、码率越高；未勾选 CQ/QP 时用默认档。两者互斥：开一个另一个自动关闭。"
+                                       VerticalAlignment="Center" FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                        </Grid>
+                        <CheckBox x:Name="ForceAmfCb" FontSize="12"
+                                  Content="使用 AMD AMF 硬件编码（检测为 AMD 显卡才能开启；开启后跳过 NVENC/QSV 直接走 AMF）"
+                                  IsChecked="{x:Bind Vm.ForceAmfEncode, Mode=TwoWay}"
+                                  IsEnabled="{x:Bind Vm.IsAmdGpu, Mode=OneWay}"/>
                         <CheckBox x:Name="SkipStartupSelfTestCb" Content="跳过测试（每次点开始处理不再先用 1 秒测试视频验证勾选流程，直接处理）"
                                   IsChecked="{x:Bind Vm.SkipStartupSelfTest, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="SafeFrameRateCb" Content="开启安全帧率 (NCNN 遇到设备丢失/显存/内存溢出时强制停止)" IsChecked="{x:Bind Vm.UseSafeFrameRate, Mode=TwoWay}" FontSize="12"/>
-                        <CheckBox x:Name="LowerQualityCb" Content="降低部分画质以降低显存/内存占用 (-u：NCNN UHD 模式，可与安全帧率共存)" IsChecked="{x:Bind Vm.LowerQualityForVram, Mode=TwoWay}" FontSize="12"/>
+                        <CheckBox x:Name="LowerQualityCb" Content="降低部分画质以降低显存/内存占用 (NCNN: -u UHD 模式；PyTorch 轨补帧: FP16 半精度，不支持时自动回退；可与安全帧率共存)" IsChecked="{x:Bind Vm.LowerQualityForVram, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="GpuAccelerationCb" Content="使FFmpeg尝试使用GPU 加速 (拆帧解码 -hwaccel / 合并帧 GPU 编码器优先，失败自动回退 CPU)" IsChecked="{x:Bind Vm.UseGpuAcceleration, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="CpuProcessingCb" Content="使用CPU处理所有模型 (超分/补帧 NCNN -g -1；注意：超分无 CPU 后端会自动升级为 GPU、SDR→HDR 固定用 NVIDIA GPU；速度很慢，仅在 GPU 不可用/不稳定时建议开启)"
                                   Checked="OnUseCpuProcessingChecked"
