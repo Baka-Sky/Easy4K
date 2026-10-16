@@ -371,9 +371,15 @@ public sealed class ProcessingOrchestrator
                 string vfiExe, args;
                 if (useTorch)
                 {
+                    // CPU 处理模式在这条轨上物理上做不到（上游只有 CUDA 实现，DRBA/GMFSS 还依赖 cupy），
+                    // 明确告知而不是静默忽略，避免用户以为"勾了 CPU 却在用显卡磨时间"。
+                    if (cpu)
+                        _logger.Warn($"CPU 处理模式对 PyTorch 轨补帧族不生效（{ctx.IfModel} 上游只有 CUDA 实现），本次仍走 GPU");
                     vfiExe = ctx.Tools.TorchPythonExe;
+                    // 高级性能选项同样要落到这条轨上：处理线程 → torch/OpenCV 线程数，降低画质 → FP16 推理。
                     args = VfiTorchCommandBuilder.Build(ctx.Tools.VfiDriverScript, ctx.IfDriverKey, inputDirForIf, ifFrames,
-                        ifTarget, VfiTorchCommandBuilder.ScaleFor(ctx.Video.Width), ctx.Settings.UseSafeFrameRate);
+                        ifTarget, VfiTorchCommandBuilder.ScaleFor(ctx.Video.Width), ctx.Settings.UseSafeFrameRate,
+                        threads: Math.Clamp(ctx.Settings.ThreadCount, 1, 32), fp16: ctx.Settings.LowerQualityForVram);
                     _logger.Command($"python-torch {args}");
                 }
                 else

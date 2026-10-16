@@ -1287,7 +1287,9 @@ public partial class MainViewModel : ObservableObject
         SfStatus = "图片超分中…";
         _logger.Info($"单文件超分（图片）开始：{Path.GetFileName(input)} → {Path.GetFileName(outPath)}"
             + $"（模型 {SfImageModel}，×{SfImageScale}）");
-        var args = SrCommandBuilder.Build(SfImageModel, SfImageScale, input, outPath, "", LowerQualityForVram);
+        // 高级性能选项与主管线保持一致：处理线程 -j、降低画质 -u、CPU 处理 -g -1 在单文件模式同样生效
+        var jThreads = $"1:{Math.Clamp(ThreadCount, 1, 32)}:{Math.Clamp(ThreadCount, 1, 32)}";
+        var args = SrCommandBuilder.Build(SfImageModel, SfImageScale, input, outPath, jThreads, LowerQualityForVram, useCpu: UseCpuProcessing);
         _logger.Command($"{Path.GetFileName(srExe)} {args}");
         var exit = await _runner.RunAsync(srExe, args, ct: ct);
 

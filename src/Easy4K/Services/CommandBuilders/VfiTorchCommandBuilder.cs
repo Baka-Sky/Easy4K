@@ -19,15 +19,18 @@ public static class VfiTorchCommandBuilder
 
     /// <summary>构建推理命令。driverKey 是 VfiCatalog 里对应版本的 DriverKey（vfi_driver.py 的 --model）。
     /// totalFrames 是目标输出总帧数（与 rife-ncnn-vulkan 的 -n 同义），
-    /// 由驱动脚本按「源位置线性采样」精确产出这么多帧，所以「手动目标帧率」在这条轨上同样生效。</summary>
+    /// 由驱动脚本按「源位置线性采样」精确产出这么多帧，所以「手动目标帧率」在这条轨上同样生效。
+    /// threads = 界面「处理线程」（落到驱动的 torch/OpenCV 线程数），fp16 = 界面「降低部分画质」。</summary>
     public static string Build(string scriptPath, string driverKey, string inputDir, string outputDir,
-        long totalFrames, double scale, bool sceneDetect)
+        long totalFrames, double scale, bool sceneDetect, int threads = 0, bool fp16 = false)
     {
         Directory.CreateDirectory(outputDir);
         var sc = sceneDetect ? " --scdet" : "";
+        var th = threads > 0 ? $" --threads {threads}" : "";
+        var half = fp16 ? " --fp16" : "";
         // -X utf8：驱动脚本的进度/日志是中文，强制 UTF-8 输出，保证与 ProcessRunner 的 UTF-8 解码一致
         return $"-X utf8 \"{scriptPath}\" --model {driverKey} "
              + $"--input \"{inputDir}\" --output \"{outputDir}\" "
-             + $"--frames {totalFrames} --scale {scale.ToString("0.###", CultureInfo.InvariantCulture)}{sc}";
+             + $"--frames {totalFrames} --scale {scale.ToString("0.###", CultureInfo.InvariantCulture)}{sc}{th}{half}";
     }
 }
