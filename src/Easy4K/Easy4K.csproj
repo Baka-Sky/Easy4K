@@ -81,6 +81,25 @@
     <Exec IgnoreExitCode="true" Command="robocopy &quot;$(MSBuildThisFileDirectory)..\..\Tools&quot; &quot;$(OutDir)Tools&quot; /E /NFL /NDL /NJH /NJS /NP /XD .git obj __pycache__ &amp; if %25ERRORLEVEL% GEQ 8 exit /b 1" />
   </Target>
 
+  <!-- 孤儿任务调度守护进程：单独一个无界面控制台 exe（Easy4K.Orphan.exe）。
+       构建主程序时一并构建并复制到输出目录，保证 Debug/Release/publish 产物依旧是自包含的一份，
+       不需要额外的构建步骤；孤儿模式在没有这个 exe 时会明确提示而不是静默失败。 -->
+  <Target Name="BuildOrphanDaemon" AfterTargets="Build" Condition="Exists('$(MSBuildThisFileDirectory)..\Easy4K.Orphan\Easy4K.Orphan.csproj')">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Easy4K.Orphan\Easy4K.Orphan.csproj"
+             Targets="Build"
+             Properties="Configuration=$(Configuration);Platform=$(Platform)">
+      <Output TaskParameter="TargetOutputs" ItemName="OrphanDaemonAssembly" />
+    </MSBuild>
+    <!-- TargetOutputs 只给到主程序集（.dll），apphost / runtimeconfig / deps 在同目录，单独补上 -->
+    <ItemGroup>
+      <OrphanDaemonFile Include="@(OrphanDaemonAssembly)" />
+      <OrphanDaemonFile Include="@(OrphanDaemonAssembly->'%(RootDir)%(Directory)Easy4K.Orphan.exe')" />
+      <OrphanDaemonFile Include="@(OrphanDaemonAssembly->'%(RootDir)%(Directory)Easy4K.Orphan.runtimeconfig.json')" />
+      <OrphanDaemonFile Include="@(OrphanDaemonAssembly->'%(RootDir)%(Directory)Easy4K.Orphan.deps.json')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(OrphanDaemonFile)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="Exists('%(OrphanDaemonFile.FullPath)')" />
+  </Target>
+
   <!-- 只保留 zh-CN/zh-TW 语言资源，删除 WindowsAppSDK 生成的其他语言目录（xx-XX 命名） -->
   <Target Name="TrimLanguages" AfterTargets="Build">
     <Exec IgnoreExitCode="true" Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Get-ChildItem -LiteralPath '$(OutDir)' -Directory | Where-Object { $_.Name -match '^[a-z]{2,3}-' -and $_.Name -notin @('zh-CN','zh-TW') } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }&quot;" />

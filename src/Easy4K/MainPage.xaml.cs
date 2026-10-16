@@ -27,7 +27,12 @@ public sealed partial class MainPage : Page
         InitializeComponent();
 
         // 模型属性变化兜底：即使下拉框 SelectionChanged 未触发，也刷新倍率锁定
-        Loaded += (_, _) => Vm.PropertyChanged += OnVmPropertyChanged;
+        Loaded += (_, _) =>
+        {
+            Vm.PropertyChanged += OnVmPropertyChanged;
+            // 回到主页时重读孤儿队列：任务可能已被后台守护进程取走执行，或被执行进程移除
+            Vm.ReloadOrphanTasks();
+        };
         Unloaded += (_, _) => Vm.PropertyChanged -= OnVmPropertyChanged;
         // 初始填充「种类」与「模型」下拉框。
         // 「种类」必须对齐到配置里保存的补帧模型所属的族，否则选了 PyTorch 轨（RIFE / DRBA / GMFSS /
@@ -569,6 +574,87 @@ public sealed partial class MainPage : Page
         App.MainWindow?.ShowNotice(
             msg.Contains("无法删除") ? "清理完成，但有项目未能删除" : "临时文件已清理",
             msg, "打开临时目录", () => App.MainWindow?.OpenTempFolder());
+    }
+
+    // ===================== 孤儿执行任务 =====================
+
+    /// <summary>把当前这套设置加成一条孤儿执行任务：先选启动时间，再落盘并拉起后台守护进程。
+    /// 未选输入时按钮本就是禁用的，这里再兜一层并说明原因（与「开始处理」同一套文案）。</summary>
+    private async void OnAddOrphanTask(object sender, RoutedEventArgs e)
+    {
+        if (!Vm.CanStart)
+        {
+            var reason = string.IsNullOrWhiteSpace(Vm.CanStartReason)
+                ? "请先点「浏览」选择输入视频（帧文件夹则点「导入帧文件夹」）。"
+                : Vm.CanStartReason;
+            var blocked = new ContentDialog
+            {
+                Title = "还不能添加孤儿执行任务",
+                Content = reason,
+                CloseButtonText = "知道了",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = XamlRoot
+            };
+            await blocked.ShowLocalizedAsync();
+            return;
+        }
+
+        var datePicker = new DatePicker { Date = DateTimeOffset.Now, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var timePicker = new TimePicker
+        {
+            ClockIdentifier = "24HourClock",
+            SelectedTime = NextQuarterHour(),
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var panel = new StackPanel { Spacing = 10 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "到点自动启动 Easy4K，按当前选项处理这支视频，跑完自动关闭；期间可继续排队其它任务。",
+            TextWrapping = TextWrapping.Wrap
+        });
+        panel.Children.Add(datePicker);
+        panel.Children.Add(timePicker);
+
+        var dlg = new ContentDialog
+        {
+            Title = "选择孤儿模式启动时间",
+            Content = panel,
+            PrimaryButtonText = "添加任务",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = XamlRoot
+        };
+        if (await dlg.ShowLocalizedAsync() != ContentDialogResult.Primary) return;
+
+        var when = datePicker.Date.Date + timePicker.Time;
+        if (when <= DateTime.Now)
+        {
+            App.MainWindow?.ShowNotice("启动时间已过去", "请选一个还没到的时间点，任务才能排进队列。");
+            return;
+        }
+
+        var task = Vm.AddOrphanTask(when);
+        App.MainWindow?.ShowNotice("已添加孤儿执行任务",
+            $"{task.RunAt:MM-dd HH:mm:ss} 将自动启动 Easy4K 处理「{task.DisplayName}」。当前有 {Vm.OrphanTasks.Count} 个孤儿执行任务。");
+    }
+
+    /// <summary>删除一条孤儿任务（按钮 Tag 里带的就是任务 id）</summary>
+    private void OnRemoveOrphanTask(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not string id) return;
+        var task = Vm.OrphanTasks.FirstOrDefault(t => t.Id == id);
+        if (task is null) return;
+        Vm.RemoveOrphanTask(task);
+        App.MainWindow?.ShowNotice("已删除孤儿执行任务",
+            $"「{task.DisplayName}」不会再自动执行。当前有 {Vm.OrphanTasks.Count} 个孤儿执行任务。");
+    }
+
+    /// <summary>时间选择器的默认值：下一个 15 分钟整点（避免默认值就已经是过去时间）</summary>
+    private static TimeSpan NextQuarterHour()
+    {
+        var now = DateTime.Now;
+        var next = now.AddMinutes(15 - now.Minute % 15).AddSeconds(-now.Second);
+        return next.TimeOfDay;
     }
 
     // ===================== 快捷键 =====================

@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Easy4K/Easy4K.csproj" />
+    <Project Path="src/Easy4K.Orphan/Easy4K.Orphan.csproj" />
   </Folder>
 </Solution>

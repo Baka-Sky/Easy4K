@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 孤儿任务调度守护进程：极小的无界面控制台程序，只做一件事——读 orphans.json，
+       到点拉起 Easy4K.exe 的孤儿执行入口并等它跑完；没有任务了自己退出。
+       不引用 WinUI / 主项目，启动开销与内存都极低，适合长期常驻。 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Easy4K.Orphan</RootNamespace>
+    <AssemblyName>Easy4K.Orphan</AssemblyName>
+    <Platforms>x64</Platforms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <UseAppHost>true</UseAppHost>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+</Project>

@@ -18,6 +18,10 @@ public sealed class SettingsService
 
     private readonly string _settingsPath;
 
+    /// <summary>禁止写盘。孤儿执行进程用任务里的选项快照跑，绝不能把这些值回写到用户真实的
+    /// appsettings.json（那会把用户后来改过的设置覆盖掉），所以那条路径上把它置为 true。</summary>
+    public bool SuppressWrites { get; set; }
+
     public SettingsService()
     {
         _settingsPath = Path.Combine(AppPaths.WritableRoot, "appsettings.json");
@@ -76,6 +80,7 @@ public sealed class SettingsService
 
     public void Save(AppSettings settings, ToolPathConfig paths)
     {
+        if (SuppressWrites) return; // 孤儿执行进程：只按快照跑，不回写用户配置
         try
         {
             var obj = new { AppConfig = settings, ToolPaths = paths };

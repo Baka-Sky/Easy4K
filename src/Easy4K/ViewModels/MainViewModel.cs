@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Easy4K.Models;
 using Easy4K.Services;
@@ -130,6 +131,9 @@ public partial class MainViewModel : ObservableObject
 
         // 恢复"保存的默认步骤"（向导或主界面"保存当前设置为默认"后，下次启动即恢复勾选）
         RestoreDefaultStepsFromConfig();
+
+        // 孤儿任务：把上次排的队列读回来，并按需重新拉起守护进程（上次关机时还有任务没跑完的情况）
+        ReloadOrphanTasks();
     }
 
     /// <summary>确保目录可用。配置里可能写了目标机上不存在的盘符（如 H:\SR），
@@ -2059,6 +2063,182 @@ public partial class MainViewModel : ObservableObject
         // 自测模式用 Environment.Exit 强制退出：Application.Exit() 会被窗口关闭拦截器
         // （OnAppWindowClosing 先 args.Cancel=true 再异步确认）吞掉，导致进程残留不退出
         var _ = Task.Delay(500).ContinueWith(_ => Environment.Exit(0), TaskScheduler.Default);
+    }
+
+    // ===================== 孤儿执行任务 =====================
+
+    private readonly OrphanTaskStore _orphanStore = new();
+
+    private static readonly JsonSerializerOptions SnapshotJsonOpts = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
+    /// <summary>已排期的孤儿执行任务（与 orphans.json 同步；界面列表直接绑定它，增删立即落盘）</summary>
+    public ObservableCollection<OrphanTask> OrphanTasks { get; } = new();
+
+    /// <summary>「当前有 X 个孤儿执行任务」</summary>
+    public string OrphanCountText => $"当前有 {OrphanTasks.Count} 个孤儿执行任务";
+
+    public Microsoft.UI.Xaml.Visibility OrphanListVis =>
+        OrphanTasks.Count > 0 ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+    /// <summary>读回 orphans.json 填列表，并按需把守护进程拉起来（上次关机时还有任务没跑完的情况）。
+    /// 主窗口加载时调一次。</summary>
+    public void ReloadOrphanTasks()
+    {
+        OrphanTasks.Clear();
+        foreach (var t in _orphanStore.Load().OrderBy(t => t.RunAt)) OrphanTasks.Add(t);
+        RaiseOrphanCountChanged();
+
+        if (OrphanTasks.Count > 0 && !_orphanStore.EnsureDaemon())
+            _logger.Warn($"孤儿任务守护进程未启动：{OrphanTaskStore.DaemonPath} 不存在或无法启动");
+    }
+
+    /// <summary>把当前全部选项打包成一份可独立执行的配置快照。
+    /// 孤儿执行进程用它替代 appsettings.json，所以这里必须写入「界面上正在生效的值」，
+    /// 而不只是「保存当前设置为默认」时才落盘的那些字段 —— 勾选步骤就属于只在内存里的。</summary>
+    public AppSettings CaptureSettingsSnapshot()
+    {
+        var copy = JsonSerializer.Deserialize<AppSettings>(
+            JsonSerializer.Serialize(_app, SnapshotJsonOpts), SnapshotJsonOpts) ?? new AppSettings();
+
+        copy.DefaultSrModel = SrModel;
+        copy.DefaultSrScale = SrScale;
+        copy.DefaultIfModel = IfModel;
+        copy.DefaultIfMultiplier = IfMultiplier;
+        copy.DefaultSplitFrames = SplitFrames;
+        copy.DefaultSuperResolution = SuperResolution;
+        copy.DefaultInterpolation = Interpolation;
+        copy.DefaultMergeVideo = MergeVideo;
+        copy.DefaultMergeAudio = MergeAudio;
+        copy.DefaultSdrToHdr = SdrToHdr;
+        copy.TempRoot = TempRoot;
+        copy.OutputRoot = OutputRoot;
+
+        // 执行进程要直接开跑，不能被首次向导、启动自检、远程等待界面拦下
+        copy.SetupCompleted = true;
+        copy.StartupSelfTest = false;
+        copy.AutoRemoteOnStartup = false;
+        return copy;
+    }
+
+    /// <summary>新建一条孤儿任务并落盘，同时确保守护进程在跑。</summary>
+    public OrphanTask AddOrphanTask(DateTime runAt)
+    {
+        var frames = ExternalFramesDir;
+        var task = new OrphanTask
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            RunAt = runAt,
+            InputVideo = HasExternalFrames ? "" : InputVideo,
+            ExternalFramesDir = frames,
+            DisplayName = HasExternalFrames ? FolderName(frames) : Path.GetFileName(InputVideo),
+            Settings = CaptureSettingsSnapshot()
+        };
+
+        OrphanTasks.Add(task);
+        SortOrphanTasks();
+        _orphanStore.Add(task);
+        RaiseOrphanCountChanged();
+
+        if (!_orphanStore.EnsureDaemon())
+            _logger.Warn($"孤儿任务已保存，但守护进程未启动（缺少 {OrphanTaskStore.DaemonPath}），到点不会自动执行");
+        return task;
+    }
+
+    /// <summary>删除一条孤儿任务；列表空了顺手把守护进程停掉，不让它空转。</summary>
+    public void RemoveOrphanTask(OrphanTask task)
+    {
+        OrphanTasks.Remove(task);
+        _orphanStore.Remove(task.Id);
+        RaiseOrphanCountChanged();
+        if (OrphanTasks.Count == 0) _orphanStore.KillDaemon();
+    }
+
+    /// <summary>取目录名当显示名（末尾可能带分隔符，Path.GetFileName 会返回空）</summary>
+    private static string FolderName(string dir)
+    {
+        var name = Path.GetFileName(dir.TrimEnd('\\', '/'));
+        return string.IsNullOrEmpty(name) ? dir : name;
+    }
+
+    private void SortOrphanTasks()
+    {
+        var ordered = OrphanTasks.OrderBy(t => t.RunAt).ToList();
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var cur = OrphanTasks.IndexOf(ordered[i]);
+            if (cur != i) OrphanTasks.Move(cur, i);
+        }
+    }
+
+    private void RaiseOrphanCountChanged()
+    {
+        OnPropertyChanged(nameof(OrphanCountText));
+        OnPropertyChanged(nameof(OrphanListVis));
+    }
+
+    /// <summary>孤儿执行入口（--orphan-run 专用）：按任务里的选项把这支视频跑完，然后强制退出进程。
+    /// 收尾照抄自测那条路 —— 必须用 Environment.Exit：Application.Exit 会被窗口关闭拦截器
+    /// （OnAppWindowClosing 先 args.Cancel=true 再异步确认）吞掉，导致进程残留。</summary>
+    public async Task RunOrphanTaskAsync(OrphanTask task)
+    {
+        try
+        {
+            SuppressCompletionDialog = true;
+            _logger.Info($"=== 孤儿模式执行: {task.DisplayName}（预定 {task.RunAt:yyyy-MM-dd HH:mm:ss}）===");
+            CleanTemp(); // 清掉上次残留帧，避免旧帧干扰本次
+
+            if (!string.IsNullOrWhiteSpace(task.ExternalFramesDir))
+            {
+                await ImportFrameFolderAsync(task.ExternalFramesDir);
+                if (!HasExternalFrames)
+                {
+                    _logger.Error($"孤儿模式：帧文件夹不可用，任务终止（{task.ExternalFramesDir}）");
+                    FinishOrphanRun();
+                    return;
+                }
+            }
+            else
+            {
+                await SetInputVideoAsync(task.InputVideo);
+                await Task.Delay(300); // 等视频检测完成
+                if (Video is null || !Video.IsValid)
+                {
+                    _logger.Error($"孤儿模式：视频检测失败，任务终止（{task.InputVideo}）");
+                    FinishOrphanRun();
+                    return;
+                }
+            }
+
+            await StartAsync();
+            FinishOrphanRun();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"孤儿模式异常: {ex}");
+            FinishOrphanRun();
+        }
+    }
+
+    /// <summary>孤儿执行收尾：把本次日志落盘（守护进程那边只知道退出码，出问题只能看这个文件），然后退出进程。</summary>
+    private void FinishOrphanRun()
+    {
+        try
+        {
+            var report = Path.Combine(AppPaths.WritableRoot, "orphan_last_run.log");
+            File.WriteAllText(report, string.Join(Environment.NewLine,
+                _logger.Snapshot().Select(e => e.ToString())));
+            _logger.Info($"孤儿模式执行结束，本次日志已写入: {report}");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"写入孤儿执行日志失败: {ex.Message}");
+        }
+
+        var _ = Task.Delay(800).ContinueWith(_ => Environment.Exit(0), TaskScheduler.Default);
     }
 
     /// <summary>清理临时中间产物（当前 TempRoot）。只删除本软件已知的帧目录/中间文件，

@@ -71,7 +71,19 @@ public partial class App : Application
     {
         // 装配服务链
         var settingsSvc = new SettingsService();
+
+        // 孤儿执行（Easy4K.exe --orphan-run <任务id>，由守护进程到点拉起）：
+        // 必须在构建 ViewModel 之前处理——用任务里的选项快照替代 appsettings.json，
+        // 并禁止任何回写，否则会把用户后来改过的设置覆盖掉。
+        // Take 会顺手把任务从 orphans.json 移除：即使本次处理中途崩了也不会被守护进程反复重跑。
+        var orphanTask = TakeOrphanTaskFromCli();
+
         var (app, toolCfg) = settingsSvc.Load();
+        if (orphanTask is not null)
+        {
+            app = orphanTask.Settings;
+            settingsSvc.SuppressWrites = true;
+        }
         // 多语言：功能暂时隐藏，固定简体中文（词表 Loc/strings.json 与 Loc 服务都保留，
         // 需要恢复"按配置切换语言"时把下面一行换回 Loc.Set(app.Language, notify: false) 即可）
         Loc.Set("zh-CN", notify: false);
@@ -144,7 +156,8 @@ public partial class App : Application
         }
 
         // 首次运行：先展示 OOBE 设置向导（完成后保存配置并衔接正式主界面）
-        if (!selftestCli && !autoTestCli && !remoteCli && !app.SetupCompleted)
+        // 孤儿执行也算命令行直启，不能被向导拦下（快照里已把 SetupCompleted 置真，这里再兜一层）
+        if (!selftestCli && !autoTestCli && !remoteCli && orphanTask is null && !app.SetupCompleted)
         {
             var wizard = new WelcomeWindow(Services, settingsSvc, app, toolCfg);
             wizard.Completed += () =>
@@ -157,11 +170,41 @@ public partial class App : Application
         }
 
         OpenMainWindow();
+        // 孤儿执行：界面起来后立刻按任务里的选项开跑，跑完自动退出进程
+        if (orphanTask is not null)
+            _ = RunOrphanTaskDelayedAsync(orphanTask);
         if (autoTestCli)
             _ = RunAutoTestDelayedAsync(autoTestFull, dedupOnly);
         // 远程连接模式：--remote 命令行直启，或用户开了「每次启动自动进入远程连接模式」
         if (remoteCli || Services.AutoRemoteOnStartup)
             _ = MainWindow.StartRemoteControlAsync();
+    }
+
+    /// <summary>命令行里是否带 --orphan-run &lt;任务id&gt;。带的话取走该任务（并从队列移除）返回，否则返回 null。</summary>
+    private static OrphanTask? TakeOrphanTaskFromCli()
+    {
+        var args = Environment.GetCommandLineArgs();
+        for (var i = 0; i < args.Length - 1; i++)
+        {
+            if (args[i].Equals("--orphan-run", StringComparison.OrdinalIgnoreCase))
+                return new OrphanTaskStore().Take(args[i + 1]);
+        }
+        return null;
+    }
+
+    /// <summary>延迟到主窗口/页面加载完成后再跑孤儿任务（等 UI 线程就绪，与自测同款）。</summary>
+    private static async Task RunOrphanTaskDelayedAsync(OrphanTask task)
+    {
+        try
+        {
+            await Task.Delay(1500);
+            await Services.RunOrphanTaskAsync(task);
+        }
+        catch (Exception ex)
+        {
+            File.AppendAllText(CrashLogPath, $"[OrphanRun @ {DateTime.Now}]\n{ex}\n\n");
+            Environment.Exit(1); // 兜底：异常也不能让进程留在这里不退出
+        }
     }
 
     /// <summary>创建并显示正式主窗口。
