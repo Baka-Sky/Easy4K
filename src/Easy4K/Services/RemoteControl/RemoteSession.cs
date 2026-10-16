@@ -128,6 +128,10 @@ public sealed class RemoteSession
                 _vm.HwQuality = RemoteControlClient.GetInt(opt, "hwQuality");
                 var remoteHwMode = RemoteControlClient.GetStr(opt, "hwQualityMode");
                 if (remoteHwMode is "" or "cq" or "qp") _vm.HwQualityMode = remoteHwMode;
+                var rDedupMode = RemoteControlClient.GetStr(opt, "dedupMode");
+                if (rDedupMode is "performance" or "uhd") _vm.DedupMode = rDedupMode;
+                var rAudioPrec = RemoteControlClient.GetStr(opt, "audioSrPrecision");
+                if (rAudioPrec is "fp16" or "fp32") _vm.AudioSrPrecision = rAudioPrec;
                 var outRoot = RemoteControlClient.GetStr(paths, "outputRoot");
                 if (outRoot.Length > 0) _vm.OutputRoot = outRoot;
             }
@@ -174,6 +178,10 @@ public sealed class RemoteSession
                 _vm.HwQuality = RemoteControlClient.GetInt(opt, "hwQuality");
                 var remoteHwMode = RemoteControlClient.GetStr(opt, "hwQualityMode");
                 if (remoteHwMode is "" or "cq" or "qp") _vm.HwQualityMode = remoteHwMode;
+                var rDedupMode = RemoteControlClient.GetStr(opt, "dedupMode");
+                if (rDedupMode is "performance" or "uhd") _vm.DedupMode = rDedupMode;
+                var rAudioPrec = RemoteControlClient.GetStr(opt, "audioSrPrecision");
+                if (rAudioPrec is "fp16" or "fp32") _vm.AudioSrPrecision = rAudioPrec;
 
                 _vm.SrScale = RemoteControlClient.GetInt(cfg, "srScale");
                 _vm.SrEngineIndex = RemoteControlClient.GetInt(cfg, "srEngineIndex");
@@ -247,6 +255,14 @@ public sealed class RemoteSession
                     hwQualityMode = _vm.HwQualityMode,
                     hwQuality = _vm.HwQuality
                 });
+                break;
+
+            // 档位类：去重「性能/完美」与音频超分「FP16/FP32」，都是单选，改动即下发
+            case nameof(MainViewModel.DedupMode):
+                _ = PushConfigAsync(new { dedupMode = _vm.DedupMode });
+                break;
+            case nameof(MainViewModel.AudioSrPrecision):
+                _ = PushConfigAsync(new { audioSrPrecision = _vm.AudioSrPrecision });
                 break;
 
             case nameof(MainViewModel.SrEngineIndex):

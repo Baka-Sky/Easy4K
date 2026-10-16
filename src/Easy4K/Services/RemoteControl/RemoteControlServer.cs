@@ -580,6 +580,9 @@ public sealed class RemoteControlServer
                 crf = _vm.Crf,
                 hwQualityMode = _vm.HwQualityMode,
                 hwQuality = _vm.HwQuality,
+                // 档位类：去重「性能/完美」与音频超分「FP16/FP32」都要能由客户端选择
+                dedupMode = _vm.DedupMode,
+                audioSrPrecision = _vm.AudioSrPrecision,
                 hdrEnabled = _vm.IsHdrEnabled,
                 ifMultiplierLocked = _vm.IfMultiplierLocked
             },
@@ -1011,6 +1014,12 @@ public sealed class RemoteControlServer
         var hwMode = Str("hwQualityMode", _vm.HwQualityMode);
         if (hwMode is "" or "cq" or "qp") _vm.HwQualityMode = hwMode;
 
+        // 档位类：去重性能/完美、音频超分 FP16/FP32（只接受合法值，避免客户端传脏数据把流程带跑偏）
+        var dedupMode = Str("dedupMode", _vm.DedupMode);
+        if (dedupMode is "performance" or "uhd") _vm.DedupMode = dedupMode;
+        var audioPrec = Str("audioSrPrecision", _vm.AudioSrPrecision);
+        if (audioPrec is "fp16" or "fp32") _vm.AudioSrPrecision = audioPrec;
+
         // 路径
         var outRoot = Str("outputRoot", "");
         if (!string.IsNullOrWhiteSpace(outRoot)) _vm.SetOutputRoot(outRoot);
@@ -1055,6 +1064,9 @@ public sealed class RemoteControlServer
                 crf = _vm.Crf,
                 hwQualityMode = _vm.HwQualityMode,
                 hwQuality = _vm.HwQuality,
+                // 档位类：去重「性能/完美」与音频超分「FP16/FP32」都要能由客户端选择
+                dedupMode = _vm.DedupMode,
+                audioSrPrecision = _vm.AudioSrPrecision,
                 // RIFE v2/v3 这类老模型只支持 ×2，客户端据此把「补帧倍率」按钮隐藏/禁用
                 ifMultiplierLocked = _vm.IfMultiplierLocked
             },
