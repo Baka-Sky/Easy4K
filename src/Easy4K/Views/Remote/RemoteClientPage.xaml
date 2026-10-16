@@ -35,7 +35,7 @@
                        Text="在对方的 Easy4K 上打开「设置 → 远程控制 → 启动远程控制」，然后在这里填它的地址。连上后本窗口会直接复用「主页 / 高级 / 进行中」来操作对方电脑，不再另开界面。"/>
 
             <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
-                <TextBox x:Name="HostBox" Width="250" PlaceholderText="对方 IP，例如 192.168.31.156"
+                <TextBox x:Name="HostBox" Width="250" PlaceholderText="IP / 域名，例如 192.168.31.156、home.example.com、[240e::1]"
                          Style="{StaticResource GlassTextBox}"/>
                 <TextBlock Text=":" VerticalAlignment="Center" Opacity="0.7"/>
                 <TextBox x:Name="PortBox" Width="72" Text="11451" Style="{StaticResource GlassTextBox}"/>

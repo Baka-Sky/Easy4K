@@ -30,7 +30,7 @@ public sealed partial class RemoteClientPage : Page
         var (host, port) = NormalizeHost(HostBox.Text);
         if (host.Length == 0)
         {
-            ShowError("请填写对方电脑的 IP 地址");
+            ShowError("请填写对方电脑的 IP 或域名（IPv6 写成 [地址]:端口，例如 [240e::1]:11451）");
             return;
         }
 
@@ -74,7 +74,11 @@ public sealed partial class RemoteClientPage : Page
         ConnectError.IsOpen = true;
     }
 
-    /// <summary>容错：允许直接粘贴 "192.168.1.5:11451"、"http://192.168.1.5/" 这类整串。</summary>
+    /// <summary>把用户填的地址拆成（主机, 端口）。支持：
+    /// · IPv4 / 域名，可带端口：<c>192.168.31.156</c>、<c>home.example.com:11451</c>
+    /// · IPv6，推荐 <c>[240e:xxxx::1]:11451</c> 或 <c>[240e:xxxx::1]</c>（方括号会被去掉，因为 TcpClient 只吃裸地址）
+    /// · 裸 IPv6（<c>240e:xxxx::1</c>）：冒号超过一个就整串当地址，端口用默认值 —— 否则末尾那段会被误当端口
+    /// · 带协议/路径的粘贴形式：<c>http://host:11451/xxx</c> 会先剥掉 scheme 与路径</summary>
     public static (string host, int port) NormalizeHost(string? raw)
     {
         var s = (raw ?? "").Trim();
@@ -83,7 +87,26 @@ public sealed partial class RemoteClientPage : Page
         var slash = s.IndexOfAny(new[] { '/', '\\' });
         if (slash >= 0) s = s[..slash];
         s = s.Trim();
+
         var port = RemoteControlServer.Port;
+
+        // 带方括号的 IPv6：[addr] 或 [addr]:port
+        if (s.StartsWith('['))
+        {
+            var close = s.IndexOf(']');
+            if (close > 1)
+            {
+                var tail = s[(close + 1)..];
+                if (tail.StartsWith(':') &&
+                    int.TryParse(tail[1..].Trim(), out var p6) && p6 is > 0 and < 65536)
+                    port = p6;
+                return (s[1..close].Trim(), port);
+            }
+        }
+
+        // 裸 IPv6：两个以上冒号且没有方括号 → 整串都是地址，不能再按"最后一个冒号"切端口
+        if (s.Count(c => c == ':') >= 2) return (s, port);
+
         var colon = s.LastIndexOf(':');
         if (colon > 0 && int.TryParse(s[(colon + 1)..].Trim(), out var p) && p is > 0 and < 65536)
         {

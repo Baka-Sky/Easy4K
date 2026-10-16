@@ -153,8 +153,20 @@ public sealed class RemoteControlServer
         if (IsRunning) return;
         Current = this;
         _cts = new CancellationTokenSource();
-        _listener = new TcpListener(IPAddress.Any, Port);
-        _listener.Start();
+        // 双栈监听：IPv6Any + DualMode 让 IPv4 客户端也能连进来（映射成 ::ffff:x.x.x.x），
+        // 于是局域网 IPv4、IPv6 直连、以及域名解析出的任一族地址都能用。
+        // 万一系统禁用了 IPv6（绑不上 IPv6Any），退回纯 IPv4 监听，不影响原有用法。
+        try
+        {
+            _listener = new TcpListener(IPAddress.IPv6Any, Port);
+            _listener.Server.DualMode = true;
+            _listener.Start();
+        }
+        catch
+        {
+            _listener = new TcpListener(IPAddress.Any, Port);
+            _listener.Start();
+        }
         IsRunning = true;
         SetStatus("正在等待客户端设备链接");
         _acceptTask = Task.Run(() => AcceptLoopAsync(_cts.Token));
