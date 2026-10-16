@@ -576,6 +576,10 @@ public sealed class RemoteControlServer
                 // 保留原视频内嵌字幕：hasSubtitles 让客户端知道该不该解锁这个开关（服务端探测到的当前视频字幕流）
                 keepSubtitles = _vm.KeepSubtitles,
                 hasSubtitles = _vm.HasSubtitles,
+                // 编码质量（高级页）：CPU CRF 与硬件编码 CQ/QP —— 两个远控客户端都要能改这几项
+                crf = _vm.Crf,
+                hwQualityMode = _vm.HwQualityMode,
+                hwQuality = _vm.HwQuality,
                 hdrEnabled = _vm.IsHdrEnabled,
                 ifMultiplierLocked = _vm.IfMultiplierLocked
             },
@@ -999,6 +1003,12 @@ public sealed class RemoteControlServer
         // 保留内嵌字幕：服务端最终仍会按「当前视频确实有字幕流」再兜一道（见 ProcessingOptions 组装处）
         _vm.KeepSubtitles = Bool("keepSubtitles", _vm.KeepSubtitles);
 
+        // 编码质量（高级页）：CPU CRF 与硬件编码 CQ/QP，范围都夹到 0~51；模式只接受空/cq/qp
+        _vm.Crf = Math.Clamp(Int("crf", _vm.Crf), 0, 51);
+        _vm.HwQuality = Math.Clamp(Int("hwQuality", _vm.HwQuality), 0, 51);
+        var hwMode = Str("hwQualityMode", _vm.HwQualityMode);
+        if (hwMode is "" or "cq" or "qp") _vm.HwQualityMode = hwMode;
+
         // 路径
         var outRoot = Str("outputRoot", "");
         if (!string.IsNullOrWhiteSpace(outRoot)) _vm.SetOutputRoot(outRoot);
@@ -1039,6 +1049,10 @@ public sealed class RemoteControlServer
                 // 保留原视频内嵌字幕：hasSubtitles 让客户端知道该不该解锁这个开关（服务端探测到的当前视频字幕流）
                 keepSubtitles = _vm.KeepSubtitles,
                 hasSubtitles = _vm.HasSubtitles,
+                // 编码质量（高级页）：CPU CRF 与硬件编码 CQ/QP —— 两个远控客户端都要能改这几项
+                crf = _vm.Crf,
+                hwQualityMode = _vm.HwQualityMode,
+                hwQuality = _vm.HwQuality,
                 // RIFE v2/v3 这类老模型只支持 ×2，客户端据此把「补帧倍率」按钮隐藏/禁用
                 ifMultiplierLocked = _vm.IfMultiplierLocked
             },

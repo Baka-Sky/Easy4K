@@ -209,6 +209,7 @@ public sealed class RemoteSession
             case nameof(MainViewModel.DedupEnabled):
             case nameof(MainViewModel.AudioSrEnabled):
             case nameof(MainViewModel.TurboMode):
+            case nameof(MainViewModel.KeepSubtitles):
                 _ = PushConfigAsync(new
                 {
                     superResolution = _vm.SuperResolution,
@@ -218,7 +219,21 @@ public sealed class RemoteSession
                     splitFrames = _vm.SplitFrames,
                     dedup = _vm.DedupEnabled,
                     audioSr = _vm.AudioSrEnabled,
-                    turboMode = _vm.TurboMode
+                    turboMode = _vm.TurboMode,
+                    keepSubtitles = _vm.KeepSubtitles
+                });
+                break;
+
+            // 编码质量（高级页）：CPU CRF 与硬件编码 CQ/QP。三项一起下发，
+            // 避免只改一项时另外两项被本机旧值覆盖远端设置。
+            case nameof(MainViewModel.Crf):
+            case nameof(MainViewModel.HwQualityMode):
+            case nameof(MainViewModel.HwQuality):
+                _ = PushConfigAsync(new
+                {
+                    crf = _vm.Crf,
+                    hwQualityMode = _vm.HwQualityMode,
+                    hwQuality = _vm.HwQuality
                 });
                 break;
 
