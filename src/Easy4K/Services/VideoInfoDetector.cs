@@ -54,19 +54,26 @@ public sealed class VideoInfoDetector
             frames = (long)Math.Round(info.Duration.TotalSeconds * info.FrameRate);
         info.TotalFrames = frames;
 
-        // 音频
-        info.AudioCodec = DetectAudioCodec(videoPath);
+        // 音频：编解码器 + 采样率（采样率供音频链路判断"这次有没有重采样"）
+        var (audioCodec, audioRate) = DetectAudio(videoPath);
+        info.AudioCodec = audioCodec;
+        info.AudioSampleRate = audioRate;
 
         return info.IsValid ? info : null;
     }
 
-    private string DetectAudioCodec(string videoPath)
+    /// <summary>取音轨的编解码器与采样率（无音轨时返回 "" / 0）。</summary>
+    private (string codec, int sampleRate) DetectAudio(string videoPath)
     {
-        var args = $"-v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 \"{videoPath}\"";
+        var args = $"-v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 \"{videoPath}\"";
         var (stdout, _, exit) = RunCaptured(_tools.FFprobeExe, args);
-        if (exit != 0) return "";
-        var codec = stdout.Trim();
-        return string.IsNullOrWhiteSpace(codec) ? "" : codec;
+        if (exit != 0) return ("", 0);
+        // csv 输出形如 "aac,48000"；sample_rate 缺失时只有 codec_name
+        var line = stdout.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim() ?? "";
+        var parts = line.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var codec = parts.Length > 0 ? parts[0] : "";
+        var rate = parts.Length > 1 && int.TryParse(parts[1], out var r) ? r : 0;
+        return (string.IsNullOrWhiteSpace(codec) ? "" : codec, rate);
     }
 
     private static double ParseFps(string raw)

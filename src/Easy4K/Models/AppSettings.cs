@@ -9,10 +9,10 @@ public sealed class AppSettings
 
     public string DefaultSrModel { get; set; } = "realesr-animevideov3";
     public string DefaultIfModel { get; set; } = "rife-v4.6";
-    /// <summary>补帧引擎（NCNN / Offical）；切换即时写入，启动按此恢复</summary>
-    public string DefaultIfEngine { get; set; } = "NCNN";
     public int DefaultSrScale { get; set; } = 2;
     public int DefaultIfMultiplier { get; set; } = 2;
+    /// <summary>补帧目标帧率（&gt;0 时优先于倍率，输出 fps 精确等于该值）；0 = 用倍率</summary>
+    public double TargetFps { get; set; }
 
     /// <summary>用户自定义线程数（proc/save），命令 -j 1:{n}:{n}，范围 1-32</summary>
     public int ThreadCount { get; set; } = 2;
@@ -22,7 +22,7 @@ public sealed class AppSettings
     public bool LowerQualityForVram { get; set; }
     /// <summary>使 FFmpeg 尝试使用 GPU 加速（拆帧解码 -hwaccel / 合并帧 GPU 编码器优先，失败自动回退 CPU）</summary>
     public bool UseGpuAcceleration { get; set; } = true;
-    /// <summary>使用 CPU 处理所有模型（超分/补帧 NCNN -g -1、Offical 强制 CPU），速度慢，仅在 GPU 不可用/不稳定时使用</summary>
+    /// <summary>使用 CPU 处理所有模型（超分/补帧 NCNN -g -1），速度慢，仅在 GPU 不可用/不稳定时使用</summary>
     public bool UseCpuProcessing { get; set; }
 
     /// <summary>HDR 转换饱和度（NVEncC --vpp-ngx-truehdr saturation，最高 200）</summary>
@@ -83,9 +83,11 @@ public sealed class AppSettings
     public bool TurboMode { get; set; }
     /// <summary>涡轮模式每块帧数：太小会反复加载模型，太大会降低并行度（默认 240）</summary>
     public int TurboBlockFrames { get; set; } = 240;
-    /// <summary>涡轮模式多卡分流：超分走 GPU 0、补帧走 GPU 1。
-    /// 单卡上两个外部进程会互相抢算力，分流到两块卡才是真并行；只在检测到两块以上显卡时生效。</summary>
-    public bool TurboSplitGpus { get; set; }
+
+    // ===================== 远程控制 =====================
+    /// <summary>每次启动 Easy4K 自动进入远程连接模式（等价于启动时附加 --remote）。
+    /// 开启后启动即监听 11451 并进入等待客户端连接界面，不用每次手动点「启动远程控制」。</summary>
+    public bool AutoRemoteOnStartup { get; set; }
 
     // ===================== 匿名遥测 =====================
     /// <summary>遥测同意状态：空 = 尚未询问（首次进主界面弹一次同意窗）；agreed = 已同意并上报；declined = 已拒绝，不再询问</summary>

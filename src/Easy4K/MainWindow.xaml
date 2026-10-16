@@ -55,10 +55,37 @@
             </NavigationView.MenuItems>
 
             <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
                 <!-- 纯进度条（贴缝，未启动时隐藏，进行页自动隐藏） -->
-                <ProgressBar x:Name="ThinProgressBar" Height="3" Minimum="0" Maximum="100" Value="0"
+                <ProgressBar x:Name="ThinProgressBar" Grid.Row="0" Height="3" Minimum="0" Maximum="100" Value="0"
                              VerticalAlignment="Top" Visibility="Collapsed"/>
-                <Frame x:Name="RootFrame"/>
+
+                <!-- 遥控另一台 Easy4K 时：进度条下面拉一条黄色横幅，提示当前连的是哪台机器 -->
+                <Border x:Name="RemoteBanner" Grid.Row="1" Visibility="Collapsed"
+                        Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                        BorderBrush="{ThemeResource SystemFillColorCautionBrush}" BorderThickness="0,0,0,1"
+                        Padding="12,6">
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Grid.Column="0" Glyph="&#xE7BA;" FontSize="14" VerticalAlignment="Center"
+                                  Foreground="{ThemeResource SystemFillColorCautionBrush}"/>
+                        <TextBlock x:Name="RemoteBannerText" Grid.Column="1" VerticalAlignment="Center"
+                                   FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                        <Button Grid.Column="2" Content="断开" Click="OnRemoteBannerDisconnect"
+                                Style="{StaticResource GlassButton}"/>
+                    </Grid>
+                </Border>
+
+                <Frame x:Name="RootFrame" Grid.Row="2"/>
             </Grid>
         </NavigationView>
 
@@ -72,5 +99,34 @@
                      CloseButtonContent="知道了"
                      ActionButtonClick="OnNoticeTipAction"
                      Closed="OnNoticeTipClosed"/>
+
+        <!-- 远程控制模式：整窗盖住所有界面，只留中间的等待/已连接提示。
+             由设置页「远程控制 → 启动」打开；结束远程控制后收起。 -->
+        <Grid x:Name="RemoteOverlay" Grid.Row="0" Grid.RowSpan="2" Visibility="Collapsed"
+              Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16" MaxWidth="560">
+                <ProgressRing x:Name="RemoteRing" IsActive="True" Width="72" Height="72"
+                              HorizontalAlignment="Center"/>
+                <TextBlock x:Name="RemoteTitle" Text="正在等待客户端设备链接"
+                           FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center"
+                           TextAlignment="Center" TextWrapping="Wrap"/>
+                <TextBlock x:Name="RemoteHint" FontSize="13" Opacity="0.7" HorizontalAlignment="Center"
+                           TextAlignment="Center" TextWrapping="Wrap"
+                           Text="请在同一局域网内，用 Easy4K 手机客户端连接以下地址"/>
+                <Border CornerRadius="10" Padding="24,14"
+                        Background="{ThemeResource CardBgBrush}"
+                        BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
+                        HorizontalAlignment="Center">
+                    <StackPanel Spacing="6">
+                        <TextBlock x:Name="RemoteAddress" FontFamily="Consolas" FontSize="22" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center" TextAlignment="Center"/>
+                        <TextBlock x:Name="RemotePort" FontSize="12" Opacity="0.7"
+                                   HorizontalAlignment="Center" TextAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+                <Button Content="结束远程控制" Click="OnStopRemoteControl"
+                        HorizontalAlignment="Center" Style="{StaticResource GlassButton}"/>
+            </StackPanel>
+        </Grid>
     </Grid>
 </Window>

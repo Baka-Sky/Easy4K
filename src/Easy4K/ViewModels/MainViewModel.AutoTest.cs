@@ -15,7 +15,7 @@ namespace Easy4K.ViewModels;
 
 /// <summary>
 /// GUI 全面自动测试（不加命令行/后台进程，走与正式处理完全相同的 Orchestrator 管线，UI 全程可见可停）。
-/// 覆盖：全部超分模型、全部补帧模型(NCNN+Offical)、各可用倍率、音频合并、GPU加速/安全帧率/降画质/HDR/CPU模式特殊组合。
+/// 覆盖：全部超分模型、全部补帧模型(NCNN)、各可用倍率、音频合并、GPU加速/安全帧率/降画质/HDR/CPU模式特殊组合。
 /// 不模拟鼠标、不改用户正式 Temp/Output（各自独立临时目录）；结果写入 Res\autotest_summary.txt，GUI 继续可用。
 /// </summary>
 public partial class MainViewModel
@@ -37,7 +37,6 @@ public partial class MainViewModel
         ProcessingOptions Options,
         string? SrModel,
         int SrScale,
-        string IfEngine,
         string? IfModel,
         int IfMultiplier,
         bool Safe,
@@ -52,7 +51,7 @@ public partial class MainViewModel
 
     /// <summary>
     /// 跑全功能/全模型自动测试。fullMatrix=false：全部模型×2，另对代表性模型补跑 ×3/×4/×5；
-    /// fullMatrix=true：每个 v4/Offical 模型跑 ×2~×5 全矩阵（用例数最多、最慢）。
+    /// fullMatrix=true：每个 v4 模型跑 ×2~×5 全矩阵（用例数最多、最慢）。
     /// 不模拟鼠标；每例输出独立临时目录，成功即清理，失败保留目录便于排查。
     /// </summary>
     public async Task RunAutoTestAllAsync(bool fullMatrix = false, bool dedupOnly = false)
@@ -161,8 +160,6 @@ public partial class MainViewModel
                         },
                         Tools = Tools
                     };
-                    if (ctx.Options.IfEngine == "Offical") ctx.Options.IfEngine = "Offical";
-
                     var sw = Stopwatch.StartNew();
                     string? output = null;
                     var note = "";
@@ -252,10 +249,9 @@ public partial class MainViewModel
                     Interpolation = if_,
                     MergeVideo = merge,
                     MergeAudio = false,
-                    SdrToHdr = false,
-                    IfEngine = "NCNN"
+                    SdrToHdr = false
                 },
-                null, 2, "NCNN", ifModel, 2, false, false, false, false, 4, true, dedupMode));
+                null, 2, ifModel, 2, false, false, false, false, 4, true, dedupMode));
         }
 
         // 1/2：只拆帧 + 合并（不跑任何模型）——最快看清去重进度与预览
@@ -273,7 +269,7 @@ public partial class MainViewModel
         var gpu = _env.Gpu;
 
         void Add(bool split, bool sr, bool if_, bool merge, bool audio, bool hdr,
-            string engine, string? srModel, int srScale, string? ifModel, int ifMult,
+            string? srModel, int srScale, string? ifModel, int ifMult,
             string name, bool safe = false, bool lower = false, bool gpuAccel = false, bool cpu = false,
             int threads = 4, bool dedup = false, string dedupMode = "performance")
         {
@@ -286,17 +282,23 @@ public partial class MainViewModel
                     Interpolation = if_,
                     MergeVideo = merge,
                     MergeAudio = audio,
-                    SdrToHdr = hdr,
-                    IfEngine = engine
+                    SdrToHdr = hdr
                 },
-                srModel, srScale, engine, ifModel, ifMult, safe, lower, gpuAccel, cpu, threads, dedup, dedupMode));
+                srModel, srScale, ifModel, ifMult, safe, lower, gpuAccel, cpu, threads, dedup, dedupMode));
         }
 
-        // ---------- 超分：全部模型（x2/x3/x4） ----------
+        // ---------- 超分：全部算法 × 全部模型（x2/x3/x4），只跑本机已部署的引擎 ----------
         for (var scale = 2; scale <= 4; scale++)
         {
-            foreach (var m in RealEsrganCommandBuilder.ListModels(Tools.RealEsrganModelsRoot, scale))
-                Add(true, true, false, true, true, false, "NCNN", m, scale, null, 2, $"超分 ×{scale} {m}（含拆帧+合并+音频）");
+            for (var fi = 0; fi < SrCatalog.Families.Count; fi++)
+            {
+                foreach (var m in SrCatalog.ModelsFor(fi, scale))
+                {
+                    var exe = SrCommandBuilder.ExeFor(Tools, m);
+                    if (string.IsNullOrEmpty(exe) || !File.Exists(exe)) continue;
+                    Add(true, true, false, true, true, false, m, scale, null, 2, $"超分 ×{scale} {m}（含拆帧+合并+音频）");
+                }
+            }
         }
 
         // ---------- 补帧 NCNN：全部模型 ----------
@@ -311,46 +313,35 @@ public partial class MainViewModel
                 ? fullMatrix ? new[] { 2, 3, 4, 5 } : probes.Contains(m) ? new[] { 2, 3, 4, 5 } : new[] { 2 }
                 : new[] { 2 };
             foreach (var mult in mults)
-                Add(true, false, true, true, true, false, "NCNN", null, 2, m, mult,
+                Add(true, false, true, true, true, false, null, 2, m, mult,
                     $"补帧 NCNN {m} ×{mult}");
         }
 
-        // ---------- 补帧 Offical：全部模型 ----------
-        var offical = OfficalRifeCommandBuilder.ListModels(Tools.OfficalRifeModelsRoot);
-        var offProbes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        { "official_4.6", "official_4.15", "official_4.26" };
-        foreach (var m in offical)
-        {
-            var mults = fullMatrix ? new[] { 2, 3, 4, 5 } : offProbes.Contains(m) ? new[] { 2, 3, 4, 5 } : new[] { 2 };
-            foreach (var mult in mults)
-                Add(true, false, true, true, true, false, "Offical", null, 2, m, mult,
-                    $"补帧 Offical {m} ×{mult}");
-        }
-
         // ---------- 特殊组合 ----------
-        var dftSr = "realesr-animevideov3-x2";
-        var srList2 = RealEsrganCommandBuilder.ListModels(Tools.RealEsrganModelsRoot, 2);
-        if (!srList2.Contains(dftSr) && srList2.Count > 0) dftSr = srList2[0];
+        var srList2 = SrCatalog.ModelsFor(0, 2).Where(m => File.Exists(SrCommandBuilder.ExeFor(Tools, m))).ToList();
+        var dftSr = srList2.Contains("realesr-animevideov3-x2")
+            ? "realesr-animevideov3-x2"
+            : srList2.FirstOrDefault() ?? "realesr-animevideov3-x2";
         var ncnnDefault = allNcnn.Contains("rife-v4.6") ? "rife-v4.6" : allNcnn.FirstOrDefault() ?? "rife-v4.6";
 
         // 完整默认流程（超分+补帧+合并+音频）
-        Add(true, true, true, true, true, false, "NCNN", dftSr, 2, ncnnDefault, 2, "组合 完整流程（超分×2+补帧NCNN×2+合并+音频）");
+        Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2, "组合 完整流程（超分×2+补帧NCNN×2+合并+音频）");
         // GPU 加速
-        Add(true, true, true, true, true, false, "NCNN", dftSr, 2, ncnnDefault, 2,
+        Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
             "组合 GPU加速（FFmpeg硬件解码/编码优先）", gpuAccel: true);
         // 安全帧率 + 降画质
-        Add(true, true, true, true, true, false, "NCNN", dftSr, 2, ncnnDefault, 2,
+        Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
             "组合 安全帧率+降低画质", safe: true, lower: true);
         // SDR→HDR（仅 RTX + NVEncC 可用）
         if (gpu.SupportsHdr && Tools.NvEncExists)
-            Add(true, true, false, true, true, true, "NCNN", dftSr, 2, null, 2, "组合 SDR→HDR（NVEncC 硬件编码）");
+            Add(true, true, false, true, true, true, dftSr, 2, null, 2, "组合 SDR→HDR（NVEncC 硬件编码）");
         // 帧去重：性能模式（前两阶）与完美模式（四阶全开，含 QR 分解 + Farnebäck 光流）
-        Add(true, true, true, true, true, false, "NCNN", dftSr, 2, ncnnDefault, 2,
+        Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
             "组合 帧去重·性能模式（像素差+dHash）", dedup: true, dedupMode: "performance");
-        Add(true, true, true, true, true, false, "NCNN", dftSr, 2, ncnnDefault, 2,
+        Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
             "组合 帧去重·完美模式（QR分解+光流四阶）", dedup: true, dedupMode: "uhd");
         // CPU 模式（代表性单模型，速度最慢放最后）
-        Add(true, true, false, true, true, false, "NCNN", dftSr, 2, null, 2,
+        Add(true, true, false, true, true, false, dftSr, 2, null, 2,
             "组合 CPU处理模式（超分代表性模型，最慢）", safe: true, cpu: true, threads: 8);
 
         return cases;

@@ -89,6 +89,17 @@ public sealed partial class SettingsPage : Page
 
     // ===================== 工具与诊断 =====================
 
+    /// <summary>启动远程控制：监听 11451 并用覆盖层盖住全部界面（结束按钮在覆盖层上）。</summary>
+    private async void OnStartRemoteControl(object sender, RoutedEventArgs e)
+    {
+        if (App.MainWindow is null) return;
+        await App.MainWindow.StartRemoteControlAsync();
+    }
+
+    /// <summary>反向：本机作为客户端，去遥控另一台 Easy4K（在主窗口内切到遥控页，不新开窗口）。</summary>
+    private void OnOpenRemoteClient(object sender, RoutedEventArgs e)
+        => App.MainWindow?.NavigateToRemoteClient();
+
     private async void OnCheckEnv(object sender, RoutedEventArgs e)
         => await App.MainWindow.ShowInfoDialogAsync("环境检测", Vm.CheckEnvironment());
 

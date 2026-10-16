@@ -5,6 +5,10 @@
     <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>Easy4K</RootNamespace>
+    <!-- 软件版本号：与 Package.appxmanifest 的 Identity Version、appsettings.json 的 Version 保持一致 -->
+    <Version>2.1.0</Version>
+    <FileVersion>2.1.0.0</FileVersion>
+    <AssemblyVersion>2.1.0.0</AssemblyVersion>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x64</Platforms>
@@ -70,10 +74,11 @@
     </None>
   </ItemGroup>
 
-  <!-- 构建后自动把项目根 Tools（FFmpeg/NVEncC/realesrgan/rife/officalrife+便携python）增量同步到输出目录，
-       保证 Debug/Release/publish 产物自包含可运行。robocopy 退出码 0-7 均为成功，>=8 才报错。 -->
+  <!-- 构建后自动把项目根 Tools（FFmpeg/NVEncC/realesrgan/rife/AudioSR/便携python）增量同步到输出目录，
+       保证 Debug/Release/publish 产物自包含可运行。robocopy 退出码 0-7 均为成功，>=8 才报错。
+       注意：排除列表里不能带 bin —— FFmpeg-Lei\bin 是必需的原生组件目录。 -->
   <Target Name="CopyToolsToOutput" AfterTargets="Build">
-    <Exec IgnoreExitCode="true" Command="robocopy &quot;$(MSBuildThisFileDirectory)..\..\Tools&quot; &quot;$(OutDir)Tools&quot; /E /NFL /NDL /NJH /NJS /NP /XD .git bin obj __pycache__ &amp; if %25ERRORLEVEL% GEQ 8 exit /b 1" />
+    <Exec IgnoreExitCode="true" Command="robocopy &quot;$(MSBuildThisFileDirectory)..\..\Tools&quot; &quot;$(OutDir)Tools&quot; /E /NFL /NDL /NJH /NJS /NP /XD .git obj __pycache__ &amp; if %25ERRORLEVEL% GEQ 8 exit /b 1" />
   </Target>
 
   <!-- 只保留 zh-CN/zh-TW 语言资源，删除 WindowsAppSDK 生成的其他语言目录（xx-XX 命名） -->

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 
 namespace Easy4K.Services.CommandBuilders;
@@ -28,7 +29,9 @@ public static class FFmpegCommandBuilder
     {
         var pattern = Path.Combine(framesDir, "%08d.png").Replace('\\', '/');
         var startNum = DetectStartNumber(framesDir);
-        var args = $"-y -framerate {fps:0.##} -start_number {startNum} -i \"{pattern}\" " +
+        // 帧率固定用不变区域格式化：目标帧率可以是小数（如 59.94），缺了这一步在部分区域设置下会写成 "59,94"
+        var fpsText = fps.ToString("0.##", CultureInfo.InvariantCulture);
+        var args = $"-y -framerate {fpsText} -start_number {startNum} -i \"{pattern}\" " +
                    $"-c:v {encArgs} -threads 0 -pix_fmt yuv420p -an \"{outputVideo}\"";
         return args;
     }
@@ -38,11 +41,14 @@ public static class FFmpegCommandBuilder
     /// 直接用 AudioSR 产出的 48kHz WAV，不再让 ffmpeg 重采样。
     /// useGpu：勾选「使FFmpeg尝试使用GPU加速」时加 -hwaccel auto（对 -c:v copy 无实际加速，仅保持"尝试"语义）。</summary>
     public static string EmbedAudio(string videoPath, string audioPath, string outputPath, bool useGpu = false,
-        int sampleRate = 96000)
+        int sampleRate = 96000, string? comment = null)
     {
         var hw = useGpu ? " -hwaccel auto" : "";
+        // comment：把"这段音频是不是 AudioSR 处理的"写进成品文件信息（MediaInfo / ffprobe 的 Comment 字段）。
+        // 只覆盖 comment 一个字段，Title/日期等其余元数据仍由 -map_metadata 默认继承。
+        var meta = string.IsNullOrEmpty(comment) ? "" : $" -metadata comment=\"{comment}\"";
         return $"-y{hw} -i \"{videoPath}\" -i \"{audioPath}\" " +
-               $"-c:v copy -c:a pcm_s24le -ar {sampleRate} -ac 2 -map 0:v:0 -map 1:a:0 \"{outputPath}\"";
+               $"-c:v copy -c:a pcm_s24le -ar {sampleRate} -ac 2 -map 0:v:0 -map 1:a:0{meta} \"{outputPath}\"";
     }
 
     /// <summary>把任意音轨转成 AudioSR 要求的 PCM WAV（48kHz / float32 / 保持声道数）。

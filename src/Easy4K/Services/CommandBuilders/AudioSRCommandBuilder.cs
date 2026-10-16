@@ -4,7 +4,7 @@ namespace Easy4K.Services.CommandBuilders;
 
 /// <summary>AudioSR 音频超分命令构建（Tools\AudioSR\audiosr_onnx.py）。
 /// 权重包由 --models 指定（models-fp16 / models-fp32），fp16 与 CPU 的冲突在脚本内也会再拦一道。
-/// python 可执行文件由调用方作为 exe 传入（复用 Tools\officalrife\python 便携版）。</summary>
+/// python 可执行文件由调用方作为 exe 传入（软件随附的便携 Python）。</summary>
 public static class AudioSrCommandBuilder
 {
     /// <summary>构建推理命令。device 传 "cpu" 时强制 CPU（仅 fp32 包可用）；其余走 auto（DirectML 优先）。
@@ -14,7 +14,7 @@ public static class AudioSrCommandBuilder
     {
         var dir = Path.GetDirectoryName(outputWav);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        var dev = useCpu ? " -device cpu" : "";
+        var dev = useCpu ? " --device cpu" : "";
         return $"-X utf8 \"{scriptPath}\" --input \"{inputWav}\" --output \"{outputWav}\" --models \"{modelsDir}\"{dev}";
     }
 }

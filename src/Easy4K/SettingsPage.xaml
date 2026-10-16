@@ -90,6 +90,31 @@
                     </StackPanel>
                 </Border>
 
+                <!-- 远程控制 -->
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="远程控制" Style="{StaticResource SectionTitle}"/>
+                        <TextBlock FontSize="12" Opacity="0.7" TextWrapping="Wrap"
+                                   Text="① 作为服务端：在 11451 端口监听手机客户端（Easy4K 手机端 / 鸿蒙端）。启动后会隐藏本机全部界面，只显示等待连接提示。② 作为客户端：去遥控另一台开着远程控制的 Easy4K，在本窗口内操作（不新开窗口），连接成功后顶部会出现「已连接至 …」横幅。"/>
+                        <!-- 标签与开关同一行：左列文字自动换行，右列开关靠右齐平 -->
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center"
+                                       Text="每次开启 Easy4K 自动进入远程连接模式（启动即监听 11451，等同启动参数 --remote）"/>
+                            <ToggleSwitch Grid.Column="1" x:Name="AutoRemoteSwitch" FontSize="12" VerticalAlignment="Center"
+                                          OnContent="开启" OffContent="关闭"
+                                          IsOn="{x:Bind Vm.AutoRemoteOnStartup, Mode=TwoWay}"/>
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="启动远程控制" Click="OnStartRemoteControl" Style="{StaticResource GlassButton}"/>
+                            <Button Content="遥控另一台 Easy4K" Click="OnOpenRemoteClient" Style="{StaticResource GlassButton}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
                 <!-- 工具与诊断 -->
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel Spacing="6">

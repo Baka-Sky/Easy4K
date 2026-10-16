@@ -1,6 +1,6 @@
 ════════════════════════════════════════════════════════════════════
                       Easy4K 软件安装及使用声明
-                        （适用于 Easy4K v2.0.0）
+                        （适用于 Easy4K v2.1.0）
 ════════════════════════════════════════════════════════════════════
 
 本声明由甲方（软件提供方：Easy4K 软件项目组）与乙方（安装并使用
@@ -23,58 +23,134 @@
 ────────────────────────────────────────────────────────────────────
 二、第三方组件声明（提及元素）
 ────────────────────────────────────────────────────────────────────
-本软件附带、调用或打包了以下第三方组件、开源工具及模型，其版权
-与许可均归属各自权利人，甲方按其许可条款使用与再分发：
+本软件本体及全部第三方组件均**永久免费**提供。本软件附带、调用或
+打包了以下第三方组件、开源工具及模型，其版权与许可均归属各自权
+利人，甲方按其许可条款使用与再分发。以下清单已与随包自带的
+LICENSE 文件逐项核对：
 
-   (1) FFmpeg 多媒体框架
-       版权：FFmpeg 项目组；许可：LGPL v2.1+ / GPL v2
-       用途：视频拆帧、编码、音频处理
-   (2) Real-ESRGAN（realesrgan-ncnn-vulkan）
-       版权：Xinntao 及贡献者；许可：BSD-3-Clause
-       用途：AI 超分辨率放大
-   (3) RIFE（rife-ncnn-vulkan）
-       版权：黄海燕及贡献者；许可：MIT（ncnn 部分）
-       用途：AI 视频补帧
-   (4) ncnn 神经网络推理框架
-       版权：腾讯及贡献者；许可：BSD-3-Clause
-       用途：Vulkan 模型推理
-   (5) NVEncC
-       版权：rigaya；许可：MIT
-       用途：NVIDIA 硬件编码及 SDR→HDR 转换
-   (6) Windows App SDK / WinUI 3
-       版权：Microsoft Corporation；许可：MIT
-       用途：用户界面框架
-   (7) CommunityToolkit.Mvvm
-       版权：.NET Foundation；许可：MIT
-       用途：MVVM 框架
-   (8) Python 便携运行时（CPython）
-       版权：Python Software Foundation；许可：PSF License
-       用途：Offical 补帧引擎运行环境（Tools\officalrife\python）
-   (9) PyTorch
-       版权：PyTorch 项目组 / Linux Foundation；许可：BSD-3-Clause
-       用途：Offical 官方 RIFE 模型推理（NVIDIA CUDA GPU 加速；无 CUDA
-       设备自动回退 CPU）
-   (10) RIFE 官方实现（vs-rife / SVFI）
-       版权：HolyWu、SVFI 及各自贡献者；许可：MIT
-       用途：官方 PyTorch pkl 模型（2.3 / 4.6~4.26 / RPR v7）
-   (11) AudioSR（音频超分辨率）
-       版权：haoheliu 及贡献者；许可：MIT
-       用途：音频超分（扩散模型 + 声码器重建高频，把音轨升采样到
-       48kHz；"高级"页可开关，默认关闭）
-   (12) AudioSR ONNX 权重包（port-audiosr-onnx 社区移植）
-       版权：原模型作者及移植者；许可：随包 manifest.json 标注 MIT
-       用途：DirectML / CPU 上的 AudioSR 推理权重（fp16 / fp32 两档）
-   (13) ONNX Runtime 与 DirectML 执行提供器
-       版权：Microsoft Corporation；许可：MIT
-       用途：AudioSR 的 ONNX 推理运行时（GPU 优先，fp32 可回退 CPU）
-   (14) NumPy / SciPy
-       版权：NumPy、SciPy 项目组；许可：BSD-3-Clause
-       用途：AudioSR 驱动脚本的信号处理（重采样、滤波、STFT）
+【引擎与框架】
+ (1) FFmpeg 多媒体框架
+     版权：FFmpeg 项目组（本包为 gyan.dev 的 essentials 构建）
+     许可：GPL v3
+       本构建启用 --enable-gpl --enable-version3，并包含 libx264、
+       libx265、libvpx、libaom 等 GPL 组件，故整体按 GPL v3 分发
+       （不是 LGPL v2.1 / GPL v2）。
+     用途：视频拆帧、编码合成、音频处理
+     依 GPLv3 要求：分发时须提供对应完整源码的获取方式，并在交互
+     界面显示许可声明与免责说明。
+ (2) NVEncC
+     版权：rigaya；许可：MIT
+     用途：NVIDIA 硬件编码及 SDR→HDR 转换
+ (3) ncnn 神经网络推理框架
+     版权：腾讯及贡献者；许可：BSD-3-Clause
+     用途：Vulkan 模型推理
+ (4) Windows App SDK / WinUI 3
+     版权：Microsoft Corporation；许可：MIT
+     用途：用户界面框架
+ (5) .NET 运行时与基础类库
+     版权：.NET Foundation；许可：MIT
+     用途：应用程序运行时
+ (6) CommunityToolkit.Mvvm
+     版权：.NET Foundation；许可：MIT
+     用途：MVVM 框架
+ (7) MySqlConnector
+     版权：Bradley Grainger；许可：MIT
+     用途：可选的统计上报数据库连接
+
+【超分算法与权重】（均为 ncnn + Vulkan 实现）
+ (8) Real-ESRGAN（realesrgan-ncnn-vulkan）
+     版权：Xintao Wang；许可：MIT
+     用途：动漫/实拍通用超分（5 个模型）
+ (9) Real-CUGAN（realcugan-ncnn-vulkan）
+     版权：nihui；许可：MIT
+     用途：动漫超分与降噪（9 个模型）
+ (10) RealSR（realsr-ncnn-vulkan）
+     版权：nihui；许可：MIT
+     用途：实拍超分（2 个模型）
+ (11) SRMD（srmd-ncnn-vulkan）
+     版权：nihui；许可：MIT
+     用途：实拍轻量超分（6 个模型）
+ (12) waifu2x（waifu2x-ncnn-vulkan）
+     版权：nihui；许可：MIT
+     用途：动漫超分（3 个模型）
+
+【补帧算法与权重】
+ (13) RIFE（rife-ncnn-vulkan）
+     版权：nihui；许可：MIT
+     用途：NCNN-RIFE 补帧族（Vulkan，全显卡通用）
+ (14) Practical-RIFE
+     版权：hzwer；许可：MIT
+     用途：RIFE 补帧族（PyTorch，4 个版本）
+ (15) DRBA
+     版权：routineLife1；许可：MIT
+     用途：DRBA 补帧族（PyTorch，3 个版本）
+ (16) GMFSS / GMFSS_Fortuna
+     版权：98mxr 及贡献者；许可：上游仓库未附许可证文件
+     用途：GMFSS 补帧族（PyTorch，3 个版本）
+ (17) GIMM-VFI
+     版权：Copyright 2024 S-Lab
+     许可：S-Lab License 1.0 —— 仅限**非商业用途**，商业使用需联系
+     作者另行取得授权
+     用途：GIMM-VFI 补帧族（PyTorch，4 个版本）
+ (18) softmax-splatting 算子实现
+     版权：Simon Niklaus
+     许可：仅限**学术用途**，商业使用需联系作者另行取得授权
+     用途：DRBA / GMFSS / GIMM-VFI 内部的光流 splatting 算子
+ (19) WAFT（随包附带上游源码）
+     版权：Copyright (c) 2025, Princeton Vision & Learning Lab
+     许可：BSD 3-Clause
+
+【音频超分】
+ (20) AudioSR
+     版权：haoheliu 及贡献者；许可：MIT
+     用途：音频超分（扩散模型 + 声码器重建高频，升采样到 48kHz）
+ (21) AudioSR ONNX 权重包（port-audiosr-onnx 社区移植）
+     版权：原模型作者及移植者；许可：随包 manifest.json 标注 MIT
+     用途：CUDA / DirectML / CPU 上的 AudioSR 推理权重
+     （fp16 / fp32 两档）
+ (22) ONNX Runtime 及 DirectML / CUDA 执行提供器
+     版权：Microsoft Corporation；许可：MIT
+     用途：AudioSR 的 ONNX 推理运行时（GPU 优先，可回退 CPU）
+
+【运行环境与依赖库】
+ (23) Python 便携运行时（CPython 3.12 与 3.14）
+     版权：Python Software Foundation；许可：PSF License
+     用途：AudioSR 与 PyTorch 轨补帧的脚本运行环境
+ (24) PyTorch 2.6.0（+cu124）
+     版权：PyTorch Foundation；许可：BSD-3-Clause
+     用途：PyTorch 轨补帧模型推理
+ (25) NVIDIA CUDA / cuDNN 运行时组件
+     版权：NVIDIA Corporation；许可：NVIDIA 专有许可
+     用途：CUDA 推理加速（仅 NVIDIA 显卡；随 NVIDIA 二次分发条款）
+ (26) CuPy
+     版权：Preferred Networks；许可：MIT
+     用途：DRBA / GMFSS / GIMM-VFI 的 CUDA 算子现场编译
+ (27) NumPy / SciPy
+     版权：NumPy、SciPy 项目组；许可：BSD-3-Clause
+     用途：信号处理与数值计算（重采样、STFT、音频滤波）
+ (28) OpenCV（opencv-python-headless）
+     版权：OpenCV 项目组；许可：Apache-2.0
+     （wheel 打包层为 MIT，Copyright Olli-Pekka Heinisuo）
+     用途：图像缩放与色彩空间转换
+ (29) timm
+     版权：Ross Wightman；许可：Apache-2.0
+     用途：GIMM-VFI 的 FlowFormer 主干网络
+ (30) 其他 Python 依赖
+     omegaconf / einops / loguru / yacs / easydict / tqdm /
+     tensorboard / sympy / mpmath 等，许可分别为 MIT、Apache-2.0 或
+     BSD-3-Clause，详见各包随附的 LICENSE 文件。
 
 ── 说明 ──
-"帧去重"（四阶级联判决：像素差与分块局部检查 / dHash / QR 分解 /
-Farnebäck 稠密光流）为本软件自行实现，不依赖 OpenCV 等第三方库，
-其实现思路参考公开发表的视频帧去重论文，算法与代码版权归甲方。
+1. "帧去重"（SFDP：四阶级联判决 —— 像素差与分块局部检查 / dHash /
+   QR 分解 / Farnebäck 稠密光流）为本软件自行实现，不依赖 OpenCV
+   等第三方库，其实现思路参考公开发表的视频帧去重论文，算法与代码
+   版权归甲方。**本软件中唯一收费的内容即为该自研算法及其相关服务。**
+2. 上述第三方组件与模型均随本软件免费提供，是否付费**不影响其可用
+   范围** —— 未付费用户同样可以使用全部超分与补帧模型。
+3. 对清单中标注"非商业用途 / 学术用途"的组件（第 17、18 项），本软
+   件以免费方式分发，满足其许可条件；甲方不以这些组件本身获利。
+4. 第 (19) 项 WAFT 仅为随包附带的上游源码，本软件尚未接入其推理。
+5. 若您发现本清单遗漏、或与随包 LICENSE 文件不符，请通知甲方更正。
 
 请您保留本软件及其组件中的全部版权、许可与署名信息，不得删除
 或篡改。

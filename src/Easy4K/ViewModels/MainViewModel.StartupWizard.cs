@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Easy4K.Models;
 using Easy4K.Services;
+using Easy4K.Services.CommandBuilders;
 
 namespace Easy4K.ViewModels;
 
@@ -180,7 +181,7 @@ public partial class MainViewModel
                     MergeVideo = MergeVideo,
                     MergeAudio = MergeAudio && info.HasAudio,
                     SdrToHdr = SdrToHdr && IsHdrEnabled,
-                    IfEngine = IfEngine
+                    TargetFps = TargetFpsActive ? TargetFps : 0
                 };
 
                 var ctx = new ProcessingContext
@@ -194,6 +195,7 @@ public partial class MainViewModel
                     SrModel = SrModel,
                     SrScale = Math.Clamp(SrScale, 2, 4),
                     IfModel = IfModel,
+                    IfDriverKey = VfiCatalog.DriverKey(IfModel),
                     IfMultiplier = IfMultiplier,
                     HdrSaturation = Math.Clamp(HdrSaturation, 0, 200),
                     HdrContrast = Math.Clamp(HdrContrast, 0, 200),
@@ -202,7 +204,7 @@ public partial class MainViewModel
                     Tools = Tools
                 };
 
-                _logger.Info($"处理前测试选项: 超分 {ctx.SrModel}×{ctx.SrScale} / 补帧引擎 {ctx.Options.IfEngine} / 模型 {ctx.IfModel}×{ctx.IfMultiplier}");
+                _logger.Info($"处理前测试选项: 超分 {ctx.SrModel}×{ctx.SrScale} / 补帧模型 {ctx.IfModel}×{ctx.IfMultiplier}");
 
                 // 复用正式处理的进度/预览管线，阶段文案统一显示"测试中..."
                 _cts = new CancellationTokenSource();
@@ -330,7 +332,7 @@ public partial class MainViewModel
         if (SplitFrames) lines.Add("拆分帧");
         if (DedupEnabled) lines.Add($"帧去重：{(DedupMode == "uhd" ? "UHD Mode 完美模式" : "Performance Mode 性能模式")}");
         if (SuperResolution) lines.Add($"超分辨率：{SrModel} ×{SrScale}");
-        if (Interpolation) lines.Add($"补帧：引擎 {IfEngine}，模型 {IfModel} ×{IfMultiplier}");
+        if (Interpolation) lines.Add($"补帧：模型 {IfModel} ×{IfMultiplier}");
         if (MergeVideo) lines.Add("合并视频");
         if (MergeAudio) lines.Add("合并原音频");
         if (SdrToHdr) lines.Add("SDR→HDR 转换");

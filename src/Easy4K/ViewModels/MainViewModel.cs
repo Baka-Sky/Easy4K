@@ -39,6 +39,8 @@ public partial class MainViewModel : ObservableObject
     public event Action<ProcessProgress>? ProgressChanged;
     /// <summary>处理开始（用于自动切到"进行中"页）</summary>
     public event Action? ProcessingStarted;
+    /// <summary>单文件超分结束（true=成功）。单文件不走主管线，需要单独通知 UI 收起/保留"进行中"页</summary>
+    public event Action<bool>? SingleFileFinished;
     /// <summary>处理结束（含结果，用于弹完成窗体）</summary>
     public event Action<ProcessingResult>? ProcessingCompleted;
     /// <summary>临时目录缓存与当前视频不符（UI 弹窗引导重新选择/清理）。
@@ -76,18 +78,15 @@ public partial class MainViewModel : ObservableObject
 
         // 默认路径：可写根目录（便携版=exe 旁；MSIX 安装版=%LOCALAPPDATA%\Easy4K，安装目录只读）
         var rootDir = AppPaths.WritableRoot;
-        _tempRoot = Path.Combine(rootDir, app.TempRoot);
-        _outputRoot = Path.Combine(rootDir, app.OutputRoot);
-        if (!Directory.Exists(_tempRoot)) Directory.CreateDirectory(_tempRoot);
-        if (!Directory.Exists(_outputRoot)) Directory.CreateDirectory(_outputRoot);
+        _tempRoot = EnsureWritableDir(Path.Combine(rootDir, app.TempRoot), Path.Combine(rootDir, "Temp"), "临时");
+        _outputRoot = EnsureWritableDir(Path.Combine(rootDir, app.OutputRoot), Path.Combine(rootDir, "Output"), "输出");
 
         // 默认模型/倍率
         _srScale = app.DefaultSrScale;
         _ifMultiplier = app.DefaultIfMultiplier;
+        _targetFps = app.TargetFps;
         _srModel = app.DefaultSrModel;
         _ifModel = app.DefaultIfModel;
-        // 引擎仅跟随手动"保存当前设置为默认"恢复（不自动记住上次使用的引擎）
-        _ifEngine = app.DefaultIfEngine == "Offical" ? "Offical" : "NCNN";
         _useSafeFrameRate = app.UseSafeFrameRate;
         _lowerQualityForVram = app.LowerQualityForVram;
         _useGpuAcceleration = app.UseGpuAcceleration;
@@ -101,7 +100,14 @@ public partial class MainViewModel : ObservableObject
         _backgroundImage = app.BackgroundImage ?? "";
         _backdropAcrylicPercent = Math.Clamp(app.BackdropAcrylicPercent, 0, 100);
 
+        // 「算法」下拉框要对齐到配置里保存的模型，否则启动后算法显示 Real-ESRGAN、模型却是别的引擎的
+        _srEngineIndex = SrCatalog.FamilyIndexOf(_srModel);
+        // 保存的倍率可能不被这个算法支持（如 RealSR 只有 4x）→ 先夹到合法档位再建列表
+        var initScales = SupportedSrScales();
+        if (initScales.Count > 0 && !initScales.Contains(_srScale))
+            _srScale = initScales.OrderBy(x => Math.Abs(x - _srScale)).First();
         RefreshSrModels();
+        RefreshSfImageModels();
 
         _gpu = _env.Gpu;
         // 启动时检测：非 RTX 显卡自动禁用 HDR 转换
@@ -124,9 +130,28 @@ public partial class MainViewModel : ObservableObject
 
         // 恢复"保存的默认步骤"（向导或主界面"保存当前设置为默认"后，下次启动即恢复勾选）
         RestoreDefaultStepsFromConfig();
+    }
 
-        // 音频超分：FP16 与 CPU 处理模式的非法组合在启动时自动纠正为 FP32（避免一开就撞墙）
-        ReconcileAudioSrWithCpu();
+    /// <summary>确保目录可用。配置里可能写了目标机上不存在的盘符（如 H:\SR），
+    /// Directory.CreateDirectory 会抛 DirectoryNotFoundException 让程序直接起不来 ——
+    /// 这里改为回退到默认目录并记录警告，至少让用户能进界面自己改路径。</summary>
+    private string EnsureWritableDir(string dir, string fallback, string what)
+    {
+        try
+        {
+            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+            return dir;
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn($"{what}目录不可用（{dir}）：{ex.Message}；本次改用默认目录 {fallback}");
+            try
+            {
+                if (!Directory.Exists(fallback)) Directory.CreateDirectory(fallback);
+            }
+            catch { }
+            return fallback;
+        }
     }
 
     /// <summary>用 appsettings 里的默认步骤恢复主界面勾选状态（直接写字段，构造期不触发联动逻辑/日志）。</summary>
@@ -141,7 +166,7 @@ public partial class MainViewModel : ObservableObject
         _audioSrPrecision = string.Equals(_app.AudioSrPrecision, "fp32", StringComparison.OrdinalIgnoreCase) ? "fp32" : "fp16";
         _turboMode = _app.TurboMode;
         _turboBlockFrames = Math.Clamp(_app.TurboBlockFrames, 32, 4000);
-        _turboSplitGpus = _app.TurboSplitGpus;
+        _autoRemoteOnStartup = _app.AutoRemoteOnStartup;
         _superResolution = _app.DefaultSuperResolution;
         _interpolation = _app.DefaultInterpolation;
         _mergeVideo = _app.DefaultMergeVideo;
@@ -195,6 +220,7 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanStart))]
     [NotifyPropertyChangedFor(nameof(CanStartReason))]
     [NotifyPropertyChangedFor(nameof(StartBlockReasonVis))]
+    [NotifyPropertyChangedFor(nameof(SfOutputText))]
     private string _outputRoot = "";
 
     /// <summary>临时目录缓存与当前视频不符且用户未处理（点了取消）→ 阻断启动按钮。
@@ -238,8 +264,56 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(FinalOutputName))]
     private int _srScale = 2;
 
-    [ObservableProperty] private string _srModel = "";
+    /// <summary>超分「算法」索引（取值见 SrCatalog.Families）。
+    /// 「算法」选引擎，「模型」选该引擎下的具体权重（含倍率与降噪档）。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SrFamilyScene))]
+    [NotifyPropertyChangedFor(nameof(SrSceneText))]
+    private int _srEngineIndex;
+
+    /// <summary>超分算法名称（UI「算法」下拉框用）</summary>
+    public IReadOnlyList<string> SrEngines => SrCatalog.FamilyLabels;
+
+    /// <summary>当前算法的整体说明（面板右下角兜底文案）</summary>
+    public string SrFamilyScene => SrCatalog.At(SrEngineIndex)?.Scene ?? "";
+
+    /// <summary>当前所选超分模型适合的场景 + 推荐星级，显示在超分设置面板右下角。
+    /// 模型自己有说明就用模型的，否则回落到该算法的整体说明与星级。</summary>
+    public string SrSceneText
+    {
+        get
+        {
+            var scene = SrCatalog.SceneOf(SrModel) ?? SrFamilyScene;
+            var stars = SrCatalog.StarsOf(SrModel);
+            if (stars == 0) stars = SrCatalog.At(SrEngineIndex)?.Stars ?? 0;
+            if (string.IsNullOrEmpty(scene)) return "";
+            return stars > 0 ? $"{scene} · {ModelRating.Stars(stars)}" : scene;
+        }
+    }
+
+    /// <summary>当前超分模型（属于当前算法，取值见 SrCatalog）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SrSceneText))]
+    private string _srModel = "";
+
     public ObservableCollection<string> SrModels { get; } = new();
+
+    /// <summary>切换超分算法：该算法不支持当前倍率时自动落到它支持的第一个倍率，再重建模型列表。
+    /// 由 MainPage 的下拉框事件调用（不在 OnSrEngineIndexChanged 里做，避免改倍率时重复刷新）。</summary>
+    public void SwitchSrEngine(int index)
+    {
+        SrEngineIndex = index;
+        var scales = SupportedSrScales();
+        if (scales.Count > 0 && !scales.Contains(SrScale))
+            SrScale = scales[0];   // 赋值会触发 OnSrScaleChanged → RefreshSrModels
+        else
+            RefreshSrModels();
+    }
+
+    /// <summary>当前算法支持的倍率档（升序）。RealSR 只有 4x、waifu2x 只有 2x/4x。</summary>
+    private IReadOnlyList<int> SupportedSrScales() =>
+        (SrCatalog.At(SrEngineIndex)?.Variants.SelectMany(v => v.Scales) ?? Enumerable.Empty<int>())
+        .Distinct().OrderBy(x => x).ToList();
 
     // ===================== 补帧设置 =====================
     [ObservableProperty]
@@ -250,19 +324,65 @@ public partial class MainViewModel : ObservableObject
     /// <summary>补帧倍率是否锁定（v2/v3 老模型仅支持 x2 时禁用倍率下拉框）</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IfMultiplierEnabled))]
+    [NotifyPropertyChangedFor(nameof(TargetFpsEnabled))]
+    [NotifyPropertyChangedFor(nameof(TargetFpsActive))]
+    [NotifyPropertyChangedFor(nameof(TargetFpsText))]
+    [NotifyPropertyChangedFor(nameof(FinalOutputName))]
     private bool _ifMultiplierLocked;
 
-    /// <summary>倍率下拉框是否可用（锁定 v2/v3 时禁用，其余可用）</summary>
-    public bool IfMultiplierEnabled => !IfMultiplierLocked;
-
-    [ObservableProperty] private string _ifModel = "";
-
-    /// <summary>补帧模型种类："NCNN"（rife-ncnn-vulkan）或 "Offical"（PyTorch pkl 模型）</summary>
+    /// <summary>补帧目标帧率（&gt;0 时优先于倍率：成片 fps 精确等于该值，总帧数 = 源帧数 × 目标/源 四舍五入）。
+    /// 用于避免 23.976×2=47.952 这种带小数的成片帧率；填 0 = 回到按倍率补帧。</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IfModel))]
-    private string _ifEngine = "NCNN";
-    /// <summary>可选模型种类列表</summary>
-    public ObservableCollection<string> IfEngines { get; } = new() { "NCNN", "Offical" };
+    [NotifyPropertyChangedFor(nameof(TargetFpsActive))]
+    [NotifyPropertyChangedFor(nameof(IfMultiplierEnabled))]
+    [NotifyPropertyChangedFor(nameof(TargetFpsText))]
+    [NotifyPropertyChangedFor(nameof(FinalOutputName))]
+    private double _targetFps;
+
+    /// <summary>目标帧率是否生效（填了正数且模型支持自定义帧数）</summary>
+    public bool TargetFpsActive => TargetFps > 0 && !IfMultiplierLocked;
+
+    /// <summary>目标帧率输入框是否可用（v2/v3 老模型不支持自定义帧数，禁用）</summary>
+    public bool TargetFpsEnabled => !IfMultiplierLocked;
+
+    /// <summary>实际补帧比例：填了目标帧率就用 目标/源（可为小数），否则用整数倍率</summary>
+    public double EffectiveRatio
+    {
+        get
+        {
+            if (TargetFpsActive && Video is { IsValid: true } v && v.FrameRate > 0)
+                return TargetFps / v.FrameRate;
+            return IfMultiplier;
+        }
+    }
+
+    /// <summary>成片帧率：填了目标帧率就是它本身，否则 源帧率 × 倍率</summary>
+    public double EffectiveOutFps
+    {
+        get
+        {
+            if (Video is null || !Video.IsValid) return 0;
+            return Interpolation ? (TargetFpsActive ? TargetFps : Video.FrameRate * IfMultiplier) : Video.FrameRate;
+        }
+    }
+
+    /// <summary>换算出的补帧输出总帧数（目标帧率模式按比例四舍五入）</summary>
+    public long ExpectedIfFrames
+    {
+        get
+        {
+            if (Video is null || !Video.IsValid) return 0;
+            return (long)Math.Round(Video.TotalFrames * EffectiveRatio);
+        }
+    }
+
+    /// <summary>倍率下拉框是否可用（锁定 v2/v3 时禁用；填了目标帧率时也禁用——两者互斥）</summary>
+    public bool IfMultiplierEnabled => !IfMultiplierLocked && !TargetFpsActive;
+
+    /// <summary>补帧模型（当前「种类」下的某个版本，取值见 VfiCatalog）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IfSceneText))]
+    private string _ifModel = "";
 
     // ===================== 音频设置 =====================
     // 不再选外部音频文件：改为从原视频提取音频（拆分音频按钮）+ 合并原音频进新视频（勾选）
@@ -360,19 +480,6 @@ public partial class MainViewModel : ObservableObject
     /// <summary>块大小右侧的数值文本</summary>
     public string TurboBlockLabel => $"{TurboBlockFrames} 帧";
 
-    /// <summary>涡轮模式多卡分流：超分走 GPU 0、补帧走 GPU 1（单卡上两个进程只会互相抢算力）</summary>
-    [ObservableProperty]
-    private bool _turboSplitGpus;
-
-    partial void OnTurboSplitGpusChanged(bool value)
-    {
-        _app.TurboSplitGpus = value;
-        _settings.Save(_app, _pathConfig);
-        _logger.Info(value
-            ? "涡轮模式多卡分流已开启：超分走 GPU 0、补帧走 GPU 1（开跑前会探测第二块显卡是否可用）"
-            : "涡轮模式多卡分流已关闭：超分与补帧共用 GPU 0");
-    }
-
     partial void OnAudioSrEnabledChanged(bool value)
     {
         _app.AudioSrEnabled = value;
@@ -384,7 +491,7 @@ public partial class MainViewModel : ObservableObject
         _app.TurboMode = value;
         _settings.Save(_app, _pathConfig);
         _logger.Info(value
-            ? $"涡轮模式已开启：帧序列按 {Math.Max(32, _app.TurboBlockFrames)} 帧切块，超分与补帧两条 GPU 流水同时推进（线程预算对半分{(TurboSplitGpus ? "，并启用多卡分流" : "")}）；请确保临时目录位于固态硬盘"
+            ? $"涡轮模式已开启：帧序列按 {Math.Max(32, _app.TurboBlockFrames)} 帧切块，超分与补帧两条 GPU 流水同时推进；请确保临时目录位于固态硬盘"
             : "涡轮模式已关闭：恢复逐阶段串行处理");
     }
 
@@ -394,19 +501,21 @@ public partial class MainViewModel : ObservableObject
         _settings.Save(_app, _pathConfig);
     }
 
+    // ===================== 远程控制 =====================
+    /// <summary>每次启动自动进入远程连接模式（等价于启动参数 --remote）：启动后直接监听 11451 等待手机端连接</summary>
+    [ObservableProperty] private bool _autoRemoteOnStartup;
+
+    partial void OnAutoRemoteOnStartupChanged(bool value)
+    {
+        _app.AutoRemoteOnStartup = value;
+        _settings.Save(_app, _pathConfig);
+        _logger?.Info(value ? "已开启：每次启动 Easy4K 自动进入远程连接模式" : "已关闭：启动时不再自动进入远程连接模式");
+    }
+
     partial void OnAudioSrPrecisionChanged(string value)
     {
         _app.AudioSrPrecision = value;
         _settings.Save(_app, _pathConfig);
-    }
-
-    /// <summary>FP16 + CPU 处理模式是非法组合（CPU 的 fp16 算子又少又慢）：配置恢复/启动预检时把精度降回 fp32。</summary>
-    public bool ReconcileAudioSrWithCpu()
-    {
-        if (!AudioSrEnabled || AudioSrPrecision != "fp16" || !UseCpuProcessing) return false;
-        _logger.Warn("音频超分：配置里 FP16 与 CPU 处理模式冲突，已自动切回 FP32 精度（FP16 在 CPU 上又慢又不准）");
-        AudioSrPrecision = "fp32";
-        return true;
     }
 
     /// <summary>主页「音频设置」右侧的链路说明：未开音频超分走 ffmpeg 重采样到 96kHz；开了则由 AudioSR 直出 48kHz。</summary>
@@ -424,7 +533,9 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanStartReason))]
     [NotifyPropertyChangedFor(nameof(StartBlockReasonVis))]
     [NotifyPropertyChangedFor(nameof(CanStop))]
+    [NotifyPropertyChangedFor(nameof(CanPause))]
     [NotifyPropertyChangedFor(nameof(CanClean))]
+    [NotifyPropertyChangedFor(nameof(CanStartSingle))]
     private bool _isProcessing;
 
     /// <summary>当前处理是否处于暂停状态（工具进程已挂起）</summary>
@@ -442,7 +553,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _useGpuAcceleration = true;
 
-    /// <summary>使用 CPU 处理所有模型（超分/补帧 NCNN -g -1、Offical 强制 CPU），速度慢</summary>
+    /// <summary>使用 CPU 处理所有模型（超分/补帧 NCNN -g -1），速度慢</summary>
     [ObservableProperty]
     private bool _useCpuProcessing;
 
@@ -577,6 +688,10 @@ public partial class MainViewModel : ObservableObject
     private double _progressPercent;
     public string ProgressText => ProgressPercent > 0 ? $"{ProgressPercent:0.#}%" : "";
     [ObservableProperty] private string _progressDetail = "";
+    /// <summary>预计剩余时间 / 预计完成时刻。进度百分比是"本阶段"的，所以按本阶段已用时间线性外推。</summary>
+    [ObservableProperty] private string _etaText = "";
+    private ProcessStage _etaStage = ProcessStage.Idle;
+    private DateTime _etaStageStarted = DateTime.Now;
     [ObservableProperty] private ProcessStage _stage = ProcessStage.Idle;
 
     /// <summary>最新产出帧路径（预览图实时刷新）</summary>
@@ -632,8 +747,12 @@ public partial class MainViewModel : ObservableObject
         get
         {
             if (Video is null || !Video.IsValid) return "未检测";
-            var fps = Interpolation ? Video.FrameRate * IfMultiplier : Video.FrameRate;
-            return $"{fps:0.00} fps";
+            if (!Interpolation) return $"{Video.FrameRate:0.00} fps";
+            if (TargetFpsActive)
+                return $"目标 {TargetFps:0.##} fps ≈ {EffectiveRatio:0.###}×（共 {ExpectedIfFrames} 帧，源 {Video.FrameRate:0.##} fps）";
+            if (TargetFps > 0 && IfMultiplierLocked)
+                return $"该模型仅支持 ×2（{Video.FrameRate * 2:0.00} fps），已忽略目标帧率 {TargetFps:0.##}";
+            return $"{Video.FrameRate * IfMultiplier:0.00} fps（×{IfMultiplier}，共 {ExpectedIfFrames} 帧）";
         }
     }
 
@@ -644,23 +763,27 @@ public partial class MainViewModel : ObservableObject
             if (Video is null || !Video.IsValid || string.IsNullOrEmpty(InputVideo)) return "未计算";
             var w = SuperResolution ? Video.Width * SrScale : Video.Width;
             var h = SuperResolution ? Video.Height * SrScale : Video.Height;
-            var fps = Interpolation ? Video.FrameRate * IfMultiplier : Video.FrameRate;
-            return OutputNamer.Build(InputVideo, SuperResolution, Interpolation, SdrToHdr, w, h, fps, MergeAudio);
+            return OutputNamer.Build(InputVideo, SuperResolution, Interpolation, SdrToHdr, w, h, EffectiveOutFps, MergeAudio);
         }
     }
 
     /// <summary>输入+输出均配置完整才可启动：输出目录与临时目录非空，且（有外部帧文件夹 或 已检测到有效输入视频文件）。
     /// 临时目录缓存不符不再禁用按钮——改为点击启动时弹窗引导（清理/更换/取消），避免"按钮灰了但不知道为什么"。</summary>
-    public bool CanStart => !IsProcessing
-        && !string.IsNullOrWhiteSpace(OutputRoot)
-        && !string.IsNullOrWhiteSpace(TempRoot)
-        && (HasExternalFrames || (Video is not null && Video.IsValid && File.Exists(InputVideo)));
+    public bool CanStart => Services.RemoteControl.RemoteSession.IsActive
+        ? Services.RemoteControl.RemoteSession.Current!.CanStart
+        : (!IsProcessing
+            && !SfRunning
+            && !string.IsNullOrWhiteSpace(OutputRoot)
+            && !string.IsNullOrWhiteSpace(TempRoot)
+            && (HasExternalFrames || (Video is not null && Video.IsValid && File.Exists(InputVideo))));
 
     /// <summary>不能开始处理的原因（可开始时为空串）。主页按钮旁显示，避免"按钮灰了点着没反应却不知道为什么"。</summary>
     public string CanStartReason
     {
         get
         {
+            // 遥控远端时，能否开始由远端决定
+            if (Services.RemoteControl.RemoteSession.IsActive) return Services.RemoteControl.RemoteSession.Current!.CanStartReason;
             if (IsProcessing) return "";
             if (string.IsNullOrWhiteSpace(TempRoot)) return "请先选择临时目录";
             if (string.IsNullOrWhiteSpace(OutputRoot)) return "请先选择输出目录";
@@ -679,9 +802,12 @@ public partial class MainViewModel : ObservableObject
 
     /// <summary>拆分音频需基于真实输入视频，帧文件夹模式（无视频文件）时禁用</summary>
     public bool ExtractAudioEnabled => CanStart && !HasExternalFrames;
-    public bool CanStop => IsProcessing;
-    /// <summary>处理进行中禁止清理临时文件（避免清理与工具进程抢文件/误删中间产物）</summary>
-    public bool CanClean => !IsProcessing;
+    /// <summary>「进行中」页的停止按钮：主管线与单文件任务都算运行中</summary>
+    public bool CanStop => IsProcessing || SfRunning;
+    /// <summary>「进行中」页的暂停/继续按钮：两者共用同一个 ProcessRunner，挂起的是当前工具进程</summary>
+    public bool CanPause => IsProcessing || SfRunning;
+    /// <summary>处理进行中禁止清理临时文件（避免清理与工具进程抢文件/误删中间产物）；单文件任务同理</summary>
+    public bool CanClean => !IsProcessing && !SfRunning;
 
     // ===================== 显卡状态（绿=可运行 / 黄=勉强 / 红=不行） =====================
     public enum GpuStatusGrade { None, Green, Yellow, Red }
@@ -761,6 +887,12 @@ public partial class MainViewModel : ObservableObject
     /// <summary>设置输入视频并触发检测（浏览/菜单/启动恢复用）</summary>
     public async Task SetInputVideoAsync(string path)
     {
+        // 遥控远端时：路径是远端电脑上的文件，交给远端探测（本地 ffprobe 看不到）
+        if (Services.RemoteControl.RemoteSession.IsActive)
+        {
+            await Services.RemoteControl.RemoteSession.Current!.SetInputAsync(path?.Trim() ?? "");
+            return;
+        }
         InputVideo = path?.Trim() ?? "";
         await DetectVideoAsync(InputVideo);
     }
@@ -769,6 +901,8 @@ public partial class MainViewModel : ObservableObject
     /// 避免每次输入都被回写覆盖导致输入框无法正常输入。</summary>
     public async Task DetectVideoAsync(string path)
     {
+        // 遥控远端：远端路径本地 ffprobe 看不到，检测交给远端（SetInputAsync 里已做）
+        if (Services.RemoteControl.RemoteSession.IsActive) return;
         path = path?.Trim() ?? "";
         Video = null;
         OnPropertyChanged(nameof(VideoInfoText));
@@ -931,6 +1065,333 @@ public partial class MainViewModel : ObservableObject
             _logger.Error("音频提取失败");
     }
 
+    // ===================== 单文件超分（图片 / 音频，不走完整流水线） =====================
+    // 用途：只挑一张图片做超分，或只挑一个音频文件做 AudioSR 超分，不拆帧/不补帧/不合并。
+    // 与主管线完全隔离：不读写帧目录与 cache.json，只读 Tools、只写输出目录；
+    // 与主管线互斥（共用同一个 ProcessRunner），跑的时候主管线按钮禁用。
+
+    /// <summary>单文件类型：0 = 图片，1 = 音频</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SfIsImage))]
+    [NotifyPropertyChangedFor(nameof(SfOutputText))]
+    [NotifyPropertyChangedFor(nameof(SfImageRowVis))]
+    [NotifyPropertyChangedFor(nameof(SfAudioRowVis))]
+    [NotifyPropertyChangedFor(nameof(CanStartSingle))]
+    private int _sfKindIndex;
+
+    /// <summary>单文件输入路径（图片或音频，按 <see cref="SfKindIndex"/> 解释）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SfOutputText))]
+    [NotifyPropertyChangedFor(nameof(CanStartSingle))]
+    private string _sfInput = "";
+
+    /// <summary>图片超分倍率（2/3/4，与超分模型文件名里的 xN 对应）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SfOutputText))]
+    private int _sfImageScale = 2;
+
+    /// <summary>图片超分模型（如 realesr-animevideov3-x2）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SfOutputText))]
+    [NotifyPropertyChangedFor(nameof(CanStartSingle))]
+    private string _sfImageModel = "";
+
+    /// <summary>单文件模式可用的图片模型（按 SfImageScale 过滤，与主管线的 SrModels 互不影响）</summary>
+    public ObservableCollection<string> SfImageModels { get; } = new();
+
+    /// <summary>音频超分精度档：fp16（仅 GPU）/ fp32（CPU 也行）</summary>
+    [ObservableProperty] private string _sfAudioPrecision = "fp16";
+
+    /// <summary>单文件任务状态文案（显示在卡片里；详细输出在「进行中」页日志）</summary>
+    [ObservableProperty] private string _sfStatus = "";
+
+    /// <summary>单文件任务是否在跑（跑的时候主管线按钮一并禁用，两者共用 ProcessRunner）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStart))]
+    [NotifyPropertyChangedFor(nameof(CanClean))]
+    [NotifyPropertyChangedFor(nameof(CanStartSingle))]
+    [NotifyPropertyChangedFor(nameof(CanStopSingle))]
+    [NotifyPropertyChangedFor(nameof(CanStop))]
+    [NotifyPropertyChangedFor(nameof(CanPause))]
+    [NotifyPropertyChangedFor(nameof(SfIdle))]
+    private bool _sfRunning;
+
+    private CancellationTokenSource? _sfCts;
+
+    /// <summary>AudioSR 进度行里的百分比（形如 "进度 37%"）</summary>
+    private static readonly System.Text.RegularExpressions.Regex SfPercentRe =
+        new(@"进度\s*(\d+)\s*%", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    public bool SfIsImage => SfKindIndex == 0;
+    public Microsoft.UI.Xaml.Visibility SfImageRowVis
+        => SfIsImage ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+    public Microsoft.UI.Xaml.Visibility SfAudioRowVis
+        => SfIsImage ? Microsoft.UI.Xaml.Visibility.Collapsed : Microsoft.UI.Xaml.Visibility.Visible;
+
+    /// <summary>单文件超分是否可以开始：文件存在、主管线空闲、图片模式还要有模型</summary>
+    public bool CanStartSingle
+    {
+        get
+        {
+            if (SfRunning || IsProcessing) return false;
+            var input = SfInput.Trim().Trim('"');
+            if (!File.Exists(input)) return false;
+            return !SfIsImage || !string.IsNullOrEmpty(SfImageModel);
+        }
+    }
+
+    public bool CanStopSingle => SfRunning;
+
+    /// <summary>单文件任务空闲（跑的时候把输入框/浏览按钮置灰，避免改到一半的参数被误解为已生效）</summary>
+    public bool SfIdle => !SfRunning;
+
+    /// <summary>预测的输出路径（只用于界面显示，不创建任何目录）</summary>
+    public string SfOutputText
+    {
+        get
+        {
+            var input = SfInput.Trim().Trim('"');
+            if (string.IsNullOrEmpty(input)) return "输出：选择文件后自动命名";
+            var name = SfIsImage ? SfImageFileName(input) : SfAudioFileName(input);
+            return $"输出：{Path.Combine(SfOutputDir(input), name).Replace('\\', '/')}";
+        }
+    }
+
+    /// <summary>单文件输出目录：优先用主页配置的输出目录，没配就放源文件旁边</summary>
+    private string SfOutputDir(string input)
+        => string.IsNullOrWhiteSpace(OutputRoot) ? (Path.GetDirectoryName(input) ?? "") : OutputRoot;
+
+    /// <summary>图片输出文件名：{原名}_x{倍率}_{模型}.{扩展名}。
+    /// 只保留 realesrgan 能识别的 png/jpg/webp，其余一律按 png 输出（避免"png 数据配 jpg 后缀"）。</summary>
+    private string SfImageFileName(string input)
+    {
+        var ext = Path.GetExtension(input).ToLowerInvariant();
+        if (ext == ".jpeg") ext = ".jpg";
+        if (ext is not (".png" or ".jpg" or ".webp")) ext = ".png";
+        var model = string.IsNullOrEmpty(SfImageModel) ? "realesrgan" : SfImageModel;
+        return $"{Path.GetFileNameWithoutExtension(input)}_x{SfImageScale}_{model}{ext}";
+    }
+
+    /// <summary>音频输出文件名：{原名}_AudioSR_48k.wav（AudioSR 固定产出 48kHz PCM WAV）</summary>
+    private static string SfAudioFileName(string input)
+        => $"{Path.GetFileNameWithoutExtension(input)}_AudioSR_48k.wav";
+
+    /// <summary>重建单文件模式的图片模型列表：与主管线共用 SrCatalog，按倍率筛、只列已部署引擎。
+    /// 列表按算法顺序铺开（同一算法的模型自然连在一起）。</summary>
+    private void RefreshSfImageModels()
+    {
+        var prev = SfImageModel;
+        SfImageModels.Clear();
+        for (var i = 0; i < SrCatalog.Families.Count; i++)
+        {
+            foreach (var m in SrCatalog.ModelsFor(i, SfImageScale))
+            {
+                var exe = SrCommandBuilder.ExeFor(Tools, m);
+                if (!string.IsNullOrEmpty(exe) && File.Exists(exe)) SfImageModels.Add(m);
+            }
+        }
+
+        if (SfImageModels.Contains(prev)) SfImageModel = prev;
+        else SfImageModel = SfImageModels.Count > 0 ? SfImageModels[0] : "";
+    }
+
+    partial void OnSfImageScaleChanged(int value) => RefreshSfImageModels();
+
+    /// <summary>开始单文件超分：图片走 Real-ESRGAN，音频走 AudioSR</summary>
+    public async Task StartSingleFileAsync()
+    {
+        if (SfRunning) return;
+        if (IsProcessing)
+        {
+            SfStatus = "主管线正在处理，请先等它跑完或点停止";
+            _logger.Warn("单文件超分：主管线正在处理中，已忽略本次请求");
+            return;
+        }
+        var input = SfInput.Trim().Trim('"');
+        if (!File.Exists(input))
+        {
+            SfStatus = "请先选择有效的输入文件";
+            _logger.Error($"单文件超分：输入文件不存在（{input}）");
+            return;
+        }
+
+        SfRunning = true;
+        _sfCts = new CancellationTokenSource();
+        var ct = _sfCts.Token;
+        // 单文件也走「进行中」页：开始即显示导航并切过去，否则跑起来看不到进度与日志
+        Stage = SfIsImage ? ProcessStage.SuperRes : ProcessStage.AudioSr;
+        ProgressPercent = 0;
+        ProgressDetail = SfIsImage ? "图片超分中（单文件）" : "音频超分中（单文件）";
+        ProcessingStarted?.Invoke();
+        try
+        {
+            if (SfIsImage) await RunSingleImageAsync(input, ct);
+            else await RunSingleAudioAsync(input, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            SfStatus = "已停止";
+            _logger.Warn("单文件超分已停止");
+        }
+        catch (Exception ex)
+        {
+            SfStatus = "失败，详见「进行中」页日志";
+            _logger.Error($"单文件超分异常：{ex.Message}");
+        }
+        finally
+        {
+            SfRunning = false;
+            _sfCts?.Dispose();
+            _sfCts = null;
+            Stage = ProcessStage.Idle;
+            ProgressPercent = 0;
+            SingleFileFinished?.Invoke(SfStatus.StartsWith("完成：", StringComparison.Ordinal));
+        }
+    }
+
+    /// <summary>停止单文件超分（取消令牌先走 CancellationToken，再兜底杀掉当前工具进程）</summary>
+    public void StopSingleFile()
+    {
+        try { _sfCts?.Cancel(); } catch { }
+        _runner.KillCurrent();
+    }
+
+    /// <summary>单张图片超分：按所选模型分派到对应 ncnn 引擎，-i/-o 都是图片文件</summary>
+    private async Task RunSingleImageAsync(string input, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(SfImageModel))
+        {
+            SfStatus = "没有可用的超分模型（请检查 Tools 里的模型目录）";
+            _logger.Error("单文件超分：图片模型列表为空");
+            return;
+        }
+        var srExe = SrCommandBuilder.ExeFor(Tools, SfImageModel);
+        if (string.IsNullOrEmpty(srExe) || !File.Exists(srExe))
+        {
+            SfStatus = $"模型 {SfImageModel} 对应的超分引擎没有部署（{Path.GetFileName(srExe)}）";
+            _logger.Error($"单文件超分：找不到 {SfImageModel} 对应的引擎 exe");
+            return;
+        }
+        var outPath = Path.Combine(SfOutputDir(input), SfImageFileName(input));
+        var outDir = Path.GetDirectoryName(outPath);
+        if (!string.IsNullOrEmpty(outDir)) Directory.CreateDirectory(outDir);
+
+        SfStatus = "图片超分中…";
+        _logger.Info($"单文件超分（图片）开始：{Path.GetFileName(input)} → {Path.GetFileName(outPath)}"
+            + $"（模型 {SfImageModel}，×{SfImageScale}）");
+        var args = SrCommandBuilder.Build(SfImageModel, SfImageScale, input, outPath, "", LowerQualityForVram);
+        _logger.Command($"{Path.GetFileName(srExe)} {args}");
+        var exit = await _runner.RunAsync(srExe, args, ct: ct);
+
+        if (exit == 0 && File.Exists(outPath))
+        {
+            var mb = new FileInfo(outPath).Length / 1024.0 / 1024.0;
+            SfStatus = $"完成：{outPath}";
+            _logger.Success($"单文件超分（图片）完成：{outPath}（{mb:F1} MB）");
+        }
+        else
+        {
+            SfStatus = "图片超分失败，详见「进行中」页日志";
+            _logger.Error($"单文件超分（图片）失败（退出码 {exit}）");
+        }
+    }
+
+    /// <summary>单个音频文件超分：ffmpeg 转 48kWAV → audiosr_onnx.py → 把结果复制到输出目录</summary>
+    private async Task RunSingleAudioAsync(string input, CancellationToken ct)
+    {
+        var precision = string.Equals(SfAudioPrecision, "fp32", StringComparison.OrdinalIgnoreCase) ? "fp32" : "fp16";
+        var packText = precision == "fp16" ? "FP16 低精度性能模式" : "FP32 高精度完美模式";
+
+        if (!Tools.AudioSrScriptExists)
+        {
+            SfStatus = "AudioSR 驱动脚本缺失";
+            _logger.Error($"单文件超分：未找到驱动脚本 {Tools.AudioSrScript}");
+            return;
+        }
+        if (!Tools.AudioSrPackExists(precision))
+        {
+            SfStatus = $"{packText} 的权重包不完整";
+            _logger.Error($"单文件超分：{packText} 的权重包不完整（{Tools.AudioSrModelsFor(precision)}）");
+            return;
+        }
+
+        var work = Path.Combine(TempRoot, "single_file");
+        var inWav = Path.Combine(work, "audiosr_in_48k.wav");
+        var outWav = Path.Combine(work, "audiosr_out_48k.wav");
+        Directory.CreateDirectory(work);
+        try
+        {
+            SfStatus = "音频转 48kHz WAV…";
+            _logger.Info($"单文件超分（音频）开始：{Path.GetFileName(input)}（{packText}）");
+            var convArgs = FFmpegCommandBuilder.ToWav48k(input, inWav);
+            _logger.Command($"ffmpeg {convArgs}");
+            var convExit = await _runner.RunAsync(Tools.FFmpegExe, convArgs, ct: ct);
+            if (convExit != 0 || !File.Exists(inWav))
+            {
+                SfStatus = "音频转码失败（文件可能不是有效音频）";
+                _logger.Error("单文件超分：音频转 48kHz WAV 失败");
+                return;
+            }
+
+            var py = File.Exists(Tools.PortablePythonExe) ? Tools.PortablePythonExe : "python";
+            var args = AudioSrCommandBuilder.Build(Tools.AudioSrScript, inWav, outWav,
+                Tools.AudioSrModelsFor(precision), UseCpuProcessing);
+            _logger.Command($"python {args}");
+            SfStatus = "音频超分中… 0%";
+            // 后端由脚本打印，出现后补进状态文字（如「音频超分中… 42%（CUDA）」）
+            var backendTag = "";
+            var exit = await _runner.RunAsync(py, args, onLine: line =>
+            {
+                // 回调在后台线程：改属性必须调度回 UI 线程
+                var m = SfPercentRe.Match(line);
+                if (m.Success)
+                {
+                    var pct = m.Groups[1].Value;
+                    var tag = backendTag;
+                    _dispatcherQueue.TryEnqueue(() =>
+                    {
+                        SfStatus = $"音频超分中… {pct}%{tag}";
+                        if (int.TryParse(pct, out var v)) ProgressPercent = v;
+                    });
+                }
+                else if (line.Contains("后端 CUDA", StringComparison.OrdinalIgnoreCase))
+                {
+                    backendTag = "（CUDA）";
+                    _logger.Success("单文件音频超分推理后端：CUDA（NVIDIA GPU）");
+                }
+                else if (line.Contains("后端 DirectML", StringComparison.OrdinalIgnoreCase))
+                {
+                    backendTag = "（DirectML）";
+                    _logger.Success("单文件音频超分推理后端：DirectML（GPU）");
+                }
+                else if (line.Contains("后端 CPU", StringComparison.OrdinalIgnoreCase))
+                {
+                    backendTag = "（CPU）";
+                    _logger.Warn("单文件音频超分推理后端：CPU（显卡后端不可用或权重包只允许 CPU），速度明显慢于显卡");
+                }
+            }, ct: ct);
+
+            if (exit != 0 || !File.Exists(outWav))
+            {
+                SfStatus = "音频超分失败，详见「进行中」页日志";
+                _logger.Error($"单文件超分（音频）失败（退出码 {exit}）");
+                return;
+            }
+
+            var final = Path.Combine(SfOutputDir(input), SfAudioFileName(input));
+            var outDir = Path.GetDirectoryName(final);
+            if (!string.IsNullOrEmpty(outDir)) Directory.CreateDirectory(outDir);
+            File.Copy(outWav, final, overwrite: true);
+            var mb = new FileInfo(final).Length / 1024.0 / 1024.0;
+            SfStatus = $"完成：{final}";
+            _logger.Success($"单文件超分（音频）完成：{final}（{mb:F1} MB，48kHz WAV）");
+        }
+        finally
+        {
+            try { if (Directory.Exists(work)) Directory.Delete(work, true); } catch { }
+        }
+    }
+
     // ===================== 勾选联动 =====================
     // 规则（未导入外部帧时）：
     //   勾选 超分/补帧/合并视频/合并原音频 → 自动勾选拆分帧
@@ -983,6 +1444,14 @@ public partial class MainViewModel : ObservableObject
         UpdateWarnings();
     }
 
+    partial void OnTargetFpsChanged(double value)
+    {
+        // 目标帧率与倍率互斥（目标帧率优先）；即时落盘，下次启动恢复
+        _app.TargetFps = value;
+        _settings.Save(_app, _pathConfig);
+        UpdateWarnings();
+    }
+
     partial void OnIfModelChanged(string value)
     {
         // v2/v3 老模型仅支持 2 倍补帧：锁定倍率并强制 x2；模型即时保存到配置
@@ -995,8 +1464,7 @@ public partial class MainViewModel : ObservableObject
     /// <summary>v2/v3 老模型仅支持 2 倍补帧：锁定倍率并强制 x2（显式调用，不依赖属性通知时序）</summary>
     public void RefreshIfMultiplierLock(string model)
     {
-        var oldModel = IfEngine != "Offical"
-            && model.StartsWith("rife-v", StringComparison.OrdinalIgnoreCase)
+        var oldModel = model.StartsWith("rife-v", StringComparison.OrdinalIgnoreCase)
             && !model.StartsWith("rife-v4", StringComparison.OrdinalIgnoreCase);
         IfMultiplierLocked = oldModel;
         if (oldModel && IfMultiplier != 2) IfMultiplier = 2;
@@ -1010,6 +1478,15 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnSrScaleChanged(int value)
     {
+        // 当前算法不支持这个倍率（如 RealSR 只有 4x、waifu2x 只有 2x/4x）→ 退回它最接近的档位。
+        // 否则模型列表会变空，下拉框看起来像坏了。赋新值会再进一次本方法，届时已合法，不会死循环。
+        var supported = SupportedSrScales();
+        if (supported.Count > 0 && !supported.Contains(value))
+        {
+            SrScale = supported.OrderBy(x => Math.Abs(x - value)).First();
+            return;
+        }
+
         RefreshSrModels();
         _app.DefaultSrScale = value;
         _settings.Save(_app, _pathConfig);
@@ -1085,52 +1562,71 @@ public partial class MainViewModel : ObservableObject
 
     // ===================== 模型列表 =====================
 
+    /// <summary>重建超分模型列表：按「当前算法 + 当前倍率」筛，且只列出本机已部署的引擎，
+    /// 避免列出选了也跑不了的模型。</summary>
     private void RefreshSrModels()
     {
         var prev = SrModel;
         SrModels.Clear();
-        foreach (var m in RealEsrganCommandBuilder.ListModels(Tools.RealEsrganModelsRoot, SrScale))
-            SrModels.Add(m);
+        foreach (var m in SrCatalog.ModelsFor(SrEngineIndex, SrScale))
+        {
+            var exe = SrCommandBuilder.ExeFor(Tools, m);
+            if (!string.IsNullOrEmpty(exe) && File.Exists(exe)) SrModels.Add(m);
+        }
 
-        // 优先恢复原选择；否则取第一个；再尝试默认 realesr-animevideov3-{xN}
-        var preferred = $"realesr-animevideov3-x{SrScale}";
+        // 优先恢复原选择；切算法后原模型通常不在新列表里，这时落到第一个
         if (SrModels.Contains(prev)) SrModel = prev;
-        else if (SrModels.Contains(preferred)) SrModel = preferred;
         else if (SrModels.Count > 0) SrModel = SrModels[0];
         else SrModel = "";
     }
 
-    partial void OnIfEngineChanged(string value)
-    {
-        // 补帧引擎改动即时持久化（下次启动按此恢复；此前只有点"保存当前设置为默认"才落盘）
-        _app.DefaultIfEngine = value;
-        _settings.Save(_app, _pathConfig);
-        // 模型选择框由 MainPage code-behind 统一重建（切换引擎时整体重新加载下拉框，
-        // 彻底避开 ComboBox 绑定联动导致的 0x80070490 闪退），这里只刷新警告
-        UpdateWarnings();
-    }
+    /// <summary>补帧「种类」索引（模型族，取值见 VfiCatalog.Families）：
+    /// 0 = NCNN-RIFE（Vulkan，全显卡通用）；1 起是 PyTorch 各模型族（仅 NVIDIA）。
+    /// 「种类」选族，「模型」选该族下的具体版本。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IfFamilyScene))]
+    [NotifyPropertyChangedFor(nameof(IfSceneText))]
+    private int _ifEngineIndex;
 
-    /// <summary>获取某引擎下的模型列表（纯数据，不含任何 UI 状态，供 MainPage 重建模型下拉框用）</summary>
-    public IReadOnlyList<string> GetIfModelsForEngine(string engine)
+    /// <summary>补帧种类名称（UI「种类」下拉框用）</summary>
+    public IReadOnlyList<string> IfEngines => VfiCatalog.FamilyLabels;
+
+    /// <summary>当前种类的整体说明（面板右下角兜底文案）</summary>
+    public string IfFamilyScene => VfiCatalog.At(IfEngineIndex)?.Scene ?? "";
+
+    /// <summary>当前所选补帧模型（版本）适合的场景 + 推荐星级，显示在补帧设置面板右下角。
+    /// PyTorch 各版本有自己的说明与星级；NCNN-RIFE 是扫目录出来的模型文件，回落到该族的整体说明与星级。</summary>
+    public string IfSceneText
     {
-        var result = new List<string>();
-        switch (engine)
+        get
         {
-            case "Offical":
-                // Offical 引擎：列出 Tools\officalrife\models\official_*（pkl 模型）
-                result.AddRange(OfficalRifeCommandBuilder.ListModels(Tools.OfficalRifeModelsRoot));
-                break;
-
-            case "NCNN":
-                // NCNN 引擎：rife-ncnn-vulkan 模型，优先规格书常用模型
-                var all = RifeCommandBuilder.ListModels(Tools.RifeModelsRoot);
-                var preferred = RifeCommandBuilder.PreferredModels.Intersect(all).ToList();
-                var rest = all.Except(preferred).ToList();
-                result.AddRange(preferred.Concat(rest));
-                break;
+            var scene = VfiCatalog.SceneOf(IfModel) ?? IfFamilyScene;
+            var stars = VfiCatalog.StarsOf(IfModel);
+            if (stars == 0) stars = VfiCatalog.At(IfEngineIndex)?.Stars ?? 0;
+            if (string.IsNullOrEmpty(scene)) return "";
+            return stars > 0 ? $"{scene} · {ModelRating.Stars(stars)}" : scene;
         }
-        return result;
     }
+
+    /// <summary>获取当前种类下的补帧模型（版本）列表；NCNN-RIFE 是运行时扫 rife-ncnn-vulkan 模型目录。</summary>
+    public IReadOnlyList<string> GetIfModels()
+    {
+        if (IfEngineIndex == 0)
+        {
+            var all = RifeCommandBuilder.ListModels(Tools.RifeModelsRoot);
+            var preferred = RifeCommandBuilder.PreferredModels.Intersect(all).ToList();
+            var rest = all.Except(preferred).ToList();
+            return preferred.Concat(rest).ToList();
+        }
+        var family = VfiCatalog.At(IfEngineIndex);
+        return family is null ? Array.Empty<string>() : family.Variants.Select(v => v.Name).ToList();
+    }
+
+    /// <summary>PyTorch 轨补帧工具是否就绪（python-torch + vfi_driver.py；不看显卡）</summary>
+    public bool VfiTorchToolsReady => Tools.VfiTorchReady;
+
+    /// <summary>PyTorch 轨补帧能否真正使用：工具就绪 + 必须是 NVIDIA 显卡（依赖 cupy/CUDA）</summary>
+    public bool VfiTorchUsable => Tools.VfiTorchReady && _gpu?.IsNvidia == true;
 
     /// <summary>配置里的默认补帧模型（NCNN 引擎优先选中它）</summary>
     public string DefaultIfModel => _app.DefaultIfModel;
@@ -1194,6 +1690,13 @@ public partial class MainViewModel : ObservableObject
 
     public async Task StartAsync()
     {
+        // 遥控远端：把当前配置推给远端并让它开始处理，本机不做任何处理
+        if (Services.RemoteControl.RemoteSession.IsActive)
+        {
+            try { await Services.RemoteControl.RemoteSession.Current!.StartAsync(); }
+            catch (Exception ex) { _logger.Error($"远端启动失败：{ex.Message}"); }
+            return;
+        }
         if (IsProcessing) return;
         if (Video is null || !Video.IsValid) { _logger.Error("请先选择有效的输入视频（或导入帧文件夹并填写参数）"); return; }
         if (!HasExternalFrames && !File.Exists(InputVideo)) { _logger.Error("输入视频文件不存在"); return; }
@@ -1260,7 +1763,8 @@ public partial class MainViewModel : ObservableObject
         ProcessingStarted?.Invoke();
 
         _logger.Info($"开始处理: {(HasExternalFrames ? $"帧文件夹 {Path.GetFileName(ExternalFramesDir.TrimEnd('\\', '/'))}" : Path.GetFileName(InputVideo))}");
-        _logger.Info($"处理参数: 超分 {SrModel} ×{SrScale} / 补帧引擎 {IfEngine} / 补帧模型 {IfModel} ×{IfMultiplier}");
+        _logger.Info($"处理参数: 超分 {SrModel} ×{SrScale} / 补帧模型 {IfModel} "
+            + (TargetFpsActive ? $"→ 目标 {TargetFps:0.##}fps（≈{EffectiveRatio:0.###}×，共 {ExpectedIfFrames} 帧）" : $"×{IfMultiplier}"));
 
         var ctx = new ProcessingContext
         {
@@ -1277,7 +1781,8 @@ public partial class MainViewModel : ObservableObject
                 MergeVideo = MergeVideo,
                 MergeAudio = MergeAudio,
                 SdrToHdr = SdrToHdr && IsHdrEnabled,
-                IfEngine = IfEngine,
+                // 目标帧率优先于倍率（0 = 用倍率）；走这条时成片 fps 精确等于用户填的值
+                TargetFps = TargetFpsActive ? TargetFps : 0,
                 // 音频超分：CPU 处理模式下不允许 FP16（UI 已拦截，这里再兜一道，避免配置被外部改动后带病启动）
                 AudioSr = AudioSrEnabled,
                 AudioSrPrecision = AudioSrPrecision == "fp16" && UseCpuProcessing ? "fp32" : AudioSrPrecision
@@ -1285,6 +1790,7 @@ public partial class MainViewModel : ObservableObject
             SrModel = SrModel,
             SrScale = SrScale,
             IfModel = IfModel,
+            IfDriverKey = VfiCatalog.DriverKey(IfModel),
             IfMultiplier = IfMultiplier,
             // HDR 参数（滑块 0-200，NVEncC 最高 200）
             HdrSaturation = Math.Clamp(HdrSaturation, 0, 200),
@@ -1402,6 +1908,14 @@ public partial class MainViewModel : ObservableObject
                 ProgressDetail = p.DetailText;
             }
             Stage = p.Stage;
+            // 预计完成时间：进度条是本阶段的进度，所以按"本阶段已用时间 ÷ 本阶段进度"外推；
+            // 阶段切换时重新计时。进度太小（<2%）或刚起步（<3 秒）时估算抖动过大，先不显示。
+            if (p.Stage != _etaStage)
+            {
+                _etaStage = p.Stage;
+                _etaStageStarted = DateTime.Now;
+            }
+            EtaText = BuildEtaText(p.Percent, p.Stage);
             // 合并/HDR/音频阶段不产生新帧：自动关闭预览并禁用预览开关，避免预览停在旧画面
             var blockPreview = p.Stage is ProcessStage.Merging or ProcessStage.HdrConverting or ProcessStage.AudioSr or ProcessStage.AddingAudio;
             PreviewBlocked = blockPreview;
@@ -1413,9 +1927,36 @@ public partial class MainViewModel : ObservableObject
         ProgressChanged?.Invoke(p);
     }
 
+    /// <summary>按"本阶段已用时间 ÷ 本阶段进度"外推，给出剩余时间与预计完成时刻。
+    /// 进度条本身是阶段级的，所以文案点明"本阶段"；刚起步（&lt;3 秒）或进度太小（≤2%）时估算抖动过大，先不显示。</summary>
+    private string BuildEtaText(double percent, ProcessStage stage)
+    {
+        if (!IsProcessing) return "";
+        if (stage is ProcessStage.Idle or ProcessStage.Done or ProcessStage.Failed or ProcessStage.Stopped) return "";
+        var elapsed = DateTime.Now - _etaStageStarted;
+        if (percent <= 2 || percent >= 100 || elapsed.TotalSeconds < 3) return "";
+        var remain = TimeSpan.FromSeconds(elapsed.TotalSeconds * (100 - percent) / percent);
+        var finish = DateTime.Now + remain;
+        var remainText = remain.TotalHours >= 1
+            ? $"{remain.TotalHours:0.#} 小时"
+            : remain.TotalMinutes >= 1
+                ? $"{(int)remain.TotalMinutes} 分 {remain.Seconds} 秒"
+                : $"{Math.Max(1, (int)remain.TotalSeconds)} 秒";
+        return $"本阶段预计剩余 {remainText}（约 {finish:HH:mm} 完成）";
+    }
+
     public void Stop()
     {
+        // 遥控远端：停止指令发给远端
+        if (Services.RemoteControl.RemoteSession.IsActive)
+        {
+            _logger.Warn("正在停止远端处理...");
+            _ = Services.RemoteControl.RemoteSession.Current!.StopAsync();
+            return;
+        }
         _cts?.Cancel();
+        // 单文件任务走独立的取消令牌，不处理的话「进行中」页的停止按钮点了没反应
+        if (SfRunning) StopSingleFile();
         _logger.Warn("正在停止...");
     }
 
@@ -1433,14 +1974,16 @@ public partial class MainViewModel : ObservableObject
             }
             catch { }
         }
-        // Offical RIFE 引擎：仅终止本软件捆绑的便携 Python（按运行目录下的 python.exe 过滤，避免误杀用户其他 python）
+        // 仅终止本软件捆绑的便携 Python（按运行目录下的 python.exe 过滤，避免误杀用户其他 python）
         try
         {
+            var pyDir = System.IO.Path.GetDirectoryName(Tools.PortablePythonExe) ?? "";
             foreach (var p in System.Diagnostics.Process.GetProcessesByName("python"))
             {
                 try
                 {
-                    if (p.MainModule?.FileName.StartsWith(Tools.OfficalRifeDir, StringComparison.OrdinalIgnoreCase) == true)
+                    if (!string.IsNullOrEmpty(pyDir)
+                        && p.MainModule?.FileName.StartsWith(pyDir, StringComparison.OrdinalIgnoreCase) == true)
                         p.Kill(entireProcessTree: true);
                 }
                 catch { }
@@ -1523,9 +2066,12 @@ public partial class MainViewModel : ObservableObject
     {
         // 软件产生的全部中间产物名（不含输出视频）
         string[] tempDirs = { "input_frames", "4k_frames", "output_frames",
-                              "expanded_frames", "input_frames_dedup_removed" };
+                              "expanded_frames", "input_frames_dedup_removed",
+                              "if_input_kept", "if_input_kept_b" };
         string[] tempFiles = { "audio.flac", "temp_video.mkv", "hdr_video.mkv", "audio_embedded.mkv", "cache.json",
-                               "dedup_map.json", "audiosr_in_48k.wav", "audiosr_out_48k.wav", "audiosr_out_48k.wav.partial.wav" };
+                               "dedup_map.json", "audiosr_in_48k.wav", "audiosr_out_48k.wav", "audiosr_out_48k.wav.partial.wav",
+                               // 补帧输入子集的完成标记（放在帧目录外面，防止 RIFE 把它当图片解码而崩溃）
+                               "if_input_kept.done.json", "if_input_kept_b.done.json" };
 
         try
         {
@@ -1575,9 +2121,11 @@ public partial class MainViewModel : ObservableObject
         LogDebug($"CLEAN START dir={dir}");
 
         string[] tempDirs = { "input_frames", "4k_frames", "output_frames",
-                              "expanded_frames", "input_frames_dedup_removed" };
+                              "expanded_frames", "input_frames_dedup_removed",
+                              "if_input_kept", "if_input_kept_b" };
         string[] tempFiles = { "audio.flac", "temp_video.mkv", "hdr_video.mkv", "audio_embedded.mkv", "cache.json",
-                               "dedup_map.json", "audiosr_in_48k.wav", "audiosr_out_48k.wav", "audiosr_out_48k.wav.partial.wav" };
+                               "dedup_map.json", "audiosr_in_48k.wav", "audiosr_out_48k.wav", "audiosr_out_48k.wav.partial.wav",
+                               "if_input_kept.done.json", "if_input_kept_b.done.json" };
 
         IsCleaning = true;
         CleanProgressPercent = 0;
@@ -1729,10 +2277,16 @@ public partial class MainViewModel : ObservableObject
         catch { }
     }
 
-    /// <summary>暂停当前处理：立即挂起工具进程（可恢复）</summary>
+    /// <summary>暂停当前处理：立即挂起工具进程（可恢复）。主管线与单文件共用同一个 ProcessRunner</summary>
     public void PauseProcessing()
     {
-        if (!IsProcessing || IsPaused) return;
+        // 遥控远端：挂起/继续都由远端执行
+        if (Services.RemoteControl.RemoteSession.IsActive)
+        {
+            _ = PauseOrResumeRemoteAsync();
+            return;
+        }
+        if (!CanPause || IsPaused) return;
         _runner.SuspendCurrent();
         IsPaused = true;
         _logger.Warn("处理已暂停（工具进程已挂起）");
@@ -1741,10 +2295,26 @@ public partial class MainViewModel : ObservableObject
     /// <summary>继续被暂停的处理</summary>
     public void ResumeProcessing()
     {
-        if (!IsProcessing || !IsPaused) return;
+        if (Services.RemoteControl.RemoteSession.IsActive)
+        {
+            _ = PauseOrResumeRemoteAsync();
+            return;
+        }
+        if (!CanPause || !IsPaused) return;
         _runner.ResumeCurrent();
         IsPaused = false;
         _logger.Info("处理已继续");
+    }
+
+    private async Task PauseOrResumeRemoteAsync()
+    {
+        try
+        {
+            var paused = await Services.RemoteControl.RemoteSession.Current!.PauseOrResumeAsync();
+            IsPaused = paused;
+            _logger.Info(paused ? "远端处理已暂停" : "远端处理已继续");
+        }
+        catch (Exception ex) { _logger.Error($"远端暂停/继续失败：{ex.Message}"); }
     }
 
     /// <summary>临时目录缓存检测结果</summary>
@@ -1880,7 +2450,7 @@ public partial class MainViewModel : ObservableObject
         if (Interpolation) parts.Add("补帧");
         if (DedupEnabled) parts.Add(DedupMode == "uhd" ? "帧去重(完美)" : "帧去重(性能)");
         if (AudioSrEnabled) parts.Add(AudioSrPrecision == "fp32" ? "音频超分(FP32)" : "音频超分(FP16)");
-        if (TurboMode) parts.Add(TurboSplitGpus ? "涡轮模式(多卡分流)" : "涡轮模式");
+        if (TurboMode) parts.Add("涡轮模式");
         if (MergeVideo) parts.Add("合并视频");
         if (MergeAudio) parts.Add("合并音频");
         if (SdrToHdr) parts.Add("SDR→HDR");
@@ -1892,7 +2462,6 @@ public partial class MainViewModel : ObservableObject
     {
         _app.DefaultSrModel = SrModel;
         _app.DefaultIfModel = IfModel;
-        _app.DefaultIfEngine = IfEngine;
         _app.DefaultSrScale = SrScale;
         _app.DefaultIfMultiplier = IfMultiplier;
         // 同步保存当前勾选的步骤作为"默认步骤"（首次向导自检 / 下次勾选恢复按此执行）

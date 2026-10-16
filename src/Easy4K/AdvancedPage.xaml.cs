@@ -40,12 +40,14 @@ public sealed partial class AdvancedPage : Page
 
         _lastConfirmedThreads = Vm.ThreadCount;
 
-        // 卡片右下角插图（帧去重 / 音频超分）：浅色主题用黑版、深色主题用白版（主题变化时换图）
-        Loaded += (_, _) => ApplyCardArt();
+        // 卡片右下角插图（帧去重 / 音频超分）：浅色主题用黑版、深色主题用白版（主题变化时换图）。
+        // 构造期就发起解码（与页面构建/布局重叠，不等 Loaded），否则图片会在页面已经显示出来之后才"跳"出来。
+        ApplyCardArt();
         ActualThemeChanged += (_, _) => ApplyCardArt();
 
-        // 涡轮模式的磁盘检查只在用户手动切换时触发：等首屏绑定回填完成后再放行
+        // 涡轮模式的磁盘检查：手动切换时触发；另外每次启动也检查一遍已开启的涡轮
         Loaded += (_, _) => DispatcherQueue.TryEnqueue(() => _turboUiReady = true);
+        Loaded += (_, _) => DispatcherQueue.TryEnqueue(WarnTurboHddOnStartup);
 
         // 块大小滑块：绑定回填期间抑制事件，页面加载完成后再放行（避免构造期弹警告）
         _turboBlockSyncing = true;
@@ -74,37 +76,65 @@ public sealed partial class AdvancedPage : Page
         if (App.MainWindow is not null) await App.MainWindow.ChooseReportFolderAsync();
     }
 
-    /// <summary>两张卡片右下角插图（帧去重 / 音频超分）统一按主题换图：浅色用黑版、深色用白版。</summary>
-    private async void ApplyCardArt()
-    {
-        await LoadThemeArtAsync(DedupArt, "DedupArt");
-        await LoadThemeArtAsync(AudioSrArt, "AudioSrArt");
-    }
+    /// <summary>两张卡片右下角插图（帧去重 / 音频超分）统一按主题换图：浅色用黑版、深色用白版。
+    /// 两张并行加载，谁先解完谁先显示（原来串行 await，第二张要等第一张解完才开始）。</summary>
+    private void ApplyCardArt()
+        => _ = Task.WhenAll(
+            LoadThemeArtAsync(DedupArt, "DedupArt"),
+            LoadThemeArtAsync(AudioSrArt, "AudioSrArt"));
+
+    /// <summary>已解码的主题插图缓存（键 = 文件绝对路径）：同一张只解一次，
+    /// 反复进页面、切主题都不用再解码。null 表示文件缺失。</summary>
+    private static readonly Dictionary<string, Microsoft.UI.Xaml.Media.Imaging.BitmapImage?> ArtCache = new();
 
     /// <summary>给指定插图加载当前主题对应的那张（文件不存在就保持隐藏，仅装饰用）。
-    /// 注意必须 await 解码完成再释放文件流——之前 fire-and-forget + using 会让流在解码中途被关掉，
-    /// 表现为"第一次打开有概率不显示"。</summary>
+    /// 三个坑：
+    /// ① 原图是 3840×2160 的 4K PNG，只显示 150px 宽。按原始尺寸解码一次要几十 MB 内存、几百毫秒，
+    ///    正是"高级设置里图片延迟显示"的根因 —— 必须用 DecodePixelWidth 让解码器直接缩到显示尺寸。
+    /// ② 必须 await 解码完成再释放文件流——fire-and-forget + using 会让流在解码中途被关掉，
+    ///    表现为"第一次打开有概率不显示"。
+    /// ③ 解码结果按路径缓存，避免每次进页面都重来一遍。</summary>
     private async Task LoadThemeArtAsync(Image target, string baseName)
     {
-        try
+        var file = $"{baseName}_{(ActualTheme == ElementTheme.Light ? "black" : "white")}.png";
+        var path = Path.Combine(AppContext.BaseDirectory, "Assets", file);
+
+        if (!ArtCache.TryGetValue(path, out var bmp))
         {
-            var file = $"{baseName}_{(ActualTheme == ElementTheme.Light ? "black" : "white")}.png";
-            var path = Path.Combine(AppContext.BaseDirectory, "Assets", file);
-            if (!File.Exists(path))
+            try
             {
-                target.Visibility = Visibility.Collapsed;
-                return;
+                if (!File.Exists(path))
+                {
+                    ArtCache[path] = null;
+                }
+                else
+                {
+                    // 150 逻辑像素显示，留 2 倍余量给高 DPI 屏；4K 原图直接按这个尺寸解码
+                    var b = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage
+                    {
+                        DecodePixelWidth = 300,
+                        DecodePixelType = Microsoft.UI.Xaml.Media.Imaging.DecodePixelType.Logical
+                    };
+                    using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                        await b.SetSourceAsync(fs.AsRandomAccessStream());
+                    ArtCache[path] = b;
+                    bmp = b;
+                }
             }
-            var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
-            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                await bmp.SetSourceAsync(fs.AsRandomAccessStream());
-            target.Source = bmp;
-            target.Visibility = Visibility.Visible;
+            catch
+            {
+                ArtCache[path] = null;
+                bmp = null;
+            }
         }
-        catch
+
+        if (bmp is null)
         {
             target.Visibility = Visibility.Collapsed;
+            return;
         }
+        target.Source = bmp;
+        target.Visibility = Visibility.Visible;
     }
 
     // ===================== 帧去重 =====================
@@ -169,9 +199,6 @@ public sealed partial class AdvancedPage : Page
     /// <summary>程序回填音频超分精度单选时抑制事件</summary>
     private bool _audioSrSyncing;
 
-    /// <summary>FP16 冲突弹窗是否已打开（防止重复弹）</summary>
-    private bool _audioSrDialogOpen;
-
     /// <summary>FP16 权重包是否可用（缺失时 FP16 单选置灰）</summary>
     private bool AudioSrFp16Available => Vm.Tools.AudioSrFp16Exists;
 
@@ -186,7 +213,7 @@ public sealed partial class AdvancedPage : Page
         UpdateAudioSrHint();
     }
 
-    /// <summary>卡片底部动态提示：脚本/权重包缺失、或 FP16 撞上 CPU 处理模式时给出可执行说明。</summary>
+    /// <summary>卡片底部动态提示：脚本/权重包缺失时给出可执行说明。</summary>
     private void UpdateAudioSrHint()
     {
         AudioSrFp16Rb.IsEnabled = AudioSrFp16Available;
@@ -194,10 +221,8 @@ public sealed partial class AdvancedPage : Page
             AudioSrHint.Text = "未找到 Tools\\AudioSR\\audiosr_onnx.py，音频超分无法启用。";
         else if (!AudioSrFp16Available)
             AudioSrHint.Text = "未检测到 FP16 权重包（Tools\\AudioSR\\models-fp16），该选项不可用；请放入权重包或改用 FP32。";
-        else if (Vm.UseCpuProcessing)
-            AudioSrHint.Text = "已开启 CPU 处理模式：FP16 在 CPU 上算子又少又慢，此状态下禁止选择 FP16，精度已锁定在 FP32。";
         else
-            AudioSrHint.Text = "FP16 必须跑在显卡上（DirectML），若显卡不可用脚本会直接报错，不会退回 CPU；追求画质请用 FP32。";
+            AudioSrHint.Text = "精度跟随你的选择，后端降级不会改档：N 卡按 CUDA → DirectML → CPU 逐级尝试，其它显卡按 DirectML → CPU；三级都起不来才会报错。";
     }
 
     /// <summary>把音频超分精度强制回退到 FP32（单选与 VM 同步，且不触发写回事件）。</summary>
@@ -210,43 +235,14 @@ public sealed partial class AdvancedPage : Page
         UpdateAudioSrHint();
     }
 
-    /// <summary>精度单选：选 FP16 时校验权重包与 CPU 处理模式；FP16 与 CPU 互斥，冲突时弹窗告知并禁止开启 FP16。</summary>
-    private async void OnAudioSrPrecisionChecked(object sender, RoutedEventArgs e)
+    /// <summary>精度单选：选 FP16 时校验权重包是否就绪。</summary>
+    private void OnAudioSrPrecisionChecked(object sender, RoutedEventArgs e)
     {
         if (_audioSrSyncing) return;
         var wantFp16 = AudioSrFp16Rb.IsChecked == true;
 
         if (wantFp16 && !AudioSrFp16Available)
         {
-            RevertAudioSrToFp32();
-            return;
-        }
-
-        // 核心规则：FP16 严禁与 CPU 处理模式共用（CPU 的 fp16 算子又少又慢，官方明确不建议）
-        if (wantFp16 && Vm.UseCpuProcessing)
-        {
-            if (_audioSrDialogOpen) return;
-            _audioSrDialogOpen = true;
-            try
-            {
-                var dlg = new ContentDialog
-                {
-                    Title = "FP16 不能与 CPU 处理模式共用",
-                    Content = "FP16 低精度性能模式必须跑在显卡上。CPU 的 fp16 算子覆盖极少，官方明确不建议，" +
-                              "实测会明显变慢且精度更差。\n\n" +
-                              "当前已勾选「使用CPU处理所有模型」，因此禁止开启 FP16。\n\n" +
-                              "要用 FP16：请先取消「使用CPU处理所有模型」；\n" +
-                              "要继续用 CPU：请选 FP32 高精度完美模式。",
-                    PrimaryButtonText = "改用 FP32",
-                    CloseButtonText = "知道了",
-                    DefaultButton = ContentDialogButton.Primary,
-                    XamlRoot = XamlRoot
-                };
-                await dlg.ShowLocalizedAsync();
-            }
-            finally { _audioSrDialogOpen = false; }
-
-            // 不论用户点哪个按钮都不允许 FP16 生效
             RevertAudioSrToFp32();
             return;
         }
@@ -258,16 +254,25 @@ public sealed partial class AdvancedPage : Page
     /// <summary>页面初始化回填开关状态时也会触发 Toggled，要等绑定完成后再允许弹磁盘提示</summary>
     private bool _turboUiReady;
 
-    /// <summary>程序回填块大小输入框时抑制写回</summary>
-    private bool _turboBlockSyncing;
+    /// <summary>程序回填块大小输入框时抑制写回。初值必须为 true：InitializeComponent()
+    /// 在构造函数体之前执行，XAML/绑定回填会在构造期就触发 ValueChanged。</summary>
+    private bool _turboBlockSyncing = true;
 
-    /// <summary>块大小越界警告本次运行只提示一次（拖动滑块不会反复打扰）</summary>
-    private bool _turboBlockWarned;
+    /// <summary>块大小越界警告本次运行只提示一次（拖动滑块不会反复打扰）。
+    /// 用 static：语义是"每次启动最多提醒一次"，重进页面也不再重复弹。</summary>
+    private static bool _turboBlockWarned;
+
+    /// <summary>本次启动是否已就"涡轮 + 机械盘"提醒过。用 static = 每次启动提醒一次：
+    /// 以前这条只在用户手动切换涡轮时才检查，配置里记住的涡轮开启状态在启动后不会再有提醒。</summary>
+    private static bool _turboDiskWarnedThisLaunch;
 
     /// <summary>块大小调整：写回配置；明显越界时弹窗警告（本次运行只提醒一次）。</summary>
     private async void OnTurboBlockChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
         if (_turboBlockSyncing) return;
+
+        // 页面尚未进入可视树时 XamlRoot 为 null，此时显示 ContentDialog 会抛异常
+        if (XamlRoot is null) return;
 
         // 写回由 TwoWay 绑定负责（与「处理线程」滑块同一套），这里只做越界提醒
         var value = (int)Math.Round(e.NewValue);
@@ -307,15 +312,9 @@ public sealed partial class AdvancedPage : Page
         await dlg.ShowLocalizedAsync();
     }
 
-    /// <summary>勾选涡轮模式时检查临时目录所在磁盘：机械盘撑不住多路并发读写，弹窗确认，选「否」自动关闭。</summary>
-    private async void OnTurboToggled(object sender, RoutedEventArgs e)
+    /// <summary>涡轮 + 机械盘 的统一警告弹窗（选「切换硬盘」返回 Primary）。</summary>
+    private async Task<ContentDialogResult> ShowTurboHddWarningAsync()
     {
-        if (!_turboUiReady) return;
-        if (!TurboSwitch.IsOn) return;   // 关闭时不需要检查
-
-        var kind = await Task.Run(() => StorageMediaDetector.DetectForPath(Vm.TempRoot));
-        if (kind != StorageMediaDetector.MediaKind.Hdd) return;
-
         var dlg = new ContentDialog
         {
             Title = "涡轮模式：检测到机械硬盘",
@@ -338,9 +337,22 @@ public sealed partial class AdvancedPage : Page
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = XamlRoot
         };
+        return await dlg.ShowLocalizedAsync();
+    }
+
+    /// <summary>勾选涡轮模式时检查临时目录所在磁盘：机械盘撑不住多路并发读写，弹窗确认，选「否」自动关闭。</summary>
+    private async void OnTurboToggled(object sender, RoutedEventArgs e)
+    {
+        if (!_turboUiReady) return;
+        if (!TurboSwitch.IsOn) return;   // 关闭时不需要检查
+
+        var kind = await Task.Run(() => StorageMediaDetector.DetectForPath(Vm.TempRoot));
+        if (kind != StorageMediaDetector.MediaKind.Hdd) return;
+
+        _turboDiskWarnedThisLaunch = true;
+        var result = await ShowTurboHddWarningAsync();
 
         // 机械盘上不允许开启涡轮：两个按钮都不保持开启状态
-        var result = await dlg.ShowLocalizedAsync();
         TurboSwitch.IsOn = false;
         Vm.TurboMode = false;
 
@@ -349,41 +361,24 @@ public sealed partial class AdvancedPage : Page
             await App.MainWindow.ChooseTempFolderAsync();
     }
 
-    /// <summary>勾选多卡分流时先数一下机器上有几块显卡：只有一块就直接说清楚并关掉，不必等到开跑才发现。</summary>
-    private async void OnTurboSplitToggled(object sender, RoutedEventArgs e)
+    /// <summary>每次启动提醒一次：配置里记住的"涡轮已开启"也要检查临时目录磁盘。
+    /// 以前这条只在用户手动切换涡轮时才检查，重启后涡轮仍是开的却再也不提醒了。</summary>
+    private async void WarnTurboHddOnStartup()
     {
-        if (!_turboUiReady) return;
-        if (!TurboSplitSwitch.IsOn) return;
-
-        var gpus = await Task.Run(() => GpuDetector.ListPhysicalGpus());
-        if (gpus.Count >= 2) return;
-
-        var list = gpus.Count == 0
-            ? "（未能识别到显卡型号）"
-            : string.Join("\n", gpus.Select((n, i) => $"GPU {i}：{n}"));
-        var dlg = new ContentDialog
+        if (_turboDiskWarnedThisLaunch || !Vm.TurboMode) return;
+        _turboDiskWarnedThisLaunch = true;
+        try
         {
-            Title = "多卡分流：只检测到一块显卡",
-            Content = new ScrollViewer
-            {
-                MaxHeight = 420,
-                Content = new TextBlock
-                {
-                    TextWrapping = TextWrapping.Wrap,
-                    FontSize = 12,
-                    Text = "多卡分流会把超分放到 GPU 0、补帧放到 GPU 1，让两块显卡各跑一条流水线。\n\n" +
-                           $"当前检测到的显卡：\n{list}\n\n" +
-                           "只有一块显卡时分流没有意义：两个进程会抢同一份算力，总耗时与不分流基本一样。" +
-                           "因此本次不会开启——装好第二块显卡（或用核显 + 独显）后再来打开。"
-                }
-            },
-            CloseButtonText = "知道了",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = XamlRoot
-        };
-        await dlg.ShowLocalizedAsync();
-        TurboSplitSwitch.IsOn = false;
-        Vm.TurboSplitGpus = false;
+            var kind = await Task.Run(() => StorageMediaDetector.DetectForPath(Vm.TempRoot));
+            if (kind != StorageMediaDetector.MediaKind.Hdd) return;
+
+            var result = await ShowTurboHddWarningAsync();
+            TurboSwitch.IsOn = false;
+            Vm.TurboMode = false;
+            if (result == ContentDialogResult.Primary && App.MainWindow is not null)
+                await App.MainWindow.ChooseTempFolderAsync();
+        }
+        catch { }
     }
 
     /// <summary>ⓘ 提示：AudioSR 是什么、两档精度的差别、为什么 FP16 不能用 CPU。</summary>
@@ -406,19 +401,22 @@ public sealed partial class AdvancedPage : Page
                         "未勾选 → 不动视频，把超分结果单独输出成一份 48kHz WAV（此时只跑音频超分也能直接开始处理）。" +
                         "输入视频必须有音频流才生效。\n\n" +
                         "【处理链路】\n" +
-                        "提取音轨 → 转 48kHz WAV → 频谱判定真实带宽 → 官方算法低通 → 分窗 DDIM(50 步, CFG 3.5) 推理 → " +
+                        "提取音轨 → 转 48kHz WAV → 分窗 DDIM(50 步, CFG 3.5) 推理 → " +
                         "mel/波形低频段回填（低音用回原音频，保证不跑调）→ 写出 48kHz 24bit WAV → " +
                         "按主页勾选决定去向：嵌入视频轨（PCM 24bit 48kHz）或单独输出该 WAV。\n\n" +
                         "【FP16 低精度性能模式】\n" +
                         "权重以半精度存放（1.26 GiB），体积约为 FP32 的一半、显存占用更小，实测速度比 FP32 快约 10%~20%，" +
                         "官方实测相对 FP32 的保真度为 59.4 dB SI-SDR（差异在 0.5 峰值下最大 0.0007，基本听不出）。\n" +
-                        "严禁使用 CPU：CPU 执行器支持的 fp16 算子极少，且已有的那些往往更慢，官方直接写明「CPU 请用 FP32 包」。" +
-                        "因此只要勾选了「使用CPU处理所有模型」，这里就禁止选 FP16；如果显卡不可用，脚本会直接报错退出，不会偷偷退回 CPU。\n\n" +
+                        "官方建议 fp16 跑在显卡上：CPU 执行器支持的 fp16 算子极少，已有的那些往往也更慢。" +
+                        "本软件不限制组合，精度严格跟随你的选择，不随后端降级自动改档。\n\n" +
                         "【FP32 高精度完美模式】\n" +
-                        "官方原始精度（2.51 GiB），画质基准，CPU 与 GPU 都能跑；显卡不可用时自动回退 CPU 兜底（只是慢）。\n" +
+                        "官方原始精度（2.51 GiB），画质基准，CPU 与 GPU 都能跑。\n" +
                         "追求最高还原度、或显卡不支持 DirectML 时选这个。\n\n" +
+                        "【后端选择与回退】\n" +
+                        "N 卡按 CUDA → DirectML → CPU 逐级尝试，其它显卡按 DirectML → CPU；每级起不来才降到下一级，" +
+                        "精度档不受影响。三级都起不来时才报错。\n\n" +
                         "【失败与回退】\n" +
-                        "任何一步失败（权重包缺失、显卡不可用、推理报错）都只影响音频：本次会自动回退成原音轨 + ffmpeg 重采样，" +
+                        "任何一步失败（权重包缺失、推理报错）都只影响音频：本次会自动回退成原音轨 + ffmpeg 重采样，" +
                         "视频处理结果照常产出，不会让整条流水线失败。"
                 }
             },
@@ -463,12 +461,7 @@ public sealed partial class AdvancedPage : Page
                         "· 同样完美模式去重、块放大到 240：84.8s —— 块太大重叠变粗，反而更慢\n" +
                         "上限就是「1 + 去重耗时 ÷ 其余总耗时」：去重越慢（完美模式）、素材越短，比例越高；" +
                         "反过来一盘 7000 帧 1080p 的素材，去重只占百分之几，提速也就百分之几。\n" +
-                        "结论：单卡上收益上限在 1.2× 上下（结果与普通模式逐帧一致，代价是多占一份临时盘空间）；" +
-                        "想要成倍提速只能靠多卡分流。\n\n" +
-                        "【多卡分流】\n" +
-                        "机器上有两块以上显卡时打开：超分走 GPU 0、补帧走 GPU 1，两条流水各占一块卡，此时才是接近翻倍的提速。" +
-                        "开启前会先数一遍物理显卡数量；真正开跑时还会拿一块真实输入帧试跑一次 GPU 1，" +
-                        "探测不通过（比如第二块卡被禁用、驱动异常）就自动退回单卡并用日志说明，不会让任务失败。\n\n" +
+                        "结论：单卡上收益上限在 1.2× 上下，结果与普通模式逐帧一致，代价是多占一份临时盘空间。\n\n" +
                         "【当前不参与并行的部分】\n" +
                         "官方 PyTorch 补帧引擎（入参结构与 NCNN 不同）仍按逐阶段串行处理，日志里会写明「当前组合暂不支持块级流水」；" +
                         "音频链路不在流水线内。\n\n" +
@@ -500,7 +493,7 @@ public sealed partial class AdvancedPage : Page
     {
         if (e.PropertyName == nameof(Vm.AudioSrPrecision))
         {
-            // 精度被程序侧改动（如启动时的 FP16/CPU 冲突纠正）→ 单选跟着走
+            // 精度被程序侧改动（如权重包缺失回退）→ 单选跟着走
             if ((AudioSrFp16Rb.IsChecked == true) != (Vm.AudioSrPrecision == "fp16")) SyncAudioSrFromVm();
             else UpdateAudioSrHint();
             return;
@@ -512,9 +505,8 @@ public sealed partial class AdvancedPage : Page
         if (CpuProcessingCb.IsChecked != Vm.UseCpuProcessing)
             CpuProcessingCb.IsChecked = Vm.UseCpuProcessing;
 
-        // CPU 与 FP16 互斥：CPU 被打开而当前是 FP16 时，强制切回 FP32（绝不让非法组合生效）
-        if (Vm.UseCpuProcessing && Vm.AudioSrPrecision == "fp16") RevertAudioSrToFp32();
-        else UpdateAudioSrHint();
+        // 精度不随 CPU 模式改变：后端逐级降级，不改动用户选的权重包
+        UpdateAudioSrHint();
     }
 
     /// <summary>线程滑块变化：调到 1:8:8（8）及以上时弹窗确认（会话内只弹一次），
@@ -608,11 +600,7 @@ public sealed partial class AdvancedPage : Page
             {
                 Title = "不建议开启 CPU 处理",
                 Content = "开启后所有模型（超分/补帧）将使用 CPU 推理，处理速度会大幅下降（可能比 GPU 慢 10 倍以上）。\n\n" +
-                          "仅在显卡不可用（驱动故障/设备丢失）或不稳定时才建议开启。确定要继续吗？"
-                          + (Vm.AudioSrPrecision == "fp16"
-                              ? "\n\n注意：音频超分的 FP16 模式不能与 CPU 共用（CPU 的 fp16 算子又少又慢），"
-                                + "开启 CPU 后会把音频超分自动切回 FP32 高精度完美模式。"
-                              : ""),
+                          "仅在显卡不可用（驱动故障/设备丢失）或不稳定时才建议开启。确定要继续吗？",
                 PrimaryButtonText = "继续开启",
                 CloseButtonText = "取消",
                 DefaultButton = ContentDialogButton.Close, // 默认取消更安全
@@ -623,8 +611,6 @@ public sealed partial class AdvancedPage : Page
             {
                 // 确认开启 → 写回 VM（触发联动：取消勾选安全帧率/降低画质/GPU加速并禁用，保存 config）
                 Vm.UseCpuProcessing = true;
-                // FP16 与 CPU 互斥：一并把精度切回 FP32，避免出现非法组合
-                if (Vm.AudioSrPrecision == "fp16") RevertAudioSrToFp32();
             }
             else
             {

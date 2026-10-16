@@ -34,6 +34,15 @@ public static class FrameDedupService
         double BlockMadThreshold,
         double CoarseBlockMadThreshold)
     {
+        /// <summary>细块内"变化像素占比"阈值（默认 2%）。补的是"块内平均差"的盲区：
+        /// 细块里若只有几十个像素发生了真实运动（幅度十几个灰阶），平均到整块（1089 像素）会被稀释到
+        /// τ_block=2.0 以下 —— 平均差看不见、dHash 更看不见，于是被判成重复帧删掉。
+        /// 占比判据只做加法：它只会把"本来要判重复"的帧对改判为不同，方向上只会更保守（少删、不误删）。</summary>
+        public double BlockChangedRatio { get; init; } = 0.02;
+
+        /// <summary>粗块组内"变化像素占比"阈值（默认 0.5%）：兜大范围但幅度小的变化。</summary>
+        public double CoarseChangedRatio { get; init; } = 0.005;
+
         /// <summary>按模式名取参数（performance / uhd）。
         /// 光流阈值取论文建议值 τ_flow=0.5、τ_var=0.1；QR 阈值因归一化修正后重新标定为 1.0 灰阶
         /// （论文的 0.05 对应的是 D_Mink/(K·B) 那套归一化，与这里量纲不同，不能直接照搬）。
@@ -48,7 +57,9 @@ public static class FrameDedupService
         /// 粗块 1.0 是兜"大范围但幅度小的变化"（渐变/慢摇），实测只在 3/751 对上额外生效，几乎无副作用。</summary>
         public static Options FromMode(string? mode) => mode == "uhd"
             ? new Options("uhd", 1.0, 0.006, 4, 3, 1.0, 0.5, 0.1, 2.0, 1.0)
-            : new Options("performance", 2.0, 0.01, 5, 3, 1.0, 0.5, 0.1, 2.0, 1.0);
+            // 性能档的 dHash 阈值从 5 收到 4：64bit 哈希允许 5 位不同偏宽（默认档又是性能档），
+            // 只差几笔的相邻帧也可能被一并判成重复，收紧到与完美档同一水平。
+            : new Options("performance", 2.0, 0.01, 4, 3, 1.0, 0.5, 0.1, 2.0, 1.0);
     }
 
     /// <summary>判决所处阶（用于统计各阶淘汰量与进度文本）</summary>
@@ -118,6 +129,7 @@ public static class FrameDedupService
         var rows = (height + bs - 1) / bs;
         var blockSum = new double[rows * cols];
         var blockPixels = new int[rows * cols];
+        var blockChanged = new int[rows * cols];   // 块内"变化像素"数（d > τ_pixel），用于占比判据
 
         double sum = 0;
         var changed = 0;
@@ -131,6 +143,7 @@ public static class FrameDedupService
                 var x1 = Math.Min(x0 + bs, width);
                 double bsum = 0;
                 var bn = 0;
+                var bchanged = 0;
                 for (var y = y0; y < y1; y++)
                 {
                     var rowBase = y * width;
@@ -142,13 +155,14 @@ public static class FrameDedupService
                         var gb = (b[p + 2] * 299 + b[p + 1] * 587 + b[p] * 114) / 1000;
                         var d = Math.Abs(ga - gb);
                         sum += d;
-                        if (d > PixelThreshold) changed++;
+                        if (d > PixelThreshold) { changed++; bchanged++; }
                         bsum += d;
                         bn++;
                     }
                 }
                 blockSum[by * cols + bx] = bsum;
                 blockPixels[by * cols + bx] = bn;
+                blockChanged[by * cols + bx] = bchanged;
             }
         }
 
@@ -162,20 +176,29 @@ public static class FrameDedupService
             if (blockPixels[bi] > 0 && blockSum[bi] / blockPixels[bi] >= opt.BlockMadThreshold)
                 return (false, mad, 64, double.MaxValue, 0, 0, Stage.PixelDiff);
 
+        // 细块：小面积运动 —— 块内平均差会被大块底噪稀释，改用"变化像素占比"兜住
+        for (var bi = 0; bi < blockChanged.Length; bi++)
+            if (blockPixels[bi] > 0 && blockChanged[bi] / (double)blockPixels[bi] >= opt.BlockChangedRatio)
+                return (false, mad, 64, double.MaxValue, 0, 0, Stage.PixelDiff);
+
         // 粗块：大范围小幅变化
         for (var by = 0; by + CoarseGroup <= rows; by += CoarseGroup)
             for (var bx = 0; bx + CoarseGroup <= cols; bx += CoarseGroup)
             {
                 double cs = 0;
                 var cn = 0;
+                var cchanged = 0;
                 for (var y = by; y < by + CoarseGroup; y++)
                     for (var x = bx; x < bx + CoarseGroup; x++)
                     {
                         var bi = y * cols + x;
                         cs += blockSum[bi];
                         cn += blockPixels[bi];
+                        cchanged += blockChanged[bi];
                     }
                 if (cn > 0 && cs / cn >= opt.CoarseBlockMadThreshold)
+                    return (false, mad, 64, double.MaxValue, 0, 0, Stage.PixelDiff);
+                if (cn > 0 && cchanged / (double)cn >= opt.CoarseChangedRatio)
                     return (false, mad, 64, double.MaxValue, 0, 0, Stage.PixelDiff);
             }
 

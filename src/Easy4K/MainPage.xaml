@@ -143,6 +143,15 @@
                     <Border Grid.Column="0" Style="{StaticResource CardBorder}">
                         <StackPanel Spacing="6">
                             <TextBlock Text="超分设置" Style="{StaticResource SectionTitle}"/>
+                            <!-- 先选算法（引擎），再选该算法下的具体模型 -->
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="50"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="算法" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <ComboBox Grid.Column="1" x:Name="SrEngineCombo" MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择算法" Style="{StaticResource GlassComboBox}" SelectionChanged="OnSrEngineSelectionChanged"/>
+                            </Grid>
                             <Grid ColumnSpacing="8">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="50"/>
@@ -164,27 +173,23 @@
                                 </ComboBox>
                             </Grid>
                             <TextBlock Text="{x:Bind Vm.OutputResolutionText, Mode=OneWay}" Opacity="0.6" FontSize="11"/>
+                            <!-- 适合场景 + 推荐星级：跟着上面「算法 + 模型」联动 -->
+                            <TextBlock Text="{x:Bind Vm.SrSceneText, Mode=OneWay}" TextWrapping="Wrap" TextAlignment="Right"
+                                       HorizontalAlignment="Right" Opacity="0.55" FontSize="11" Margin="0,2,0,0"/>
                         </StackPanel>
                     </Border>
 
                     <Border Grid.Column="1" Style="{StaticResource CardBorder}">
                         <StackPanel Spacing="6">
                             <TextBlock Text="补帧设置" Style="{StaticResource SectionTitle}"/>
+                            <!-- 先选种类（模型族），再选该族下的具体模型 -->
                             <Grid ColumnSpacing="8">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="64"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center">
-                                    <TextBlock Text="种类" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
-                                    <Button Padding="3" Background="Transparent" BorderThickness="0"
-                                            VerticalAlignment="Center" Click="OnIfEngineInfoClick"
-                                            ToolTipService.ToolTip="NCNN：ncnn + Vulkan 的 rife-ncnn-vulkan 补帧&#x0a;Offical：官方 PyTorch pkl 模型（随附 Python 运行）&#x0a;&#x0a;点击图标查看详细讲解"
-                                            AutomationProperties.Name="模型种类说明">
-                                        <FontIcon Glyph="&#xE946;" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                                    </Button>
-                                </StackPanel>
-                                <ComboBox x:Name="IfEngineCombo" Grid.Column="1" ItemsSource="{x:Bind Vm.IfEngines}" SelectedItem="{x:Bind Vm.IfEngine, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" Style="{StaticResource GlassComboBox}" SelectionChanged="OnIfEngineSelectionChanged"/>
+                                <TextBlock Grid.Column="0" Text="种类" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <ComboBox Grid.Column="1" x:Name="IfEngineCombo" MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择种类" Style="{StaticResource GlassComboBox}" SelectionChanged="OnIfEngineSelectionChanged"/>
                             </Grid>
                             <Grid ColumnSpacing="8">
                                 <Grid.ColumnDefinitions>
@@ -207,8 +212,25 @@
                                     <x:Int32>5</x:Int32>
                                 </ComboBox>
                             </Grid>
+                            <!-- 目标帧率：填了它就以它为准（成片 fps 精确等于该值，避免 23.976×2=47.952 这种小数），
+                                 下面那行会顺手算出实际比例与总帧数；填 0 = 回到上面的倍率 -->
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="64"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="目标帧率" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <NumberBox Grid.Column="1" Value="{x:Bind Vm.TargetFps, Mode=TwoWay}" Minimum="0" Maximum="1000"
+                                           SpinButtonPlacementMode="Hidden"
+                                           PlaceholderText="0 = 按倍率；填目标帧率则成片 fps 精确等于它"
+                                           IsEnabled="{x:Bind Vm.TargetFpsEnabled, Mode=OneWay}"
+                                           HorizontalAlignment="Stretch"/>
+                            </Grid>
                             <TextBlock Text="{x:Bind Vm.TargetFpsText, Mode=OneWay}" Opacity="0.6" FontSize="11"/>
                             <TextBlock Text="{x:Bind Vm.VramWarning, Mode=OneWay}" TextWrapping="Wrap" Foreground="{x:Bind Vm.VramWarningBrush, Mode=OneWay}" FontSize="11"/>
+                            <!-- 适合场景：跟着上面「种类 + 模型」联动，说明当前选中的这个版本适合什么素材 -->
+                            <TextBlock Text="{x:Bind Vm.IfSceneText, Mode=OneWay}" TextWrapping="Wrap" TextAlignment="Right"
+                                       HorizontalAlignment="Right" Opacity="0.55" FontSize="11" Margin="0,2,0,0"/>
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -228,6 +250,83 @@
                             <TextBlock Grid.Column="2" Text="{x:Bind Vm.AudioPipelineLabel, Mode=OneWay}" VerticalAlignment="Center" Opacity="0.6" FontSize="11" FontFamily="Segoe UI Medium"/>
                         </Grid>
                         <CheckBox Content="将原音频合并进新视频 (处理结束时自动提取并合并)" IsChecked="{x:Bind Vm.MergeAudio, Mode=TwoWay}" IsEnabled="{x:Bind Vm.MergeAudioEnabled, Mode=OneWay}" FontSize="12"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- 单文件超分：只处理一张图片或一个音频文件，不走完整流水线（不拆帧/不补帧/不合并） -->
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="单文件超分" Style="{StaticResource SectionTitle}"/>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="80"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="类型" Style="{StaticResource FieldLabel}"/>
+                            <ComboBox Grid.Column="1" SelectedIndex="{x:Bind Vm.SfKindIndex, Mode=TwoWay}" MinWidth="110" Style="{StaticResource GlassComboBox}">
+                                <x:String>图片</x:String>
+                                <x:String>音频</x:String>
+                            </ComboBox>
+                            <TextBlock Grid.Column="2" Text="只处理这一个文件，不拆帧/不补帧/不合并" VerticalAlignment="Center" Opacity="0.6" FontSize="11"/>
+                        </Grid>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="80"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="输入文件" Style="{StaticResource FieldLabel}"/>
+                            <TextBox  Grid.Column="1" Text="{x:Bind Vm.SfInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      IsEnabled="{x:Bind Vm.SfIdle, Mode=OneWay}"
+                                      PlaceholderText="选择一张图片（png/jpg/webp）或一个音频（wav/mp3/flac…）" Style="{StaticResource GlassTextBox}"/>
+                            <Button   Grid.Column="2" Content="浏览" Click="OnBrowseSfInput" IsEnabled="{x:Bind Vm.SfIdle, Mode=OneWay}" Margin="0,0,8,0" Style="{StaticResource GlassButton}"/>
+                            <Button   Grid.Column="3" Content="清除" Click="OnClearSfInput" IsEnabled="{x:Bind Vm.SfIdle, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
+                        </Grid>
+                        <!-- 图片：超分模型 + 倍率（模型列表按倍率过滤，与上方主管线设置互不影响） -->
+                        <Grid ColumnSpacing="8" Visibility="{x:Bind Vm.SfImageRowVis, Mode=OneWay}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="80"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="超分模型" Style="{StaticResource FieldLabel}"/>
+                            <ComboBox Grid.Column="1" ItemsSource="{x:Bind Vm.SfImageModels}" SelectedItem="{x:Bind Vm.SfImageModel, Mode=TwoWay}"
+                                      MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择模型" Style="{StaticResource GlassComboBox}"/>
+                            <TextBlock Grid.Column="2" Text="倍率" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium" Margin="0,0,8,0"/>
+                            <ComboBox Grid.Column="3" SelectedItem="{x:Bind Vm.SfImageScale, Mode=TwoWay}" MinWidth="80">
+                                <x:Int32>2</x:Int32>
+                                <x:Int32>3</x:Int32>
+                                <x:Int32>4</x:Int32>
+                            </ComboBox>
+                        </Grid>
+                        <!-- 音频：AudioSR 精度档 -->
+                        <Grid ColumnSpacing="8" Visibility="{x:Bind Vm.SfAudioRowVis, Mode=OneWay}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="80"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="精度" Style="{StaticResource FieldLabel}"/>
+                            <ComboBox Grid.Column="1" SelectedItem="{x:Bind Vm.SfAudioPrecision, Mode=TwoWay}" MinWidth="200"
+                                      HorizontalAlignment="Stretch" Style="{StaticResource GlassComboBox}">
+                                <x:String>FP16</x:String>
+                                <x:String>FP32</x:String>
+                            </ComboBox>
+                        </Grid>
+                        <TextBlock Text="{x:Bind Vm.SfOutputText, Mode=OneWay}" Opacity="0.6" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" Content="开始超分" Click="OnStartSingleFile" IsEnabled="{x:Bind Vm.CanStartSingle, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
+                            <Button Grid.Column="1" Content="停止" Click="OnStopSingleFile" IsEnabled="{x:Bind Vm.CanStopSingle, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind Vm.SfStatus, Mode=OneWay}" VerticalAlignment="Center" FontSize="11"
+                                       TextWrapping="Wrap" IsTextSelectionEnabled="True" Opacity="0.8"/>
+                        </Grid>
                     </StackPanel>
                 </Border>
 

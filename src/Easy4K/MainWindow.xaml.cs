@@ -1,6 +1,9 @@
 using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
 using Easy4K.Models;
 using Easy4K.Services;
+using Easy4K.Services.RemoteControl;
 using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -25,6 +28,8 @@ public sealed partial class MainWindow : Window
     private DesktopAcrylicBackdrop? _acrylic;
     /// <summary>遥测同意弹窗是否已触发（Loaded 可能多次触发，避免重复弹窗）</summary>
     private bool _telemetryAsked;
+    /// <summary>远程控制服务端实例（仅远程模式期间非空）</summary>
+    private RemoteControlServer? _remote;
 
     public MainWindow()
     {
@@ -54,6 +59,7 @@ public sealed partial class MainWindow : Window
         // 处理开始 → 显示导航按钮 + 自动切到"进行中"页
         Vm.ProcessingStarted += () =>
         {
+            RemoteControlServer.Current?.PushStarted();
             DispatcherQueue.TryEnqueue(() =>
             {
                 ProgressNavItem.Visibility = Visibility.Visible;
@@ -68,9 +74,22 @@ public sealed partial class MainWindow : Window
             {
                 ProgressNavItem.Visibility = Visibility.Collapsed;
                 NavigateToHome();
+                // 远程控制模式下不弹本机窗体（结果由服务端推给手机端）
+                if ((RemoteControlServer.IsActive || RemoteSession.IsActive)) return;
                 // 正式处理完成 → 自动生成 HTML 报告（选项/命令/测试帧/中间帧抽帧），随后弹完成窗体
                 Vm.TryGenerateReport(r.OutputPath, r.StepsText, r.Elapsed);
                 _ = ShowCompletionDialogAsync(r);
+            });
+        };
+
+        // 单文件超分结束：成功回主页并收起导航；失败留在「进行中」页，方便直接看报错日志
+        Vm.SingleFileFinished += ok =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!ok) return;
+                ProgressNavItem.Visibility = Visibility.Collapsed;
+                NavigateToHome();
             });
         };
 
@@ -79,6 +98,7 @@ public sealed partial class MainWindow : Window
         // 若也写入进度条，会被每 200ms 一次的轮询事件归零导致进度条抽搐
         Vm.ProgressChanged += p =>
         {
+            RemoteControlServer.Current?.PushProgress(p);
             DispatcherQueue.TryEnqueue(() =>
             {
                 if (p.Total > 0) ThinProgressBar.Value = p.Percent;
@@ -121,6 +141,8 @@ public sealed partial class MainWindow : Window
         // 选视频等其它途径触发的一律保持普通弹窗，不累计。
         Vm.TempCacheMismatchDetected += fromStart => DispatcherQueue.TryEnqueue(async () =>
         {
+            // 远程控制模式：无人值守，直接放行（服务端启动前已自动清理缓存）
+            if ((RemoteControlServer.IsActive || RemoteSession.IsActive)) { Vm.DialogResult(true); return; }
             if (_cacheDialogOpen) return;
             _cacheDialogOpen = true;
             if (fromStart) _cacheWarnCount++; // 仅点开始处理累计愤怒计数
@@ -166,6 +188,7 @@ public sealed partial class MainWindow : Window
         // 启动前 CPU 最终警告（ConfirmStartAsync 在临时目录冲突通过后触发）
         Vm.CpuFinalWarningRequired += () => DispatcherQueue.TryEnqueue(async () =>
         {
+            if ((RemoteControlServer.IsActive || RemoteSession.IsActive)) { Vm.DialogResult(true); return; }
             var dlg = new ContentDialog
             {
                 Title = "不建议开启 CPU 处理",
@@ -181,6 +204,7 @@ public sealed partial class MainWindow : Window
         // 涡轮模式因临时目录在机械盘未生效 → 明确弹窗告知（不静默关闭），并提供直接切换临时目录的入口
         Vm.TurboDisabledRequired += reason => DispatcherQueue.TryEnqueue(async () =>
         {
+            if ((RemoteControlServer.IsActive || RemoteSession.IsActive)) return;
             var dlg = new ContentDialog
             {
                 Title = "涡轮模式未生效",
@@ -201,6 +225,7 @@ public sealed partial class MainWindow : Window
         // 开始处理被前置校验拦截（如目录不可写）→ 弹窗告知原因，避免主页看不到日志而表现为"点了没反应"
         Vm.StartFailed += msg => DispatcherQueue.TryEnqueue(async () =>
         {
+            if ((RemoteControlServer.IsActive || RemoteSession.IsActive)) return;
             var dlg = new ContentDialog
             {
                 Title = "无法开始处理",
@@ -298,6 +323,17 @@ public sealed partial class MainWindow : Window
     {
         Loc.LocalizeNavView(RootNav); // 顶栏导航项：窄窗口下不在可视树里，按数据翻译
         if (Content is DependencyObject root) Loc.LocalizeTree(root);
+        // 本地化会整树重写文本，遥控横幅是运行时文案，翻译后重新写回
+        if (RemoteSession.IsActive) RefreshRemoteBannerText();
+    }
+
+    /// <summary>把「已连接至 …」横幅文字按当前会话重写一遍（本地化/切页后调用）。</summary>
+    private void RefreshRemoteBannerText()
+    {
+        var s = RemoteSession.Current;
+        if (s is null) return;
+        RemoteBannerText.Text = $"已连接至 {s.Address}";
+        RemoteBanner.Visibility = Visibility.Visible;
     }
 
     // ===================== 导航 =====================
@@ -450,6 +486,7 @@ public sealed partial class MainWindow : Window
         // 没在处理 → 直接关闭
         if (!Vm.IsProcessing)
         {
+            await ShutdownRemoteAsync();
             _allowClose = true;
             Close();
             return;
@@ -471,8 +508,99 @@ public sealed partial class MainWindow : Window
         Vm.Stop();
         Vm.KillToolProcesses();
         Vm.Logger.Warn("已强制终止处理进程，正在退出...");
+        await ShutdownRemoteAsync();
         _allowClose = true;
         Close();
+    }
+
+    // ===================== 远程控制 =====================
+
+    /// <summary>由设置页「远程控制 → 启动」调用：开始监听 11451 并盖住整个界面。</summary>
+    public async Task StartRemoteControlAsync()
+    {
+        if ((RemoteControlServer.IsActive || RemoteSession.IsActive)) { RemoteOverlay.Visibility = Visibility.Visible; return; }
+
+        var server = new RemoteControlServer(Vm, DispatcherQueue);
+        server.StatusChanged += () => DispatcherQueue.TryEnqueue(UpdateRemoteOverlay);
+        try
+        {
+            server.Start();
+        }
+        catch (Exception ex)
+        {
+            await server.StopAsync();
+            await ShowInfoDialogAsync("远程控制启动失败",
+                $"无法监听 {RemoteControlServer.Port} 端口：{ex.Message}\n\n请确认该端口未被其他程序占用（例如另一个 Easy4K 实例正在运行），然后重试。");
+            return;
+        }
+
+        _remote = server;
+        UpdateRemoteOverlay();
+        RemoteOverlay.Visibility = Visibility.Visible;
+        Vm.Logger.Info($"远程控制已启动，正在监听 {RemoteControlServer.GetLocalIPv4()}:{RemoteControlServer.Port}");
+    }
+
+    /// <summary>刷新覆盖层文字：等待中 / 已连接。</summary>
+    private void UpdateRemoteOverlay()
+    {
+        var s = _remote;
+        if (s is null) return;
+
+        var ips = RemoteControlServer.GetLocalIPv4Candidates();
+        RemoteAddress.Text = $"{(ips.Count > 0 ? ips[0] : "127.0.0.1")}:{RemoteControlServer.Port}";
+        RemotePort.Text = "连接方式: 使用本IP连接";
+
+        if (s.HasClient)
+        {
+            RemoteTitle.Text = string.IsNullOrEmpty(s.ClientName) ? "客户端已连接" : $"客户端已连接：{s.ClientName}";
+            RemoteHint.Text = "远程控制进行中：手机端可操作输入/输出视频、输出目录与全部超分补帧功能。";
+        }
+        else
+        {
+            RemoteTitle.Text = "正在等待客户端设备链接";
+            RemoteHint.Text = "请在同一局域网内，用 Easy4K 手机客户端连接以下地址";
+        }
+    }
+
+    // ===================== 遥控其它 Easy4K（本机作为客户端） =====================
+
+    /// <summary>由设置页「遥控另一台 Easy4K」调用：在主窗口内切到遥控页（不新开窗口）。</summary>
+    public void NavigateToRemoteClient()
+    {
+        if (RootFrame.CurrentSourcePageType != typeof(Views.Remote.RemoteClientPage))
+            RootFrame.Navigate(typeof(Views.Remote.RemoteClientPage));
+        ThinProgressBar.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>遥控页连接成功时调用：在进度条下方显示黄色「已连接至 IP」横幅。</summary>
+    public void ShowRemoteConnectedBanner(string address)
+    {
+        RemoteBannerText.Text = $"已连接至 {address}";
+        RemoteBanner.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>断开连接时调用：收起黄色横幅。</summary>
+    public void HideRemoteConnectedBanner() => RemoteBanner.Visibility = Visibility.Collapsed;
+
+    private async void OnRemoteBannerDisconnect(object sender, RoutedEventArgs e)
+    {
+        if (RemoteSession.Current is not null)
+            await RemoteSession.Current.DisconnectAsync();
+        HideRemoteConnectedBanner();
+    }
+
+    private async void OnStopRemoteControl(object sender, RoutedEventArgs e) => await ShutdownRemoteAsync();
+
+    private async Task ShutdownRemoteAsync()
+    {
+        var s = _remote;
+        _remote = null;
+        if (s is not null)
+        {
+            try { await s.StopAsync(); } catch { }
+            Vm.Logger.Info("远程控制已停止");
+        }
+        RemoteOverlay.Visibility = Visibility.Collapsed;
     }
 
     // ===================== 文件 / 目录选择 =====================
@@ -484,6 +612,15 @@ public sealed partial class MainWindow : Window
 
     private async Task PickVideoAsync()
     {
+        // 遥控远端：从远端电脑的磁盘里挑（本地选择器看不到对方的文件）
+        if (RemoteSession.IsActive)
+        {
+            var picked = await PickRemotePathAsync(folder: false, kind: "video", start: null);
+            if (string.IsNullOrWhiteSpace(picked)) return;
+            await Vm.SetInputVideoAsync(picked);
+            return;
+        }
+
         var picker = new FileOpenPicker();
         InitializePicker(picker);
         picker.FileTypeFilter.Add(".mp4");
@@ -560,7 +697,117 @@ public sealed partial class MainWindow : Window
 
     public async Task ChooseTempFolderAsync() => await PickTempFolderAsync();
 
-    public async Task ChooseOutputFolderAsync() => await PickFolderAsync(p => Vm.SetOutputRoot(p));
+    public async Task ChooseOutputFolderAsync()
+    {
+        // 遥控远端：输出目录也在对方电脑上
+        if (RemoteSession.IsActive)
+        {
+            var picked = await PickRemotePathAsync(folder: true, kind: "video", start: Vm.OutputRoot);
+            if (!string.IsNullOrWhiteSpace(picked)) Vm.SetOutputRoot(picked);
+            return;
+        }
+        await PickFolderAsync(p => Vm.SetOutputRoot(p));
+    }
+
+    /// <summary>远端目录浏览：盘符 → 目录逐级下钻，选文件（folder=false）或选目录（folder=true）。</summary>
+    private async Task<string?> PickRemotePathAsync(bool folder, string kind, string? start)
+    {
+        var session = RemoteSession.Current;
+        if (session is null || !session.IsConnected) return null;
+
+        string? current = string.IsNullOrWhiteSpace(start) || !Directory.Exists(start) ? null : start;
+
+        while (true)
+        {
+            JsonElement res;
+            try
+            {
+                res = await session.ListDirAsync(current, kind);
+            }
+            catch (Exception ex)
+            {
+                ShowNotice("读取远端目录失败", ex.Message);
+                return null;
+            }
+
+            if (!res.TryGetProperty("entries", out var entriesEl) || entriesEl.ValueKind != JsonValueKind.Array)
+            {
+                ShowNotice("远端目录不可用", "对方返回的列表无法解析");
+                return null;
+            }
+            var entries = entriesEl.EnumerateArray().ToList();
+
+            var list = new ListView { SelectionMode = ListViewSelectionMode.Single, MaxHeight = 380, MinHeight = 240 };
+            var items = new List<string>();
+            if (current is not null) items.Add("↩ 返回上级");
+            foreach (var it in entries)
+            {
+                var isDir = RemoteControlClient.GetBool(it, "isDir");
+                var name = RemoteControlClient.GetStr(it, "name");
+                if (name.Length == 0) continue;
+                if (!isDir && folder) continue;                       // 选目录时不列文件
+                items.Add(isDir ? $"📁 {name}" : $"🎬 {name}");
+            }
+            list.ItemsSource = items;
+
+            var dlg = new ContentDialog
+            {
+                XamlRoot = RootFrame.XamlRoot,
+                Title = folder ? "选择远端电脑上的输出目录" : "选择远端电脑上的视频文件",
+                Content = new StackPanel
+                {
+                    Spacing = 8,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = current ?? "此电脑（选择盘符）",
+                            FontSize = 12,
+                            Opacity = 0.75,
+                            TextWrapping = TextWrapping.Wrap
+                        },
+                        list
+                    }
+                },
+                PrimaryButtonText = folder && current is not null ? "选择此目录" : "打开",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Close
+            };
+
+            var result = await dlg.ShowAsync();
+            if (result != ContentDialogResult.Primary)
+            {
+                if (folder && current is not null) return current;
+                return null;
+            }
+
+            var sel = list.SelectedIndex;
+            if (folder && current is not null && sel < 0) return current;
+            if (sel < 0) continue;
+
+            if (current is not null && sel == 0)                       // 第一项是「返回上级」
+            {
+                current = Path.GetDirectoryName(current.TrimEnd('\\', '/'));
+                if (string.IsNullOrWhiteSpace(current)) current = null;
+                continue;
+            }
+
+            var offset = current is not null ? sel - 1 : sel;
+            if (offset < 0 || offset >= entries.Count) continue;
+            var picked = entries[offset];
+            var pickedName = RemoteControlClient.GetStr(picked, "name");
+            var pickedIsDir = RemoteControlClient.GetBool(picked, "isDir");
+
+            if (pickedIsDir)
+            {
+                current = current is null ? pickedName : Path.Combine(current, pickedName);
+                continue;
+            }
+
+            if (folder) continue;
+            return current is null ? pickedName : Path.Combine(current, pickedName);
+        }
+    }
 
     /// <summary>选择 HTML 报告保存目录（供「高级」页调用）</summary>
     public async Task ChooseReportFolderAsync() => await PickFolderAsync(p => Vm.ReportDir = p);
@@ -704,21 +951,29 @@ public sealed partial class MainWindow : Window
 
     /// <summary>关于正文（含免责声明）</summary>
     private string AboutText =>
-        $"Easy4K v{Vm.Version} - 一键视频超分补帧工具\n\n基于 WinUI 3 / Windows App SDK\n" +
-        "Real-ESRGAN-ncnn-Vulkan / RIFE-ncnn-Vulkan / Offical RIFE (PyTorch) / AudioSR (ONNX) /\n" +
-        "NVEncC / FFmpeg\n\n" +
-        "补帧引擎：NCNN（Vulkan 全 GPU）/ Offical（官方 PyTorch pkl 模型，NVIDIA CUDA 自动加速）\n" +
+        $"Easy4K v{Vm.Version} - 一键视频超分补帧工具\n\n基于 WinUI 3 / Windows App SDK\n\n" +
+        "超分引擎：Real-ESRGAN / Real-CUGAN / waifu2x / SRMD / RealSR（ncnn + Vulkan，共 25 个模型，\n" +
+        "NVIDIA / AMD / Intel 显卡通用）\n" +
+        "补帧引擎：NCNN-RIFE（Vulkan，全显卡通用）/ RIFE、DRBA、GMFSS、GIMM-VFI（PyTorch，仅 NVIDIA）\n" +
+        "音频超分：AudioSR（ONNX Runtime，CUDA / DirectML / CPU 自动降级）\n" +
+        "其他组件：FFmpeg / NVEncC / Python / PyTorch / CuPy / OpenCV\n" +
+        "本软件免费分发；唯一收费内容为自研的帧去重（SFDP）算法及其相关服务。\n\n" +
         "附加能力（「高级」页，默认关闭）：帧去重（自研四阶级联判决：像素差+分块局部 / dHash / QR 分解 /\n" +
         "Farnebäck 稠密光流）/ 音频超分（AudioSR，48kHz 高带宽重建，FP16 性能模式与 FP32 完美模式）\n\n" +
         "========== 免责声明 ==========\n\n" +
         "1. 本软件以\"现状\"（AS-IS）提供，开发者不对其正确性、可靠性、完整性及适用性作任何明示或暗示保证。\n\n" +
-        "2. 使用本软件及所调用第三方工具（FFmpeg/Real-ESRGAN/RIFE/AudioSR/NVEncC）产生的一切后果，包括但不限于：\n" +
+        "2. 使用本软件及所调用第三方组件（FFmpeg / ncnn / PyTorch / AudioSR / NVEncC 等）产生的一切后果，包括但不限于：\n" +
         "   处理结果错误、文件损坏或丢失、硬件故障或损坏、系统崩溃或不稳定、数据泄露、时间与经济损失，\n" +
         "   均由使用者自行承担，开发者概不负责。\n\n" +
         "3. 软件运行时会调用系统全部 CPU/GPU 资源，可能导致设备高负载、发热、降频甚至崩溃，请自行评估风险。\n\n" +
         "4. 输出的视频/音频内容之版权、合法性与用途由使用者自行负责，请勿用于任何非法用途或侵犯他人权益的场景。\n\n" +
-        "5. 第三方工具受其各自许可证约束（FFmpeg: LGPL/GPL；Real-ESRGAN: BSD-3；RIFE: 见其项目许可；\n" +
-        "   AudioSR 及其 ONNX 权重: MIT；onnxruntime: MIT；NVEncC: MIT 等），使用前请自行查阅并遵守。\n\n" +
+        "5. 第三方组件受其各自许可证约束：FFmpeg 为 GPL v3（构建含 --enable-gpl --enable-version3）；\n" +
+        "   ncnn 为 BSD-3-Clause；NVEncC / Real-ESRGAN / Real-CUGAN / RealSR / SRMD / waifu2x / RIFE /\n" +
+        "   Practical-RIFE / DRBA / AudioSR / onnxruntime 为 MIT；PyTorch 为 BSD-3-Clause；Python 为 PSF；\n" +
+        "   OpenCV 为 Apache-2.0；timm 为 Apache-2.0；GIMM-VFI 为 S-Lab License 1.0（仅限非商业用途）；\n" +
+        "   DRBA / GMFSS / GIMM-VFI 内含的 softmax-splatting 算子仅限学术用途；CUDA / cuDNN 为 NVIDIA\n" +
+        "   专有许可。本软件免费分发，满足上述非商业/学术用途条款。完整清单与版权见程序目录\n" +
+        "   《Easy4K 软件安装声明》。使用前请自行查阅并遵守。\n\n" +
         "6. 开发者不承诺修复任何缺陷，不提供任何形式的售后服务与技术支持。\n\n" +
         "7. 使用本软件即表示已阅读并同意以上全部条款；不同意请立即停止使用并删除本软件。";
 

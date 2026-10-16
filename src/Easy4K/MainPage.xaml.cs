@@ -1,5 +1,6 @@
 using System.IO;
 using Easy4K.Services;
+using Easy4K.Services.CommandBuilders;
 using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -25,30 +26,107 @@ public sealed partial class MainPage : Page
     {
         InitializeComponent();
 
-        // 引擎/模型属性变化兜底：即使下拉框 SelectionChanged 未触发，也重建模型列表/刷新倍率锁定
+        // 模型属性变化兜底：即使下拉框 SelectionChanged 未触发，也刷新倍率锁定
         Loaded += (_, _) => Vm.PropertyChanged += OnVmPropertyChanged;
         Unloaded += (_, _) => Vm.PropertyChanged -= OnVmPropertyChanged;
-        // 初始填充模型下拉框（引擎变化后也走 ReloadIfModelCombo）
+        // 初始填充「种类」与「模型」下拉框。
+        // 「种类」必须对齐到配置里保存的补帧模型所属的族，否则选了 PyTorch 轨（RIFE / DRBA / GMFSS /
+        // GIMM-VFI）重启后会掉回 NCNN 族，而回落的选中值还会把 DefaultIfModel 静默覆盖掉。
+        var ifFamily = VfiCatalog.FamilyIndexOf(Vm.IfModel);
+        // 显卡拦截的兜底：配置里存的是 PyTorch 轨模型（依赖 CUDA / cupy，只有 N 卡能跑）但本机不可用
+        // （A 卡 / 核显 / 没装 python-torch），启动时直接退回 NCNN-RIFE，否则还原出来的选择一跑就崩。
+        // 下拉框的事件此时被抑制，走不到 OnIfEngineSelectionChanged 里的那层拦截，所以这里单独判一次。
+        if (EnforceGpuGating && VfiCatalog.IsTorchFamily(ifFamily) && !Vm.VfiTorchUsable)
+            ifFamily = 0;
+        _suppressIfEngineEvent = true;
+        IfEngineCombo.ItemsSource = Vm.IfEngines.ToList();
+        IfEngineCombo.SelectedIndex = ifFamily;
+        Vm.IfEngineIndex = ifFamily;
+        _suppressIfEngineEvent = false;
+        ReloadIfModelCombo();
+
+        // 超分「算法」下拉框：对齐到配置里保存的模型所属算法（「模型」下拉框由 Vm.SrModels 绑定自动跟随）
+        _suppressSrEngineEvent = true;
+        SrEngineCombo.ItemsSource = Vm.SrEngines.ToList();
+        SrEngineCombo.SelectedIndex = Vm.SrEngineIndex;
+        _suppressSrEngineEvent = false;
+    }
+
+    /// <summary>程序回填超分「算法」下拉框时抑制 SelectionChanged</summary>
+    private bool _suppressSrEngineEvent;
+
+    /// <summary>切换超分算法：VM 会顺带把倍率夹到该算法支持的档位并重建模型列表，
+    /// 「模型」下拉框是绑定 Vm.SrModels，会自己跟着刷新。</summary>
+    private void OnSrEngineSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressSrEngineEvent) return;
+        var idx = SrEngineCombo.SelectedIndex;
+        if (idx < 0) return;
+        Vm.SwitchSrEngine(idx);
+    }
+
+    /// <summary>程序回填「种类」下拉框时抑制 SelectionChanged</summary>
+    private bool _suppressIfEngineEvent;
+
+    /// <summary>是否启用显卡拦截：非 NVIDIA 显卡选 PyTorch 轨（RIFE / DRBA / GMFSS / GIMM-VFI）
+    /// 的种类或模型时弹窗提示并回退到 NCNN-RIFE。这些族依赖 CUDA / cupy，A 卡与核显跑不了。</summary>
+    private const bool EnforceGpuGating = true;
+
+    /// <summary>切换补帧种类（模型族）：PyTorch 那几个族依赖 CUDA/cupy，非 N 卡弹窗并退回 NCNN-RIFE。</summary>
+    private async void OnIfEngineSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressIfEngineEvent) return;
+        var idx = IfEngineCombo.SelectedIndex;
+        if (idx < 0) return;
+        // 只有 NCNN-RIFE（索引 0）走 Vulkan；其余族都是 PyTorch 轨，需要 NVIDIA
+        if (EnforceGpuGating && VfiCatalog.IsTorchFamily(idx) && !Vm.VfiTorchUsable)
+        {
+            await WarnTorchEngineNeedsNvidiaAsync();
+            return;
+        }
+        Vm.IfEngineIndex = idx;
         ReloadIfModelCombo();
     }
 
-    /// <summary>VM 属性兜底：引擎变化 → 重建模型下拉框；模型变化 → 刷新倍率锁定。</summary>
+    private async Task WarnTorchEngineNeedsNvidiaAsync()
+    {
+        _suppressIfEngineEvent = true;
+        try
+        {
+            IfEngineCombo.SelectedIndex = 0;
+            Vm.IfEngineIndex = 0;
+        }
+        finally { _suppressIfEngineEvent = false; }
+        ReloadIfModelCombo();
+
+        var dlg = new ContentDialog
+        {
+            Title = "这个补帧种类需要 NVIDIA 显卡",
+            Content = "RIFE / DRBA / GMFSS / GIMM-VFI 上游只有 PyTorch 实现，依赖 CUDA / cupy，"
+                    + "AMD 显卡与核显跑不了。\n\n"
+                    + "Bro 去买老黄的 RTX 显卡就可以开启本补帧种类了哦！\n\n"
+                    + "已退回 NCNN-RIFE（Vulkan，全显卡通用）。",
+            CloseButtonText = "知道了",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
+        };
+        await dlg.ShowLocalizedAsync();
+    }
+
+    /// <summary>VM 属性兜底：模型变化 → 刷新倍率锁定。</summary>
     private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(Vm.IfEngine))
-            ReloadIfModelCombo();
-        else if (e.PropertyName == nameof(Vm.IfModel))
+        if (e.PropertyName == nameof(Vm.IfModel))
             Vm.RefreshIfMultiplierLock(Vm.IfModel);
     }
 
     // ===================== 补帧模型选择（重写：整体重建下拉框，避开 ComboBox 绑定联动 0x80070490 闪退） =====================
 
-    /// <summary>引擎（种类）切换 → 用新引擎的模型列表整体重建模型下拉框：
-    /// 先解绑事件、清空 ItemsSource/SelectedItem，再赋新列表，最后设合法选中值。
+    /// <summary>整体重建模型下拉框：先解绑事件、清空 ItemsSource/SelectedItem，再赋新列表，最后设合法选中值。
     /// 每次都是"从零开始"，ComboBox 内部不会残留旧选中状态，展开下拉时不再崩溃。</summary>
     private void ReloadIfModelCombo()
     {
-        var models = Vm.GetIfModelsForEngine(Vm.IfEngine);
+        var models = Vm.GetIfModels();
 
         IfModelCombo.SelectionChanged -= OnIfModelSelectionChanged;
         IfModelCombo.ItemsSource = null;
@@ -56,12 +134,12 @@ public sealed partial class MainPage : Page
         IfModelCombo.ItemsSource = models.ToList();
 
         // 选中规则：优先保留当前已选模型（切页重建时用户的选择不丢）；
-        // 其次 NCNN 优先配置里的默认模型；列表为空则保持占位符
+        // 其次配置里的默认模型；列表为空则保持占位符
         string selected = "";
         if (models.Count > 0)
         {
             selected = models.Contains(Vm.IfModel) ? Vm.IfModel
-                : Vm.IfEngine == "NCNN" && models.Contains(Vm.DefaultIfModel) ? Vm.DefaultIfModel
+                : models.Contains(Vm.DefaultIfModel) ? Vm.DefaultIfModel
                 : models[0];
         }
         IfModelCombo.SelectedItem = selected;
@@ -70,47 +148,50 @@ public sealed partial class MainPage : Page
         IfModelCombo.SelectionChanged += OnIfModelSelectionChanged;
     }
 
-    private void OnIfEngineSelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        // x:Bind 初始化也会触发一次；控件未就绪时跳过
-        if (IfModelCombo is null) return;
-        // 时序兜底：x:Bind TwoWay 回写可能晚于 SelectionChanged，
-        // 先手动同步引擎，确保 ReloadIfModelCombo 用新引擎的模型列表重建
-        if (IfEngineCombo.SelectedItem is string eng && eng != Vm.IfEngine)
-            Vm.IfEngine = eng;
-        ReloadIfModelCombo();
-    }
-
     private void OnIfModelSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_suppressIfModelEvent) return;
         var m = IfModelCombo.SelectedItem is string s ? s : "";
+        // 兜底：PyTorch 轨版本（RIFE / DRBA / GMFSS / GIMM-VFI）依赖 CUDA/cupy，只有 NVIDIA 能跑。
+        // 正常情况下「种类」那一级已经拦过，这里是防止别处直接改选中值绕过。
+        if (EnforceGpuGating && VfiCatalog.IsTorchModel(m) && !Vm.VfiTorchUsable)
+        {
+            _ = WarnTorchModelNeedsNvidiaAsync(m);
+            return;
+        }
         if (m != Vm.IfModel) Vm.IfModel = m;
         Vm.RefreshIfMultiplierLock(m); // 切换模型后显式刷新倍率锁定
     }
 
-    /// <summary>种类旁的 Info 图标点击 → 详细讲解 NCNN / Offical 及兼容性</summary>
-    private async void OnIfEngineInfoClick(object sender, RoutedEventArgs e)
+    /// <summary>程序回填下拉框时抑制 SelectionChanged（弹窗回退会改选中值）</summary>
+    private bool _suppressIfModelEvent;
+
+    /// <summary>选了 PyTorch 轨版本但显卡不是 NVIDIA → 退回 NCNN-RIFE 并弹窗说明。</summary>
+    private async Task WarnTorchModelNeedsNvidiaAsync(string tried)
     {
+        var fallback = Vm.IfModel;
+        if (string.IsNullOrEmpty(fallback) || VfiCatalog.IsTorchModel(fallback))
+            fallback = Vm.GetIfModels().FirstOrDefault(x => !VfiCatalog.IsTorchModel(x)) ?? "";
+
+        _suppressIfModelEvent = true;
+        try
+        {
+            IfModelCombo.SelectedItem = fallback;
+            Vm.IfModel = fallback;
+            Vm.RefreshIfMultiplierLock(fallback);
+        }
+        finally { _suppressIfModelEvent = false; }
+
         var dlg = new ContentDialog
         {
-            XamlRoot = XamlRoot,
-            Title = "模型种类：NCNN 与 Offical",
-            Content = new TextBlock
-            {
-                Text = "NCNN：基于 ncnn 框架 + Vulkan 的 rife-ncnn-vulkan 补帧。" +
-                       "GPU 加速、速度快，支持线程调节（-j）、安全帧率、GPU 错误自动降级重试等选项。" +
-                       "模型为 ncnn 格式（flownet.param/.bin）。\n\n" +
-                       "Offical：官方 RIFE PyTorch 模型（pkl 文件），使用软件随附的 Python + PyTorch 运行，" +
-                       "包含官方全部模型（v4.6 / v4.8 / v4.9 / v4.15 / v4.18 / v4.22 / v4.26 / v4.26_heavy / 2.3 / rpr_v7_2.3）。" +
-                       "画质更接近官方实现，但速度取决于 CPU/GPU 与 Python 性能；同样支持线程数调节、安全帧率与降低画质(-u, FP16)。\n\n" +
-                       "兼容性说明：线程滑块、安全帧率、降低画质(-u) 在 NCNN 与 Offical 下均生效，" +
-                       "其余流程（拆帧/超分/合并/音频/HDR）不受影响。",
-                TextWrapping = TextWrapping.Wrap,
-                FontSize = 13,
-                MaxWidth = 480,
-            },
+            Title = "这个模型需要 NVIDIA 显卡",
+            Content = $"{tried} 上游只有 PyTorch 版实现，依赖 CUDA / cupy，AMD 显卡与核显跑不了。\n\n"
+                    + "Bro 去买老黄的 RTX 显卡就可以开启本补帧模型了哦！\n\n"
+                    + "AMD / Intel 显卡请继续用 NCNN-RIFE 种类下的模型。\n"
+                    + $"已回退到：{fallback}",
             CloseButtonText = "知道了",
             DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
         };
         await dlg.ShowLocalizedAsync();
     }
@@ -235,6 +316,51 @@ public sealed partial class MainPage : Page
 
     private async void OnImportFrameFolder(object sender, RoutedEventArgs e) => await ImportFrameFolderAsync();
 
+    // ===================== 单文件超分（图片 / 音频） =====================
+
+    /// <summary>选择单文件输入：按当前类型给不同的扩展名过滤</summary>
+    private async void OnBrowseSfInput(object sender, RoutedEventArgs e)
+    {
+        var picker = new FileOpenPicker();
+        InitializePicker(picker);
+        if (Vm.SfIsImage)
+        {
+            picker.FileTypeFilter.Add(".png");
+            picker.FileTypeFilter.Add(".jpg");
+            picker.FileTypeFilter.Add(".jpeg");
+            picker.FileTypeFilter.Add(".webp");
+            picker.FileTypeFilter.Add(".bmp");
+            picker.SuggestedStartLocation = PickerLocationId.PicturesLibrary;
+        }
+        else
+        {
+            picker.FileTypeFilter.Add(".wav");
+            picker.FileTypeFilter.Add(".mp3");
+            picker.FileTypeFilter.Add(".flac");
+            picker.FileTypeFilter.Add(".m4a");
+            picker.FileTypeFilter.Add(".aac");
+            picker.FileTypeFilter.Add(".ogg");
+            picker.FileTypeFilter.Add(".wma");
+            picker.SuggestedStartLocation = PickerLocationId.MusicLibrary;
+        }
+        var file = await picker.PickSingleFileAsync();
+        if (file is not null) Vm.SfInput = file.Path;
+    }
+
+    private void OnClearSfInput(object sender, RoutedEventArgs e) => Vm.SfInput = "";
+
+    /// <summary>开始单文件超分：跑完只把结果汇总到卡片状态与通知条，详细输出在「进行中」页日志</summary>
+    private async void OnStartSingleFile(object sender, RoutedEventArgs e)
+    {
+        await Vm.StartSingleFileAsync();
+        if (Vm.SfStatus.StartsWith("完成：", StringComparison.Ordinal))
+            App.MainWindow?.ShowNotice("单文件超分完成", Vm.SfStatus[3..]);
+        else if (!string.IsNullOrEmpty(Vm.SfStatus))
+            App.MainWindow?.ShowNotice("单文件超分未完成", Vm.SfStatus);
+    }
+
+    private void OnStopSingleFile(object sender, RoutedEventArgs e) => Vm.StopSingleFile();
+
     private async Task ImportFrameFolderAsync()
     {
         var picker = new FolderPicker();
@@ -344,8 +470,6 @@ public sealed partial class MainPage : Page
     private async Task StartWithFrameParamsAsync()
     {
         // 启动前强制把下拉框当前选中值同步到 VM，防御 UI/VM 不同步（"选了 A 实际跑 B"）
-        if (IfEngineCombo.SelectedItem is string eng && eng != Vm.IfEngine)
-            Vm.IfEngine = eng;
         if (IfModelCombo.SelectedItem is string m && m != Vm.IfModel)
             Vm.IfModel = m;
         if (Vm.HasExternalFrames && (Vm.Video is null || !Vm.Video.IsValid))

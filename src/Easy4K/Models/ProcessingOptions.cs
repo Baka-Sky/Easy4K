@@ -9,8 +9,9 @@ public sealed class ProcessingOptions
     public bool MergeVideo { get; set; } = true;
     public bool MergeAudio { get; set; } = true;       // 合并原视频音频到最终视频（从原视频提取）
     public bool SdrToHdr { get; set; } = false;
-    /// <summary>补帧引擎："NCNN"（rife-ncnn-vulkan）或 "Offical"（PyTorch pkl 模型）</summary>
-    public string IfEngine { get; set; } = "NCNN";
+    /// <summary>补帧目标帧率（&gt;0 时优先于倍率：输出 fps 精确等于该值，总帧数按 源帧数×比例 四舍五入；
+    /// 用于避免 23.976×2=47.952 这种带小数的成片帧率）。0 = 按倍率。</summary>
+    public double TargetFps { get; set; }
     /// <summary>音频超分（AudioSR）：开启后音频改由 AudioSR 升到 48kHz，不再走 ffmpeg 重采样</summary>
     public bool AudioSr { get; set; }
     /// <summary>音频超分精度档：fp16 = 低精度性能模式（禁 CPU）；fp32 = 高精度完美模式</summary>

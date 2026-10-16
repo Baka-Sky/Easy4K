@@ -134,7 +134,7 @@
                             <StackPanel Spacing="8">
                                 <CheckBox x:Name="CfgSplitCb" Content="拆帧（将视频导出为帧序列）"/>
                                 <CheckBox x:Name="CfgSrCb" Content="AI 超分（Real-ESRGAN）"/>
-                                <CheckBox x:Name="CfgIfCb" Content="AI 补帧（RIFE / Offical）"/>
+                                <CheckBox x:Name="CfgIfCb" Content="AI 补帧（RIFE）"/>
                                 <CheckBox x:Name="CfgMergeCb" Content="合并视频（编码输出）"/>
                                 <CheckBox x:Name="CfgAudioCb" Content="嵌入原音频"/>
                             </StackPanel>

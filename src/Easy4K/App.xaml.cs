@@ -92,8 +92,16 @@ public partial class App : Application
         var autoTestCli = false;
         var autoTestFull = false;
         var dedupOnly = false;
+        var remoteCli = false;
         for (int i = 0; i < cmdLine.Length; i++)
         {
+            // 远程控制直启: Easy4K.exe --remote（跳过 OOBE，直接进入等待客户端连接）
+            if (cmdLine[i].Equals("--remote", StringComparison.OrdinalIgnoreCase))
+            {
+                remoteCli = true;
+                continue;
+            }
+
             if (cmdLine[i].Equals("--selftest", StringComparison.OrdinalIgnoreCase) && i + 2 < cmdLine.Length)
             {
                 selftestCli = true;
@@ -136,7 +144,7 @@ public partial class App : Application
         }
 
         // 首次运行：先展示 OOBE 设置向导（完成后保存配置并衔接正式主界面）
-        if (!selftestCli && !autoTestCli && !app.SetupCompleted)
+        if (!selftestCli && !autoTestCli && !remoteCli && !app.SetupCompleted)
         {
             var wizard = new WelcomeWindow(Services, settingsSvc, app, toolCfg);
             wizard.Completed += () =>
@@ -151,6 +159,9 @@ public partial class App : Application
         OpenMainWindow();
         if (autoTestCli)
             _ = RunAutoTestDelayedAsync(autoTestFull, dedupOnly);
+        // 远程连接模式：--remote 命令行直启，或用户开了「每次启动自动进入远程连接模式」
+        if (remoteCli || Services.AutoRemoteOnStartup)
+            _ = MainWindow.StartRemoteControlAsync();
     }
 
     /// <summary>创建并显示正式主窗口。

@@ -359,16 +359,25 @@ public sealed partial class WelcomeWindow : Window
         """
         【Easy4K 使用协议】
         1. 本软件为"视频超分补帧"工具，基于 WinUI 3 / Windows App SDK 开发。
-        2. 使用本软件需自备显卡（Vulkan）与 FFmpeg / Real-ESRGAN / RIFE / NVEncC 等第三方工具。
+        2. 本软件免费分发，超分 / 补帧 / 音频超分所需的引擎与模型均随包提供，无需另行安装；
+           唯一收费内容为自研的帧去重（SFDP）算法及其相关服务。
         3. 处理过程中会大量占用 CPU/GPU，可能导致发热、降频甚至崩溃，请自行评估风险。
         4. 请勿将本软件用于任何非法用途；输出内容的版权与合规性由使用者负责。
 
         【开源许可】
-        Easy4K 调用以下开源/第三方组件：
-        - FFmpeg (LGPL/GPL)：视频解码/编码/合成
-        - Real-ESRGAN (BSD-3-Clause)：AI 超分
-        - RIFE / rife-ncnn-vulkan：AI 补帧
-        - NVEncC (MIT)：RTX 显卡 SDR→HDR 硬件编码
+        Easy4K 调用以下开源 / 第三方组件（完整清单与版权见程序目录
+        《Easy4K 软件安装声明》）：
+        - FFmpeg (GPL v3)：视频拆帧 / 编码 / 合成
+        - ncnn (BSD-3-Clause)：Vulkan 模型推理
+        - NVEncC (MIT)：NVIDIA 硬件编码与 SDR→HDR 转换
+        - Real-ESRGAN / Real-CUGAN / RealSR / SRMD / waifu2x (MIT)：AI 超分
+        - RIFE(ncnn) / Practical-RIFE / DRBA (MIT)：AI 补帧
+        - GMFSS（上游未附许可证）/ GIMM-VFI (S-Lab License 1.0)：AI 补帧
+        - AudioSR (MIT) / ONNX Runtime (MIT)：AI 音频超分
+        - PyTorch (BSD-3-Clause) / Python (PSF License) / OpenCV (Apache-2.0)
+        - CUDA / cuDNN (NVIDIA 专有许可)
+        说明：本软件以免费方式分发，满足 GIMM-VFI 的"仅非商业用途"与
+        softmax-splatting 算子的"仅限学术用途"条款。
         各组件版权归其作者所有，请遵守其各自许可证。
 
         【隐私与免责声明】

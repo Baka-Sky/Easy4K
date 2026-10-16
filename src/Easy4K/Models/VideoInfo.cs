@@ -10,6 +10,8 @@ public sealed class VideoInfo
     public TimeSpan Duration { get; set; }
     public long BitRate { get; set; }              // bps
     public string AudioCodec { get; set; } = "";   // aac / flac / 无
+    /// <summary>音轨采样率（Hz，0 = 未知/无音轨）。用于判断音频链路上是否发生了重采样。</summary>
+    public int AudioSampleRate { get; set; }
     public long TotalFrames { get; set; }
 
     public string ResolutionText => $"{Width} x {Height}";

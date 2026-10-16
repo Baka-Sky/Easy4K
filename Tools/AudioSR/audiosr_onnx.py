@@ -4,17 +4,17 @@
 AudioSR ONNX 推理驱动（Easy4K 内置）
 
 用 numpy + onnxruntime 复现 haoheliu/audiosr_basic 的官方推理流程：
-    读音频 → 重采样 48k → 归一化 → 官方算法低通（去掉伪高频，也是模型的低频条件）
+    读音频 → 重采样 48k → 归一化（不做带限，保留原始带宽）
     → log-mel → VAE 条件编码 → DDIM(eta=1, CFG 3.5) → VAE 解码 → vocoder 重建
     → mel / 波形低频段回填（低音用回原音频，保证不跑调）→ 写 48k WAV
 
-后端：DirectML(GPU，A/N/I 显卡通吃) 优先；fp32 权重包失败时自动回退 CPU，
-fp16 权重包**禁止**回退 CPU（CPU 的 fp16 算子又少又慢，官方明确不建议）。
+后端：NVIDIA 显卡优先 CUDA(GPU)，其次 DirectML；其它显卡用 DirectML（A/N/I 通吃）；
+逐级尝试，三级（CUDA / DirectML / CPU）都起不来才报错退出。
 
 权重包（--models 指向的目录，各自扁平一层）：
     models-fp32/  官方 fp32（2.51 GiB），画质基准，CPU/GPU 都能跑
     models-fp16/  官方 fp16（1.26 GiB），仅 GPU，比 fp32 快约 9%，实测 59.4 dB SI-SDR
-两者的 manifest.json 里 precision 字段分别是 fp32 / fp16，本脚本据此决定是否允许 CPU。
+两者的 manifest.json 里 precision 字段分别是 fp32 / fp16，仅用于日志标注。
 
 用法：
     python audiosr_onnx.py --input in.wav --output out.wav --models <权重包目录>
@@ -24,6 +24,7 @@ import argparse
 import json
 import math
 import os
+import shutil
 import sys
 import time
 import wave
@@ -31,11 +32,9 @@ import wave
 import numpy as np
 
 SR = 48000                       # AudioSR 固定工作采样率
-LP_ORDER = 8                     # 官方 lowpass order
-LP_TYPE = "butter"               # 官方按种子随机选：butter/cheby1/ellip/bessel
 LIB_N_FFT, LIB_HOP = 2048, 512   # librosa.stft/istft 默认参数（postprocessing 用）
 
-EXIT_NO_GPU_FOR_FP16 = 3         # fp16 权重包 + 只有 CPU → 拒绝运行
+EXIT_ALL_BACKENDS_FAILED = 3     # CUDA / DirectML / CPU 三级后端全部无法启动
 
 
 def log(m):
@@ -91,8 +90,42 @@ def read_wav(path):
     return x[:n * channels].reshape(n, channels).T.astype(np.float32), sr
 
 
+def _info_field(v):
+    """LIST/INFO 子块的值：UTF-8 + NUL 结尾，并按 RIFF 规则补齐到偶数长度。"""
+    b = v.encode("utf-8") + b"\x00"
+    return b + (b"\x00" if len(b) & 1 else b"")
+
+
+def append_info_chunk(path, tags):
+    """在 WAV 末尾追加 LIST/INFO 元数据块，并修正 RIFF 头里的文件长度。
+    用于把"这段音频经过了 AudioSR"写进文件信息（MediaInfo / ffprobe / 资源管理器属性都能看到）。"""
+    items = b"INFO"
+    for k, v in tags.items():
+        body = _info_field(v)
+        items += k[:4].encode("ascii") + len(body).to_bytes(4, "little") + body
+    chunk = b"LIST" + len(items).to_bytes(4, "little") + items
+
+    with open(path, "r+b") as f:
+        raw = f.read()
+        pad = b"\x00" if (len(raw) - 8) & 1 else b""   # RIFF 要求块总长为偶数
+        f.seek(4)
+        f.write((len(raw) - 8 + len(pad) + len(chunk)).to_bytes(4, "little"))
+        f.seek(0, os.SEEK_END)
+        if pad:
+            f.write(pad)
+        f.write(chunk)
+
+
+# 产物标记文案：AudioSR 处理过的音频必须带上这句，方便对外辨别音频处理来源。
+# 必须用**纯 ASCII 英文**：WAV 的 LIST/INFO 块没有统一的编码约定，媒体工具（MediaInfo 等）
+# 按本地代码页（中文系统 = GBK）解码，写 UTF-8 中文会显示成乱码。
+# 与 C# 侧（ProcessingOrchestrator 的 AudioSrMarkUsed / EmbedAudio 的 -metadata comment）保持一致，不要随意改动。
+EASY4K_AUDIO_MARK = ("This audio was super-resolved by the AudioSR module of Easy4K 2 Pro. "
+                     "Please verify the audio processing source carefully!")
+
+
 def write_wav(path, x, sr, bits=24):
-    """float32 [C,N] → PCM WAV"""
+    """float32 [C,N] → PCM WAV（并写入 AudioSR 处理来源标记）"""
     x = np.clip(x, -1.0, 1.0)
     ch = x.shape[0]
     flat = x.T.reshape(-1)
@@ -114,6 +147,13 @@ def write_wav(path, x, sr, bits=24):
         w.setframerate(sr)
         w.writeframes(payload)
     sec = len(payload) / (ch * bits // 8) / sr
+    try:
+        append_info_chunk(path, {
+            "ISFT": "Easy4K 2 Pro AudioSR",
+            "ICMT": EASY4K_AUDIO_MARK,
+        })
+    except Exception as ex:
+        warn(f"写入处理来源标记失败（不影响音频本身）：{ex}")
     log(f"已写出 {path}（{sr} Hz / {ch} 声道 / {bits} bit / {sec:.1f} s）")
 
 
@@ -170,41 +210,6 @@ class MelFront:
             out[s:s + mag.shape[1]] = np.log(np.maximum(mel, self.clip)).T
         return out
 
-    def freq_energy(self, y):
-        """沿频率累积的 |STFT| 能量（对帧求和）→ 判真实带宽"""
-        energy = None
-        for _, mag in self._blocks(y):
-            e = mag.sum(axis=1)
-            energy = e if energy is None else energy + e
-        return np.cumsum(energy)
-
-
-def lowpass_official(x, highcut, fs):
-    """官方 lowpass_filter：sosfiltfilt → 硬重采样带限 → sosfiltfilt"""
-    from scipy.signal import butter, cheby1, ellip, bessel, sosfiltfilt, resample_poly
-    hi = highcut / (0.5 * fs)
-    if LP_TYPE == "butter":
-        sos = butter(LP_ORDER, hi, btype="low", output="sos")
-    elif LP_TYPE == "cheby1":
-        sos = cheby1(LP_ORDER, 0.1, hi, btype="low", output="sos")
-    elif LP_TYPE == "ellip":
-        sos = ellip(LP_ORDER, 0.1, 60, hi, btype="low", output="sos")
-    else:
-        sos = bessel(LP_ORDER, hi, btype="low", output="sos")
-
-    def fit(y, n):
-        return np.pad(y, (0, n - len(y))) if len(y) < n else y[:n]
-
-    y = fit(sosfiltfilt(sos, x).astype(np.float32), len(x))
-    fs_down = int(hi * fs)                     # stft_hard_lowpass：降采样再升回来
-    if 1000 < fs_down < fs:
-        g = math.gcd(fs_down, fs)
-        y = resample_poly(y, fs_down // g, fs // g).astype(np.float32)
-        y = resample_poly(y, fs // g, fs_down // g).astype(np.float32)
-        y = fit(y, len(x))
-    y = fit(sosfiltfilt(sos, y).astype(np.float32), len(x))
-    return y
-
 
 def librosa_stft(x):
     """librosa.stft 默认参数：n_fft=2048 hop=512 hann(periodic) center=True pad=0"""
@@ -241,10 +246,81 @@ def librosa_istft(S, length):
         wss[i * LIB_HOP:i * LIB_HOP + LIB_N_FFT] += wsq
     nz = wss > 1e-10
     y[nz] /= wss[nz]
-    y = y[LIB_N_FFT // 2:len(y) - LIB_N_FFT // 2]
+    # 只去掉左侧居中填充；右端按请求长度裁剪，不能先丢掉最后半窗。
+    y = y[LIB_N_FFT // 2:LIB_N_FFT // 2 + length]
     if len(y) < length:
         y = np.pad(y, (0, length - len(y)))
     return y[:length].astype(np.float32)
+
+
+# ==================== 高频护栏（Easy4K 自研后处理） ====================
+# 为什么需要：扩散模型补出来的 8kHz 以上高频是"凭空生成"的。在源音频本来没有对应高频的
+# 时频位置，模型可能吐出一簇窄带尖峰，听感就是刺耳的高频哨声/嘶声。
+# 判定必须逐时频对照源音频，不能假设所有自然音乐的高频都平滑衰减。
+# 做法：8kHz 以下不处理；8kHz 以上，凡是明显超过源音频同一时频位置能量的部分才衰减；其余原样保留。
+HF_GUARD_FLOOR_HZ = 8000      # 保护带起点
+HF_GUARD_SOURCE_HEADROOM = 2.0  # 原始输入高频允许的额外余量（+6 dB）
+HF_GUARD_EDGE_BINS = 6           # 保护带起点处的过渡宽度，避免硬边
+
+
+def _moving_average(a, half):
+    """边界重复的滑动平均（用于趋势估计）。"""
+    if half < 1:
+        return a.astype(np.float64)
+    pad = np.pad(a.astype(np.float64), (half, half), mode="edge")
+    c = np.concatenate([[0.0], np.cumsum(pad)])
+    w = 2 * half + 1
+    return (c[w:] - c[:-w]) / w
+
+
+def suppress_hf_artifacts(y, x_ref, floor_hz=HF_GUARD_FLOOR_HZ, enabled=True):
+    """只抑制相对源音频新增的高频能量，避免误伤源音频已有音色。"""
+    if not enabled:
+        return y
+    n = min(y.shape[1], x_ref.shape[1])
+    if n < LIB_N_FFT * 4:
+        return y
+    bin_floor = int(floor_hz * LIB_N_FFT / SR)
+    out = []
+    max_cut = 1.0
+    for c in range(y.shape[0]):
+        o = y[c, :n].astype(np.float64)
+        r = x_ref[c if c < x_ref.shape[0] else 0, :n].astype(np.float64)
+        so = librosa_stft(o)
+        sr = librosa_stft(r)
+        ao, ar = np.abs(so), np.abs(sr)
+        # 用同一时间-频率格比较源与成品；源中已有的频率只保留，不按全曲趋势误删。
+        limit = np.maximum(ar * HF_GUARD_SOURCE_HEADROOM, 1e-8)
+        gain = np.minimum(1.0, limit / np.maximum(ao, 1e-8))
+        gain[:bin_floor, :] = 1.0
+        ramp = np.ones(ao.shape[0])
+        ramp[:bin_floor] = 0.0
+        for i in range(HF_GUARD_EDGE_BINS):
+            b = bin_floor + i
+            if b < ramp.size:
+                ramp[b] = (i + 1) / HF_GUARD_EDGE_BINS
+        gain = 1.0 - (1.0 - gain) * ramp[:, None]
+        if np.all(gain >= 0.999):
+            out.append(y[c, :n])
+            continue
+        max_cut = min(max_cut, float(gain.min()))
+        out.append(librosa_istft(so * gain, n))
+    cut_db = -20 * math.log10(max(max_cut, 1e-9))
+    log(f"高频护栏：仅限制相对源音频新增的 8kHz 以上能量，最大衰减 {cut_db:.1f} dB")
+    return np.stack(out).astype(np.float32)
+
+
+def restore_output_level(y, reference, reference_peak):
+    """恢复输入在重采样后的峰值；只在超过 PCM 范围时保留余量并限幅。"""
+    current_peak = float(np.max(np.abs(y)))
+    if current_peak <= 1e-8:
+        return y.astype(np.float32)
+    target_peak = min(float(reference_peak), 0.98)
+    y = y * (target_peak / current_peak)
+    peak = float(np.max(np.abs(y)))
+    if peak > 0.999:
+        y *= 0.999 / peak
+    return y.astype(np.float32)
 
 
 # ============================ ONNX ============================
@@ -262,19 +338,63 @@ def read_precision(models_dir):
         return "fp32"
 
 
-def open_sessions(models_dir, device, precision):
-    """→ (sessions, backend)。DirectML 优先。
-    fp32：DirectML 失败自动回退 CPU；fp16：不回退 CPU，直接报错退出（CPU 的 fp16 算子又少又慢）。"""
+ORT_PKG_ENV = "EASY4K_ORT_PKG"   # 强制指定 ORT 包的开关（切换后端重启时用）
+ORT_CUDA_DIRNAME = "ort-cuda"    # CUDA 版 ORT 包所在目录（与本脚本同级的子目录）
+
+
+def has_nvidia():
+    """本机是否有 NVIDIA 显卡。nvidia-smi 随驱动一起安装，是最省事可靠的判据。"""
+    if shutil.which("nvidia-smi"):
+        return True
+    root = os.environ.get("SystemRoot", r"C:\Windows")
+    return os.path.exists(os.path.join(root, "System32", "nvidia-smi.exe"))
+
+
+def prepare_ort():
+    """按显卡选择 ORT 包，返回包名。
+    CUDA 版（ort-cuda 目录）与 DirectML 版（便携 Python 自带）都叫 onnxruntime，无法共存，
+    只能在 import 之前用 sys.path 决定加载哪一个。"""
+    pkg = os.environ.get(ORT_PKG_ENV) or ("cuda" if has_nvidia() else "dml")
+    if pkg == "cuda":
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)), ORT_CUDA_DIRNAME)
+        capi = os.path.join(root, "onnxruntime", "capi")
+        # 包不完整时（例如传到一半）直接退回 DirectML：import 半截包会直接崩进程
+        if not (os.path.isfile(os.path.join(capi, "onnxruntime_providers_cuda.dll"))
+                and os.path.isfile(os.path.join(capi, "cudnn64_9.dll"))):
+            warn(f"CUDA 推理包不完整（{ORT_CUDA_DIRNAME}），改用 DirectML 后端")
+            return "dml"
+        if hasattr(os, "add_dll_directory") and os.path.isdir(capi):
+            os.add_dll_directory(capi)
+        # cuDNN 9 的前端在运行时还会自己 LoadLibrary 后端库（cudnn_graph64_9 等），
+        # 这一步不走 add_dll_directory，必须让 capi 出现在 PATH 里才找得到，否则会崩进程
+        os.environ["PATH"] = capi + os.pathsep + os.environ.get("PATH", "")
+        sys.path.insert(0, root)
+        return "cuda"
+    return "dml"
+
+
+def open_sessions(models_dir, device):
+    """→ (sessions, backend)。
+    后端逐级尝试：NVIDIA 上 CUDA → DirectML → CPU；其它显卡上 DirectML → CPU。
+    权重包（fp16/fp32）由调用方按用户选择决定，后端降级不改变精度。
+    三级后端都起不来时才报错退出。"""
+    pkg = prepare_ort()
     import onnxruntime as ort
 
-    def build(providers):
+    def build(providers, want_ep=None):
         so = ort.SessionOptions()
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         if providers[0][0] == "DmlExecutionProvider":
             so.enable_mem_pattern = False
-        return {k: ort.InferenceSession(os.path.join(models_dir, v), so, providers=providers)
-                for k, v in GRAPHS.items()}, providers[0][0]
+        sess = {k: ort.InferenceSession(os.path.join(models_dir, v), so, providers=providers)
+                for k, v in GRAPHS.items()}
+        if want_ep is not None:
+            # ORT 在 EP 初始化失败时不会报错，而是静默改跑 CPU，必须核对真实生效的 provider
+            used = sess["ddpm"].get_providers()
+            if want_ep not in used:
+                raise RuntimeError(f"{want_ep} 未生效（实际使用 {'、'.join(used)}）")
+        return sess, providers[0][0]
 
     def probe(sess, backend):
         """解码器 + UNet 各跑一次最小推理：权重包不匹配时输出会是非有限值。"""
@@ -287,30 +407,48 @@ def open_sessions(models_dir, device, precision):
             raise RuntimeError("UNet(ddpm) 输出全为非有限值：图与权重 .data 不匹配"
                                "（常见于 fp16 图配了 fp32 数据，请检查权重包）")
 
-    has_dml = "DmlExecutionProvider" in ort.get_available_providers()
-    if device in ("auto", "dml") and has_dml:
+    avail = ort.get_available_providers()
+    log(f"onnxruntime {ort.__version__}（{pkg} 包）可用后端：{', '.join(avail)}")
+
+    order = []
+    if device in ("auto", "cuda"):
+        order.append(("CUDAExecutionProvider", "CUDA(GPU)"))
+    if device in ("auto", "dml"):
+        order.append(("DmlExecutionProvider", "DirectML(GPU)"))
+
+    for ep, tag in order:
+        if ep not in avail:
+            continue
         try:
-            sess, tag = build([("DmlExecutionProvider", {"device_id": 0}), "CPUExecutionProvider"])
-            probe(sess, "DirectML")
-            return sess, "DirectML(GPU)"
+            sess, _ = build([(ep, {"device_id": 0}), "CPUExecutionProvider"], want_ep=ep)
+            probe(sess, tag)
+            return sess, tag
         except Exception as e:
-            warn(f"DirectML 不可用（{type(e).__name__}: {e}）")
-    elif device == "dml":
-        warn("onnxruntime 没有 DmlExecutionProvider")
+            warn(f"{tag} 不可用（{type(e).__name__}: {e}）")
+            # CUDA 包内没有 DirectML 后端，要退到 DX12 只能换成另一个包重跑一次
+            if ep == "CUDAExecutionProvider" and os.environ.get(ORT_PKG_ENV) != "dml":
+                log("改用 DirectML 后端重新运行（进程重启一次）")
+                os.environ[ORT_PKG_ENV] = "dml"
+                sys.stdout.flush()
+                sys.stderr.flush()
+                os.execv(sys.executable, [sys.executable] + sys.argv)
 
-    if precision == "fp16":
-        # CPU 的 fp16 内核覆盖极差（官方原话：far fewer fp16 kernels, often slower），拒绝运行
-        warn("fp16 权重包禁止在 CPU 上运行（CPU 的 fp16 算子又少又慢），请改用 FP32 模式或检查显卡驱动")
-        sys.exit(EXIT_NO_GPU_FOR_FP16)
+    if device in ("cuda", "dml") and not any(ep in avail for ep, _ in order):
+        warn(f"onnxruntime 没有 {device} 对应的 ExecutionProvider")
 
-    warn("回退 CPU 推理（fp32 权重包，速度明显慢于 GPU，仅作兜底）")
-    sess, tag = build(["CPUExecutionProvider"])
-    probe(sess, "CPU")
+    warn("回退 CPU 推理（速度明显慢于显卡，仅作兜底）")
+    try:
+        sess, _ = build(["CPUExecutionProvider"], want_ep="CPUExecutionProvider")
+        probe(sess, "CPU")
+    except Exception as e:
+        warn(f"CPU 后端也无法启动（{type(e).__name__}: {e}）")
+        warn("CUDA / DirectML / CPU 三级后端均不可用，音频超分无法进行")
+        sys.exit(EXIT_ALL_BACKENDS_FAILED)
     return sess, "CPU"
 
 
 class AudioSR:
-    def __init__(self, models_dir, device, steps, guidance, seed, overlap, precision):
+    def __init__(self, models_dir, device, steps, guidance, seed, overlap):
         with open(os.path.join(models_dir, "manifest.json"), "r", encoding="utf-8") as f:
             self.mf = json.load(f)
         self.window_seconds = float(self.mf.get("window_seconds", 5.12))
@@ -327,8 +465,7 @@ class AudioSR:
         self.guidance = float(guidance)
         self.overlap = float(overlap)
         self.rng = np.random.default_rng(seed)
-        self.precision = precision
-        self.sess, self.backend = open_sessions(models_dir, device, precision)
+        self.sess, self.backend = open_sessions(models_dir, device)
 
         # 官方 make_ddim_timesteps("uniform") + make_ddim_sampling_parameters(eta)
         eta = float(sc.get("eta", 1.0))
@@ -370,7 +507,7 @@ class AudioSR:
         return x
 
     def run_window(self, cond_mel, gt_wave, mel_cutoff, wave_cutoff, on_step=None):
-        """单声道一个窗口：cond_mel [1,frames,256]（低通音频的 log-mel）；gt_wave [1,N]（低通音频）"""
+        """单声道一个窗口：cond_mel [1,frames,256]（输入音频的 log-mel）；gt_wave [1,N]（输入音频）"""
         frames = cond_mel.shape[1]
         lat_t = frames // self.vae_down
         noise = self.rng.standard_normal((1, self.n_latent, lat_t, self.f_size)).astype(np.float32)
@@ -398,60 +535,42 @@ class AudioSR:
 # ============================ 主流程 ============================
 
 def process_file(input_path, output_path, models_dir=None, steps=50, guidance=3.5, seed=42,
-                 overlap=0.5, lowpass="auto", channels="auto", device="auto",
-                 bits=24, window=None):
-    """可调用的完整流程：读音频 → 低通 → 分窗推理 → 写 48kHz WAV。
+                 overlap=0.5, channels="auto", device="auto",
+                 bits=24, window=None, no_hf_guard=False):
+    """可调用的完整流程：读音频 → 分窗推理 → 低频回填 → 高频护栏 → 写 48kHz WAV。
     （命令行入口 main() 只是解析参数后调用本函数，两条路径行为完全一致。）
     """
-    global LP_TYPE, LP_ORDER
     models_dir = models_dir or os.path.dirname(os.path.abspath(__file__))
     # 参数打包成命名空间，保持与命令行版本逐字一致，避免两处逻辑漂移
     a = argparse.Namespace(
         input=input_path, output=output_path, models=models_dir,
-        steps=steps, guidance=guidance, seed=seed, overlap=overlap, lowpass=lowpass,
-        channels=channels, device=device, bits=bits, window=window)
+        steps=steps, guidance=guidance, seed=seed, overlap=overlap,
+        channels=channels, device=device, bits=bits, window=window, no_hf_guard=no_hf_guard)
 
     t0 = time.time()
     precision = read_precision(a.models)
-    eng = AudioSR(a.models, a.device, a.steps, a.guidance, a.seed, a.overlap, precision)
+    eng = AudioSR(a.models, a.device, a.steps, a.guidance, a.seed, a.overlap)
     if a.window:
         eng.window_seconds = float(a.window)
     log(f"权重包 {precision} / 后端 {eng.backend} / DDIM {eng.steps} 步 / CFG {eng.guidance} / "
         f"窗口 {eng.window_seconds}s / 重叠 {a.overlap:.0%} / 种子 {a.seed}")
+    log("高频护栏：已启用（限制相对源音频新增的 8kHz 以上能量）" if not a.no_hf_guard
+        else "高频护栏：已按参数关闭")
 
     x, sr = read_wav(a.input)
     log(f"读入 {os.path.basename(a.input)}：{sr} Hz / {x.shape[0]} 声道 / {x.shape[1] / sr:.1f} s")
     if a.channels == "mono" and x.shape[0] > 1:
         x = x.mean(axis=0, keepdims=True)
     x = resample(x, sr, SR)
+    source_peak = float(np.max(np.abs(x)))
+    if source_peak <= 1e-8:
+        raise ValueError("输入音频没有有效信号")
 
-    # 官方 read_wav_file：去均值 → 峰值归一化到 0.5
-    x = x - x.mean(axis=-1, keepdims=True)
+    # 模型内部仍使用官方 0.5 峰值；source_peak 用于最终恢复原始响度。
+    x = (x - x.mean(axis=-1, keepdims=True)).astype(np.float32)
     x = (x / (float(np.max(np.abs(x))) + 1e-8) * 0.5).astype(np.float32)
 
-    # 低通（官方 _locate_cutoff_freq + np.random.choice；cutoff<1kHz 视为空音频不滤）
-    bin_idx = find_cutoff_bin(eng.front.freq_energy(x.mean(axis=0)), 0.985)
-    cutoff_hz = bin_idx * SR / eng.front.n_fft
-    need_lp = True
-    if a.lowpass == "off":
-        need_lp, cutoff_hz = False, 24000.0
-    elif a.lowpass != "auto":
-        cutoff_hz = float(a.lowpass)
-    elif cutoff_hz < 1000:
-        need_lp, cutoff_hz = False, 24000.0
-    log(f"频谱判定真实带宽 ≈ {bin_idx * SR / eng.front.n_fft:.0f} Hz → "
-        + (f"低通到 {cutoff_hz:.0f} Hz" if need_lp else "不做低通（按 24 kHz 处理）"))
-
-    np.random.seed(a.seed)                        # 官方：choice 是 seed 后第一次取随机数
-    LP_TYPE = str(np.random.choice(["butter", "cheby1", "ellip", "bessel"]))
-    LP_ORDER = int(eng.mf.get("lowpass", {}).get("order", 8))
-
-    if need_lp:
-        log(f"低通中（{LP_TYPE} order={LP_ORDER}，{x.shape[1] / SR:.0f}s × {x.shape[0]} 声道）…")
-        lp = np.stack([lowpass_official(c, cutoff_hz, SR) for c in x])
-    else:
-        lp = x.copy()
-    log(f"低通完成 {time.time() - t0:.1f}s")
+    # 不做低通：按完整带宽送进模型，保留原始高频（低通会把截止频率以上的内容整段砍掉）
 
     # 分窗：窗口 = win_frames 个 mel 帧（帧数必须能被 VAE 下采样 8 整除）
     win_frames = int(round(eng.window_seconds * 100))            # 100 mel 帧/秒
@@ -459,23 +578,28 @@ def process_file(input_path, output_path, models_dir=None, steps=50, guidance=3.
     pad_dur = math.ceil(dur / eng.window_seconds) * eng.window_seconds
     total_frames = int(round(pad_dur * 100))
     n_pad = int(SR * pad_dur)
-    x = np.pad(x, ((0, 0), (0, max(0, n_pad - x.shape[1]))))
-    lp = np.pad(lp, ((0, 0), (0, max(0, n_pad - lp.shape[1]))))
-
-    # 每声道分别取低通后的 log-mel（对齐官方 wav_feature_extraction + pad_spec）
-    lp_mel = []
-    for c in range(lp.shape[0]):
-        m = eng.front.log_mel(lp[c])
+    # 末尾必须用「边缘延拓」而不是补零：补零会让最后一个窗口看到一段静音，而静音的 log-mel
+    # 会被 clamp 到 log(1e-5) = -11.5129，与 manifest 的无条件值 uncond_value = -11.4981 只差 0.015，
+    # 于是 CFG 的 v = v_u + 3.5*(v_t - v_u) 退化成纯无条件采样 —— 模型在没有任何音频线索的情况下
+    # 自由发挥，吐出结构化的高频噪声；且每个声道独立抽噪声（self.rng），左右声道互不相关，
+    # 听感就是"结尾/某一段突然炸出一片高频"。边缘延拓让该窗口始终看到延续的真实音频，条件不退化。
+    n_tail = max(0, n_pad - x.shape[1])
+    if n_tail:
+        x = np.pad(x, ((0, 0), (0, n_tail)), mode="edge")
+    # 每声道分别取 log-mel（对齐官方 wav_feature_extraction + pad_spec）
+    in_mel = []
+    for c in range(x.shape[0]):
+        m = eng.front.log_mel(x[c])
         if m.shape[0] < total_frames:
             m = np.pad(m, ((0, total_frames - m.shape[0]), (0, 0)))
-        lp_mel.append(m[:total_frames])
-    lp_mel = np.stack(lp_mel)                                    # [C, frames, 256]
-    log("低通音频特征提取完成")
+        in_mel.append(m[:total_frames])
+    in_mel = np.stack(in_mel)                                    # [C, frames, 256]
+    log("模型输入特征提取完成")
 
     # 低频回填截止（mel 域：官方 mel_replace_ops；波形域：官方 _get_cutoff_index_np）
-    lin = np.exp(lp_mel.astype(np.float64))
+    lin = np.exp(in_mel.astype(np.float64))
     mel_cutoff = find_cutoff_bin(np.cumsum(lin.sum(axis=1).mean(axis=0)), 0.985)
-    wave_cutoff = find_cutoff_bin(librosa_freq_energy(lp.mean(axis=0)), 0.985)
+    wave_cutoff = find_cutoff_bin(librosa_freq_energy(x.mean(axis=0)), 0.985)
     log(f"低频回填：mel bin {mel_cutoff}/256、STFT bin {wave_cutoff}/1024"
         f"（≈{wave_cutoff * SR / 2048.0:.0f} Hz）")
 
@@ -492,11 +616,11 @@ def process_file(input_path, output_path, models_dir=None, steps=50, guidance=3.
     ramp = np.maximum(hann_periodic(win_len).astype(np.float64), 1e-3)   # 交叉淡入淡出权重
 
     def finalize():
-        """交叉淡入淡出归一化 + 去均值 + 峰值归一到 0.5（与官方 generate_batch 一致）"""
+        """交叉淡入淡出归一化、高频保护、去均值并恢复输入响度。"""
         y = (acc / np.where(wsum < 1e-6, 1.0, wsum))[:, :int(round(dur * SR))]
+        y = suppress_hf_artifacts(y, x[:, :y.shape[1]], enabled=not a.no_hf_guard)
         y = y - y.mean(axis=-1, keepdims=True)
-        m = float(np.max(np.abs(y)))
-        return (y / m * 0.5) if m > 0 else y
+        return restore_output_level(y, x[:, :y.shape[1]], source_peak)
 
     # 步级进度：把「第几窗 × 第几个声道 × 第几步」折算成整体百分比。
     # 单个窗口就要跑几十秒，只按窗口上报的话进度条会长时间钉在 0%；
@@ -521,12 +645,12 @@ def process_file(input_path, output_path, models_dir=None, steps=50, guidance=3.
     for n, f0 in enumerate(starts):
         ts = time.time()
         s0 = f0 * 480
-        gt = lp[:, s0:s0 + win_len]
+        gt = x[:, s0:s0 + win_len]
         if gt.shape[1] < win_len:
             gt = np.pad(gt, ((0, 0), (0, win_len - gt.shape[1])))
-        outs = [eng.run_window(lp_mel[c, f0:f0 + win_frames][None].astype(np.float32),
+        outs = [eng.run_window(in_mel[c, f0:f0 + win_frames][None].astype(np.float32),
                                gt[c:c + 1], mel_cutoff, wave_cutoff, step_cb(n, c))
-                for c in range(lp.shape[0])]
+                for c in range(x.shape[0])]
         m = min(win_len, outs[0].shape[0], acc.shape[1] - s0)
         w = ramp[:m]
         for c, o in enumerate(outs):
@@ -562,14 +686,15 @@ def main():
     ap.add_argument("--guidance", type=float, default=3.5, help="CFG 强度（官方 3.5）")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--overlap", type=float, default=0.5, help="相邻窗口重叠 0~0.75")
-    ap.add_argument("--lowpass", default="auto", help="auto / off / 截止Hz")
     ap.add_argument("--channels", default="auto", choices=["auto", "mono"])
-    ap.add_argument("--device", default="auto", choices=["auto", "dml", "cpu"])
+    ap.add_argument("--device", default="auto", choices=["auto", "cuda", "dml", "cpu"])
     ap.add_argument("--bits", type=int, default=24, choices=[16, 24, 32])
     ap.add_argument("--window", type=float, default=None, help="窗口秒数，默认取 manifest")
+    ap.add_argument("--no-hf-guard", action="store_true",
+                    help="关闭高频护栏（默认开启；仅在需要原始产物做 A/B 对比时使用）")
     a = ap.parse_args()
     process_file(a.input, a.output, a.models, a.steps, a.guidance, a.seed, a.overlap,
-                 a.lowpass, a.channels, a.device, a.bits, a.window)
+                 a.channels, a.device, a.bits, a.window, a.no_hf_guard)
 
 
 if __name__ == "__main__":

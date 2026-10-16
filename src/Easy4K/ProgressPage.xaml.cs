@@ -33,6 +33,24 @@ public sealed partial class ProgressPage : Page
     /// <summary>是否已订阅 ViewModel/Logger 事件（Loaded 可能多次触发，重复订阅会让每条日志/进度出现两次）</summary>
     private bool _subscribed;
 
+    /// <summary>涡轮模式：预览区的一格流水（图像 + 下方标注），按流水标识复用</summary>
+    private sealed class PipelinePane
+    {
+        public required Image Image { get; init; }
+        public required TextBlock Label { get; init; }
+        /// <summary>当前已请求显示的帧路径（用于跳过重复解码、丢弃过期结果）</summary>
+        public string Path = "";
+        /// <summary>本格上次解码时间（每格各自节流，避免几张图互相挤掉）</summary>
+        public long LastTick;
+        /// <summary>本格解码序号：慢解码完成后若已有更新的帧，直接丢弃</summary>
+        public int Seq;
+    }
+
+    /// <summary>涡轮模式的流水预览格子（键 = 流水标识 dedup/sr/if）</summary>
+    private readonly Dictionary<string, PipelinePane> _panes = new();
+    /// <summary>格子顺序（与流水编号一致）：顺序或数量变化时才重建布局</summary>
+    private readonly List<string> _paneOrder = new();
+
     public ProgressPage()
     {
         InitializeComponent();
@@ -40,15 +58,22 @@ public sealed partial class ProgressPage : Page
         Unloaded += OnUnloaded;
     }
 
+    /// <summary>日志展示区维护的行缓冲（最多 200 行；超长单行会被截断后展示）</summary>
+    private readonly List<string> _logLines = new();
+    private const int MaxLogLines = 200;
+    /// <summary>单行展示上限：外部工具的 stderr 偶尔会吐一整屏，超长单行会让 TextBox 排版卡死</summary>
+    private const int MaxLogLineChars = 1200;
+
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         // 回填订阅前已产生的日志（重新启动时"开始处理/命令"等开头几行可能在订阅前写入，避免丢失）
         try
         {
-            var sb = new System.Text.StringBuilder();
+            _logLines.Clear();
             foreach (var entry in Vm.Logger.LogEntries)
-                sb.AppendLine(entry.LogText);
-            CommandLogBox.Text = sb.ToString().TrimEnd('\r', '\n');
+                _logLines.Add(TrimLogLine(entry.LogText));
+            TrimLogLines();
+            CommandLogBox.Text = string.Join("\r\n", _logLines);
             if (CommandLogBox.Text.Length > 0) DispatcherQueue.TryEnqueue(ScrollLogToBottom);
         }
         catch { }
@@ -56,7 +81,7 @@ public sealed partial class ProgressPage : Page
         {
             Vm.ProgressChanged += OnProgress;
             Vm.CleanRequested += OnCleanRequested;
-            Vm.Logger.EntryAdded += OnLogEntryAdded;
+            Vm.Logger.EntriesAdded += OnLogEntriesAdded;
             Vm.Logger.Cleared += OnLogCleared;
             Vm.PropertyChanged += OnVmPropertyChanged;
             _subscribed = true;
@@ -70,7 +95,7 @@ public sealed partial class ProgressPage : Page
         if (!_subscribed) return;
         Vm.ProgressChanged -= OnProgress;
         Vm.CleanRequested -= OnCleanRequested;
-        Vm.Logger.EntryAdded -= OnLogEntryAdded;
+        Vm.Logger.EntriesAdded -= OnLogEntriesAdded;
         Vm.Logger.Cleared -= OnLogCleared;
         Vm.PropertyChanged -= OnVmPropertyChanged;
         _subscribed = false;
@@ -79,7 +104,11 @@ public sealed partial class ProgressPage : Page
     /// <summary>日志被清空（含 MainPage 的 Ctrl+L）→ 同步清空本页日志框，避免"日志已清但界面还留着"</summary>
     private void OnLogCleared()
     {
-        DispatcherQueue.TryEnqueue(() => CommandLogBox.Text = "");
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _logLines.Clear();
+            CommandLogBox.Text = "";
+        });
     }
 
     /// <summary>清空预览并让在途解码作废（同时释放 Image 对帧文件的引用，方便清理临时文件）。</summary>
@@ -91,6 +120,7 @@ public sealed partial class ProgressPage : Page
         _compareSeq++;
         _verdictSeq++;
         SetCompareMode(false);
+        ClearPipelinePanes();
         PreviewHint.Visibility = Visibility.Visible;
     }
 
@@ -104,7 +134,8 @@ public sealed partial class ProgressPage : Page
     /// 预览阻断（合并/HDR/音频阶段）→ 清空当前预览图并释放帧文件句柄。</summary>
     private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(Vm.IsPaused) || e.PropertyName == nameof(Vm.IsProcessing))
+        if (e.PropertyName == nameof(Vm.IsPaused) || e.PropertyName == nameof(Vm.IsProcessing)
+            || e.PropertyName == nameof(Vm.SfRunning))
             UpdatePauseButton();
         if (e.PropertyName == nameof(Vm.ShowPreview))
             UpdatePreviewVisibility();
@@ -126,38 +157,44 @@ public sealed partial class ProgressPage : Page
         }
         else
         {
-            PreviewHint.Visibility = string.IsNullOrEmpty(_lastPreviewPath) ? Visibility.Visible : Visibility.Collapsed;
+            // 涡轮模式已经有流水格子时不要再压一行提示文字
+            var hasContent = _panes.Count > 0 || !string.IsNullOrEmpty(_lastPreviewPath);
+            PreviewHint.Visibility = hasContent ? Visibility.Collapsed : Visibility.Visible;
         }
     }
 
     private void UpdatePauseButton()
     {
         PauseBtn.Content = Vm.IsPaused ? "继续" : "暂停";
-        PauseBtn.IsEnabled = Vm.IsProcessing;
+        PauseBtn.IsEnabled = Vm.CanPause;
     }
 
-    /// <summary>新日志直接追加到 TextBox 文本（不闪烁），自动滚底，超上限裁剪最早行</summary>
-    private void OnLogEntryAdded(LogEntry entry)
+    /// <summary>批量日志到达 → 追加进行缓冲，整段文本只重建一次并滚到底。
+    /// 原先每行一次：split 200 行 + join + TextBox.Text 全量重排 + 额外一次滚动的 TryEnqueue，
+    /// 日志一密就把 UI 线程占满（低主频 CPU 上表现为界面"死锁"）。</summary>
+    private void OnLogEntriesAdded(IReadOnlyList<LogEntry> entries)
     {
         DispatcherQueue.TryEnqueue(() =>
         {
             try
             {
-                var newText = CommandLogBox.Text.Length > 0
-                    ? CommandLogBox.Text + "\r\n" + entry.LogText
-                    : entry.LogText;
-
-                const int maxLines = 200;
-                var lines = newText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
-                if (lines.Length > maxLines)
-                    newText = string.Join("\r\n", lines, lines.Length - maxLines, maxLines);
-
-                CommandLogBox.Text = newText;
-                // 布局更新后滚到底部（只读 TextBox 用内部 ScrollViewer 滚动）
-                DispatcherQueue.TryEnqueue(ScrollLogToBottom);
+                foreach (var e in entries) _logLines.Add(TrimLogLine(e.LogText));
+                TrimLogLines();
+                CommandLogBox.Text = string.Join("\r\n", _logLines);
+                ScrollLogToBottom();
             }
             catch { }
         });
+    }
+
+    /// <summary>单行过长时截断展示（完整内容仍在 Logger 的完整日志里，导出/报告不受影响）</summary>
+    private static string TrimLogLine(string line)
+        => line.Length <= MaxLogLineChars ? line : line[..MaxLogLineChars] + " …（超长已截断）";
+
+    private void TrimLogLines()
+    {
+        if (_logLines.Count > MaxLogLines)
+            _logLines.RemoveRange(0, _logLines.Count - MaxLogLines);
     }
 
     /// <summary>把命令日志滚动到底部</summary>
@@ -190,6 +227,14 @@ public sealed partial class ProgressPage : Page
         {
             // 关闭图片预览时不再加载帧
             if (!Vm.ShowPreview) return;
+
+            // 涡轮模式：预览区按"流水"并排显示（一格一条流水，各自的最新帧互不覆盖）
+            if (p.Pipelines.Count > 0)
+            {
+                ShowPipelinePanes(p.Pipelines);
+                return;
+            }
+            if (_panes.Count > 0) ClearPipelinePanes();   // 涡轮结束 → 回到普通单图/三联
 
             // 帧去重阶段：左「判决帧」+ 中「对比帧」+ 右「筛选帧」三联（一进入去重就摆好布局）；其他阶段只有单图
             if (p.FrameCompareMode != _compareMode) SetCompareMode(p.FrameCompareMode);
@@ -318,6 +363,129 @@ public sealed partial class ProgressPage : Page
         {
             // 预览失败不影响处理流程（帧可能刚好被搬走/删除）；出问题时便于从调试输出定位
             System.Diagnostics.Debug.WriteLine($"[Preview] 帧加载失败 {path}: {ex.Message}");
+        }
+    }
+
+    // ===================== 涡轮模式：一格一条流水的并行预览 =====================
+
+    /// <summary>刷新涡轮预览：按流水清单建好格子（数量/顺序变化时才重建），再各自更新标注与图像。</summary>
+    private void ShowPipelinePanes(IReadOnlyList<PipelineFramePreview> pipelines)
+    {
+        EnsurePipelinePanes(pipelines);
+        if (SinglePreviewHost.Visibility != Visibility.Collapsed)
+        {
+            SetCompareMode(false);       // 复位三联布局并释放其帧文件引用（留在那儿只会误导，也占着句柄）
+            SinglePreviewHost.Visibility = Visibility.Collapsed;
+            PipelinePreviewHost.Visibility = Visibility.Visible;
+            PreviewImage.Source = null;
+        }
+        PreviewHint.Visibility = Visibility.Collapsed;
+        UpdatePipelinePanes(pipelines);
+    }
+
+    /// <summary>按流水数量与顺序重建格子布局（等宽并排，每格下方是标注）。</summary>
+    private void EnsurePipelinePanes(IReadOnlyList<PipelineFramePreview> pipelines)
+    {
+        var same = pipelines.Count == _paneOrder.Count;
+        if (same)
+        {
+            for (var i = 0; i < pipelines.Count; i++)
+            {
+                if (pipelines[i].Key != _paneOrder[i]) { same = false; break; }
+            }
+        }
+        if (same) return;
+
+        PipelinePreviewHost.Children.Clear();
+        PipelinePreviewHost.ColumnDefinitions.Clear();
+        _panes.Clear();
+        _paneOrder.Clear();
+
+        for (var i = 0; i < pipelines.Count; i++)
+        {
+            PipelinePreviewHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var root = new Grid { Margin = new Thickness(i == 0 ? 0 : 4, 0, 0, 0) };
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var image = new Image { Stretch = Stretch.Uniform };
+            var label = new TextBlock
+            {
+                FontSize = 12,
+                Opacity = 0.65,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(0, 3, 0, 0)
+            };
+            Grid.SetRow(image, 0);
+            Grid.SetRow(label, 1);
+            root.Children.Add(image);
+            root.Children.Add(label);
+            Grid.SetColumn(root, i);
+            PipelinePreviewHost.Children.Add(root);
+
+            _panes[pipelines[i].Key] = new PipelinePane { Image = image, Label = label };
+            _paneOrder.Add(pipelines[i].Key);
+        }
+    }
+
+    /// <summary>更新各格标注与图像：标注带帧号，图像每格各自节流、过期即丢弃。</summary>
+    private void UpdatePipelinePanes(IReadOnlyList<PipelineFramePreview> pipelines)
+    {
+        foreach (var p in pipelines)
+        {
+            if (!_panes.TryGetValue(p.Key, out var pane)) continue;
+            pane.Label.Text = p.FrameIndex > 0 ? $"{p.Label} · 第 {p.FrameIndex} 帧" : p.Label;
+
+            if (string.IsNullOrEmpty(p.FramePath) || p.FramePath == pane.Path) continue;
+            pane.Path = p.FramePath;
+            var now = Environment.TickCount64;
+            if (now - pane.LastTick < 100) continue;   // 同格 100ms 内只解一张，避免几张图互相挤掉
+            pane.LastTick = now;
+            LoadPaneImageAsync(pane, p.FramePath);
+        }
+    }
+
+    /// <summary>清空涡轮流水格子并回到普通预览布局。</summary>
+    private void ClearPipelinePanes()
+    {
+        if (_panes.Count == 0 && PipelinePreviewHost.Children.Count == 0) return;
+        PipelinePreviewHost.Children.Clear();
+        PipelinePreviewHost.ColumnDefinitions.Clear();
+        _panes.Clear();
+        _paneOrder.Clear();
+        PipelinePreviewHost.Visibility = Visibility.Collapsed;
+        SinglePreviewHost.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>解一张流水帧图。与三联预览同一套要点：读文件在后台线程、不持有文件句柄、限制解码宽度、
+    /// 慢解码完成后若该格已有更新的帧就丢弃。</summary>
+    private async void LoadPaneImageAsync(PipelinePane pane, string path)
+    {
+        var seq = ++pane.Seq;
+        try
+        {
+            byte[] bytes;
+            try { bytes = await Task.Run(() => File.ReadAllBytes(path)); }
+            catch { return; }   // 帧可能刚被搬走或正在写入
+
+            var bmp = new BitmapImage { DecodePixelWidth = PreviewDecodeWidth };
+            using (var ms = new InMemoryRandomAccessStream())
+            {
+                await ms.WriteAsync(bytes.AsBuffer());
+                ms.Seek(0);
+                await bmp.SetSourceAsync(ms);
+            }
+
+            // 期间已有更新的帧 / 已清空 / 预览被关掉 → 丢弃本次结果
+            if (!Vm.ShowPreview || seq != pane.Seq || pane.Path != path) return;
+            pane.Image.Source = bmp;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Preview] 流水帧加载失败 {path}: {ex.Message}");
         }
     }
 

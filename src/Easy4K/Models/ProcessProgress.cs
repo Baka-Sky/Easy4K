@@ -24,8 +24,27 @@ public sealed class ProcessProgress
     public string DegradeNotice { get; set; } = "";
     /// <summary>进度以百分比显示（如 HDR 转换），false 时按帧数显示</summary>
     public bool PercentDisplay { get; set; }
+    /// <summary>涡轮模式：并行流水线的实时预览帧（每条流水一项）。非空时预览区按流水并排显示，一格一条流水。</summary>
+    public IReadOnlyList<PipelineFramePreview> Pipelines { get; set; } = Array.Empty<PipelineFramePreview>();
+    /// <summary>自定义明细文本（涡轮模式统一进度用）：非空时直接作为 DetailText，不再拼接帧数。</summary>
+    public string CustomDetail { get; set; } = "";
     public double Percent => Total > 0 ? Math.Clamp(Current * 100.0 / Total, 0, 100) : 0;
-    public string DetailText => Total > 0
-        ? (PercentDisplay ? $"{StageText} {Current}%" : $"{StageText} 第{Current}帧/共{Total}帧")
-        : StageText;
+    public string DetailText => !string.IsNullOrEmpty(CustomDetail)
+        ? CustomDetail
+        : Total > 0
+            ? (PercentDisplay ? $"{StageText} {Current}%" : $"{StageText} 第{Current}帧/共{Total}帧")
+            : StageText;
+}
+
+/// <summary>涡轮模式：一条并行流水线的实时预览（预览区一格一条流水，各流水的最新帧互不覆盖）。</summary>
+public sealed class PipelineFramePreview
+{
+    /// <summary>流水线标识（dedup / sr / if），供预览区按标识复用同一格</summary>
+    public string Key { get; init; } = "";
+    /// <summary>格子下方的标注，如「流水线 2（超分）」</summary>
+    public string Label { get; init; } = "";
+    /// <summary>该流水最新产出帧的文件路径（空 = 尚无产出）</summary>
+    public string FramePath { get; init; } = "";
+    /// <summary>最新产出帧的原始帧号（供标注显示；0 = 未知）</summary>
+    public long FrameIndex { get; init; }
 }
