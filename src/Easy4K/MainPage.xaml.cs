@@ -1,6 +1,7 @@
 using System.IO;
 using Easy4K.Services;
 using Easy4K.Services.CommandBuilders;
+using Easy4K.Services.RemoteControl;
 using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -306,7 +307,18 @@ public sealed partial class MainPage : Page
         }
     }
     private async void OnBrowseTemp(object sender, RoutedEventArgs e) => await PickTempFolderAsync();
-    private async void OnBrowseOutput(object sender, RoutedEventArgs e) => await PickFolderAsync(p => Vm.SetOutputRoot(p));
+
+    private async void OnBrowseOutput(object sender, RoutedEventArgs e)
+    {
+        // 遥控远端：输出目录在对方电脑上
+        if (RemoteSession.IsActive)
+        {
+            var picked = await App.MainWindow.PickRemotePathAsync(folder: true, kind: "video", start: Vm.OutputRoot);
+            if (!string.IsNullOrWhiteSpace(picked)) Vm.SetOutputRoot(picked); // 属性变化会自动下发到远端
+            return;
+        }
+        await PickFolderAsync(p => Vm.SetOutputRoot(p));
+    }
 
     private async void OnExtractAudio(object sender, RoutedEventArgs e)
     {
@@ -368,6 +380,18 @@ public sealed partial class MainPage : Page
 
     private async Task ImportFrameFolderAsync()
     {
+        // 遥控远端：帧文件夹在对方电脑上，去对方的磁盘里挑（校验由远端做）
+        if (RemoteSession.IsActive)
+        {
+            var remote = await App.MainWindow.PickRemotePathAsync(folder: true, kind: "video", start: Vm.ExternalFramesDir);
+            if (string.IsNullOrWhiteSpace(remote)) return;
+            var prevRemote = Vm.ExternalFramesDir;
+            await Vm.ImportFrameFolderAsync(remote); // 内部转发到远端
+            if (Vm.HasExternalFrames && Vm.ExternalFramesDir != prevRemote)
+                await ShowFrameParamsDialogAsync();
+            return;
+        }
+
         var picker = new FolderPicker();
         InitializePicker(picker);
         picker.FileTypeFilter.Add("*");
@@ -400,6 +424,18 @@ public sealed partial class MainPage : Page
         _pickVideoOpen = true;
         try
         {
+            // 遥控远端：去对方电脑的磁盘里挑（本机文件选择器看不到对方的文件）
+            if (RemoteSession.IsActive)
+            {
+                var remote = await App.MainWindow.PickRemotePathAsync(folder: false, kind: "video", start: null);
+                if (!string.IsNullOrWhiteSpace(remote))
+                {
+                    _lastVideoPath = remote;
+                    await Vm.SetInputVideoAsync(remote);
+                }
+                return;
+            }
+
             var picker = new FileOpenPicker();
             InitializePicker(picker);
             picker.FileTypeFilter.Add(".mp4");
@@ -432,6 +468,13 @@ public sealed partial class MainPage : Page
     /// <summary>选择临时目录：检测 cache.json——来源视频与当前视频不符则弹三选一，否则直接接受</summary>
     private async Task PickTempFolderAsync()
     {
+        // 遥控远端：临时目录在对方电脑上，缓存判定也由对方做（本机 CheckTempCache 看不到远端目录）
+        if (RemoteSession.IsActive)
+        {
+            await PickRemoteTempFolderAsync();
+            return;
+        }
+
         var picker = new FolderPicker();
         InitializePicker(picker);
         picker.FileTypeFilter.Add("*");
@@ -470,6 +513,46 @@ public sealed partial class MainPage : Page
             if (r == ContentDialogResult.Secondary) continue; // 重新选文件夹
             return; // 取消本次实例
         }
+    }
+
+    /// <summary>远端临时目录选择：选完让远端自己判缓存，有旧缓存则弹与本机一致的三选一。</summary>
+    private async Task PickRemoteTempFolderAsync()
+    {
+        while (true)
+        {
+            var picked = await App.MainWindow.PickRemotePathAsync(folder: true, kind: "video", start: Vm.TempRoot);
+            if (string.IsNullOrWhiteSpace(picked)) return;
+
+            var (status, source) = await RemoteSession.Current!.SetTempRootAsync(picked);
+            // 远端判定无缓存 / 缓存就是当前视频的 → 直接用
+            if (status is not "mismatch") return;
+
+            if (await ConfirmOverwriteRemoteCacheAsync(source, picked)) return;
+        }
+    }
+
+    /// <summary>「覆盖老缓存」→ 让远端清空它自己的临时目录。返回 true 表示已处理完（调用方应结束流程）。</summary>
+    private async Task<bool> ConfirmOverwriteRemoteCacheAsync(string source, string tempRoot)
+    {
+        var dlg = new ContentDialog
+        {
+            Title = "检测到旧缓存文件",
+            Content = $"远端电脑的临时目录（{tempRoot}）缓存来源是：{source}，与当前输入视频不符。\n\n如何处理？",
+            PrimaryButtonText = "覆盖老缓存",
+            SecondaryButtonText = "更换至其他文件夹",
+            CloseButtonText = "取消本次实例",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = XamlRoot
+        };
+        var r = await dlg.ShowLocalizedAsync();
+        if (r == ContentDialogResult.Primary)
+        {
+            try { await RemoteSession.Current!.CleanTempAsync(); }
+            catch (Exception ex) { App.MainWindow?.ShowNotice("清理远端临时目录失败", ex.Message); }
+            return true;
+        }
+        if (r == ContentDialogResult.Secondary) return false; // 回外层继续换文件夹
+        return true;
     }
 
     private void InitializePicker(object picker)

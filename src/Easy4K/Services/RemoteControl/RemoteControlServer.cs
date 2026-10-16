@@ -626,7 +626,9 @@ public sealed class RemoteControlServer
                 input = _vm.InputVideo,
                 outputRoot = _vm.OutputRoot,
                 tempRoot = _vm.TempRoot,
-                outputName = _vm.FinalOutputName
+                outputName = _vm.FinalOutputName,
+                // 远端当前是否用了外部帧文件夹：客户端据此把本机页面同步成一样的状态
+                externalFramesDir = _vm.ExternalFramesDir
             },
             state = new
             {
@@ -992,7 +994,7 @@ public sealed class RemoteControlServer
 
     // ===================== 配置 =====================
 
-    private Task<object> ApplyConfigAsync(JsonElement root) => UiAsync(() =>
+    private Task<object> ApplyConfigAsync(JsonElement root) => UiAsync(async () =>
     {
         JsonElement cfg;
         if (root.TryGetProperty("config", out var c) && c.ValueKind == JsonValueKind.Object) cfg = c;
@@ -1038,6 +1040,26 @@ public sealed class RemoteControlServer
         var tempDir = Str("tempRoot", "");
         if (!string.IsNullOrWhiteSpace(tempDir)) _vm.SetTempRoot(tempDir);
 
+        // 外部帧文件夹：路径来自客户端浏览到的**本机**目录，只有本机能校验（存在性 + PNG 帧数）。
+        // 必须按"字段是否出现"判断，不能像上面那样用默认值 —— 否则每次改别的选项都会把帧文件夹清掉。
+        if (cfg.TryGetProperty("framesDir", out var fdEl) && fdEl.ValueKind == JsonValueKind.String)
+        {
+            var framesDir = fdEl.GetString() ?? "";
+            if (framesDir.Length == 0) _vm.ClearExternalFrames();
+            else await _vm.ImportFrameFolderAsync(framesDir);
+        }
+
+        // 帧文件夹模式没有原视频可探测，客户端在「帧参数」对话框里填的分辨率/帧数/帧率要落到远端，
+        // 否则远端的分辨率显示、输出文件名、预计临时占用全是错的。按"字段是否出现"判断，只在填了才覆盖。
+        if (cfg.TryGetProperty("manualWidth", out _))
+        {
+            _vm.SetManualVideoInfo(
+                Math.Max(1, Int("manualWidth", _vm.Video?.Width ?? 1920)),
+                Math.Max(1, Int("manualHeight", _vm.Video?.Height ?? 1080)),
+                Math.Max(0, (long)Int("manualTotalFrames", (int)(_vm.Video?.TotalFrames ?? 0))),
+                Math.Max(0, Dbl("manualFps", _vm.Video?.FrameRate ?? 24)));
+        }
+
         // 超分：先算法 → 再倍率 → 再模型（顺序不能反，SwitchSrEngine 会按倍率重建模型表）
         var srEngine = Int("srEngineIndex", _vm.SrEngineIndex);
         if (srEngine != _vm.SrEngineIndex) _vm.SwitchSrEngine(srEngine);
@@ -1055,9 +1077,23 @@ public sealed class RemoteControlServer
 
         var cacheInfo = _vm.CheckTempCache(_vm.TempRoot);
 
-        return Task.FromResult<object>(new
+        return (object)new
         {
             type = "config",
+            // 远端当前探测到的视频信息：客户端据此显示分辨率/帧率/时长（帧文件夹模式也靠它同步手工填的参数）
+            video = (object?)(_vm.Video is { IsValid: true } vv
+                ? new
+                {
+                    valid = true,
+                    width = vv.Width,
+                    height = vv.Height,
+                    fps = vv.FrameRate,
+                    duration = vv.Duration.TotalSeconds,
+                    totalFrames = vv.TotalFrames,
+                    audioCodec = vv.AudioCodec,
+                    hasSubtitles = vv.HasSubtitles
+                }
+                : null),
             options = new
             {
                 superResolution = _vm.SuperResolution,
@@ -1094,7 +1130,7 @@ public sealed class RemoteControlServer
                 ifModels = _vm.GetIfModels().ToArray(),
                 targetFps = _vm.TargetFps
             },
-            paths = new { input = _vm.InputVideo, outputRoot = _vm.OutputRoot, tempRoot = _vm.TempRoot, outputName = _vm.FinalOutputName },
+            paths = new { input = _vm.InputVideo, outputRoot = _vm.OutputRoot, tempRoot = _vm.TempRoot, outputName = _vm.FinalOutputName, externalFramesDir = _vm.ExternalFramesDir },
             state = new
             {
                 canStart = _vm.CanStart,
@@ -1109,7 +1145,7 @@ public sealed class RemoteControlServer
                 },
                 tempCacheSource = cacheInfo.SourceVideo
             }
-        });
+        };
     });
 
     // ===================== 启动处理 =====================

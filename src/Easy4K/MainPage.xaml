@@ -389,16 +389,16 @@
                             <Button Grid.Column="0" Content="开始处理 (Ctrl+S)" Click="OnStart" IsEnabled="{x:Bind Vm.CanStart, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                             <Button Grid.Column="1" Content="停止 (Ctrl+Shift+S)" Click="OnStop" IsEnabled="{x:Bind Vm.CanStop, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                             <Button Grid.Column="2" Content="清理临时文件" Click="OnCleanTemp" IsEnabled="{x:Bind Vm.CanClean, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
+                            <!-- 孤儿模式：与上面三个按钮同一排且齐平，但靠窗口最右侧。
+                                 未选输入时按钮禁用并给出与「开始处理」一致的原因提示。 -->
+                            <Button Grid.Column="3" Content="将此任务添加为孤儿执行任务" Click="OnAddOrphanTask"
+                                    IsEnabled="{x:Bind Vm.CanStart, Mode=OneWay}"
+                                    HorizontalAlignment="Right" Style="{StaticResource GlassButton}"/>
                         </Grid>
                         <TextBlock Text="{x:Bind Vm.CanStartReason, Mode=OneWay}" Foreground="Orange" FontSize="11" TextWrapping="Wrap"
                                    Visibility="{x:Bind Vm.StartBlockReasonVis, Mode=OneWay}"/>
                         <TextBlock Text="{x:Bind Vm.FinalOutputName, Mode=OneWay}" Opacity="0.6" FontSize="11" TextTrimming="CharacterEllipsis"/>
 
-                        <!-- 孤儿模式：把当前这套选项排成定时任务，到点自动启动 Easy4K 跑完这支视频再自动关闭。
-                             未选输入时按钮禁用并给出与「开始处理」一致的原因提示。 -->
-                        <Button Content="将此任务添加为孤儿执行任务" Click="OnAddOrphanTask"
-                                IsEnabled="{x:Bind Vm.CanStart, Mode=OneWay}"
-                                HorizontalAlignment="Left" Margin="0,4,0,0" Style="{StaticResource GlassButton}"/>
                         <TextBlock Text="孤儿模式：到点自动启动 Easy4K，按上面的选项处理这支视频，跑完自动关闭；可依次排队多个任务。"
                                    FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
                         <StackPanel Spacing="3" Visibility="{x:Bind Vm.OrphanListVis, Mode=OneWay}">

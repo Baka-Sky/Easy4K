@@ -224,7 +224,9 @@ public partial class MainViewModel : ObservableObject
     /// <summary>帧文件夹模式下合并原音频无意义，开关禁用（仅置灰，不改变勾选状态）</summary>
     public bool MergeAudioEnabled => !HasExternalFrames;
 
-    [ObservableProperty] private string _tempRoot = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ExtractedAudioPath))]
+    private string _tempRoot = "";
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStart))]
     [NotifyPropertyChangedFor(nameof(CanStartReason))]
@@ -805,6 +807,14 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(VramWarning))]
     private GpuInfo _gpu = new();
 
+    /// <summary>切换界面显示的显卡来源：遥控时灌入远端显卡，断开时传 null 恢复本机显卡。
+    /// 显存状态条与警告文本都由 Gpu 推导，换完必须重算，否则会出现「本机 6G 卡却按远端的提示」这类错判。</summary>
+    public void ApplyGpu(GpuInfo? gpu)
+    {
+        Gpu = gpu ?? _env.Gpu;
+        UpdateWarnings();
+    }
+
     [ObservableProperty] private string _vramWarning = "";
     [ObservableProperty] private string _warnings = "";
 
@@ -1031,6 +1041,12 @@ public partial class MainViewModel : ObservableObject
     /// <summary>使用帧文件夹（无输入视频文件）时手动设置视频参数，替代 FFprobe 检测。</summary>
     public void SetManualVideoInfo(int width, int height, long totalFrames, double fps)
     {
+        // 遥控远端：这些参数属于远端电脑上的帧文件夹，必须发到远端（远端算完会回灌回来同步显示）
+        if (Services.RemoteControl.RemoteSession.IsActive)
+        {
+            _ = Services.RemoteControl.RemoteSession.Current!.SetManualVideoInfoAsync(width, height, totalFrames, fps);
+            return;
+        }
         Video = new VideoInfo
         {
             Width = width,
@@ -1054,6 +1070,8 @@ public partial class MainViewModel : ObservableObject
     /// 空值不持久化（清空输入框只是临时禁用启动，重启后仍恢复上次有效目录）。</summary>
     partial void OnTempRootChanged(string value)
     {
+        // 遥控远端时这里显示的是**对方电脑**上的路径，不能写进本机配置（否则断开后本机就指向了不存在的目录）
+        if (Services.RemoteControl.RemoteSession.IsActive) return;
         if (!string.IsNullOrWhiteSpace(value))
         {
             _app.TempRoot = value;
@@ -1077,6 +1095,8 @@ public partial class MainViewModel : ObservableObject
     /// 空值不持久化（清空输入框只是临时禁用启动，重启后仍恢复上次有效目录）。</summary>
     partial void OnOutputRootChanged(string value)
     {
+        // 遥控远端时这里显示的是**对方电脑**上的路径，不能写进本机配置
+        if (Services.RemoteControl.RemoteSession.IsActive) return;
         if (!string.IsNullOrWhiteSpace(value))
         {
             _app.OutputRoot = value;
@@ -1088,6 +1108,13 @@ public partial class MainViewModel : ObservableObject
     /// 帧数统计放后台线程：目录里可能有好几万张 PNG（网络盘更慢），同步统计会卡住界面。</summary>
     public async Task ImportFrameFolderAsync(string dir)
     {
+        // 遥控远端：帧文件夹在对方电脑上，目录校验与 PNG 张数统计都只能由远端做
+        if (Services.RemoteControl.RemoteSession.IsActive)
+        {
+            if (string.IsNullOrWhiteSpace(dir)) return;
+            await Services.RemoteControl.RemoteSession.Current!.SetFramesDirAsync(dir);
+            return;
+        }
         if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
         {
             _logger.Error("帧文件夹不存在，导入失败");
@@ -1107,6 +1134,21 @@ public partial class MainViewModel : ObservableObject
         _splitFramesBeforeFrames = SplitFrames;
         SplitFrames = false;
         _logger.Info($"已导入外部帧文件夹: {dir}（{pngCount} 帧），处理时将跳过拆帧");
+    }
+
+    /// <summary>遥控远端时把页面上的帧文件夹状态同步成远端的实际值（路径是对方电脑上的路径，
+    /// 本机既不能也无法校验；目录与 PNG 数量的校验由远端 ImportFrameFolderAsync 完成）。</summary>
+    public void SetExternalFramesFromRemote(string dir)
+    {
+        dir ??= "";
+        if (ExternalFramesDir == dir) return;
+        if (dir.Length == 0) { ExternalFramesDir = ""; return; } // 远端已清除，只同步显示，不动勾选项
+        ExternalFramesDir = dir;
+        _mergeAudioBeforeFrames = MergeAudio;
+        MergeAudio = false;
+        _splitFramesBeforeFrames = SplitFrames;
+        SplitFrames = false;
+        _logger.Info($"已使用远端电脑上的帧文件夹: {dir}");
     }
 
     /// <summary>清除外部帧文件夹，恢复默认先拆帧。若仍有依赖项勾选而拆分帧未勾选，强制勾选拆分帧保证流程完整。</summary>
@@ -2660,7 +2702,7 @@ public partial class MainViewModel : ObservableObject
 
     public string CheckGpu()
     {
-        var g = _env.Gpu;
+        var g = Gpu; // 遥控远端时 Gpu 已被换成远端显卡，否则是本机显卡
         var text = $"显卡: {g.Name}\n显存: {g.VramText}\nNVIDIA: {g.IsNvidia}\nRTX 系列: {(g.IsRtx ? $"RTX {g.Series} 系列" : "否")}\n驱动: {g.DriverVersion}\n支持 HDR: {g.SupportsHdr}";
         _logger.Info(text);
         return text;

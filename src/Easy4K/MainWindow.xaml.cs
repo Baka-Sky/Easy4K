@@ -710,12 +710,14 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>远端目录浏览：盘符 → 目录逐级下钻，选文件（folder=false）或选目录（folder=true）。</summary>
-    private async Task<string?> PickRemotePathAsync(bool folder, string kind, string? start)
+    public async Task<string?> PickRemotePathAsync(bool folder, string kind, string? start)
     {
         var session = RemoteSession.Current;
         if (session is null || !session.IsConnected) return null;
 
-        string? current = string.IsNullOrWhiteSpace(start) || !Directory.Exists(start) ? null : start;
+        // start 是**远端电脑**上的路径，本机 Directory.Exists 判断没有意义 —— 直接带着它去问远端，
+        // 远端回 error（不存在/无权限）时在下面退回盘符列表重来。
+        string? current = string.IsNullOrWhiteSpace(start) ? null : start;
 
         while (true)
         {
@@ -728,6 +730,13 @@ public sealed partial class MainWindow : Window
             {
                 ShowNotice("读取远端目录失败", ex.Message);
                 return null;
+            }
+
+            // 远端说这个目录不可用（不存在 / 无权限）→ 退回盘符列表重新开始，而不是弹个空列表
+            if (current is not null && res.TryGetProperty("error", out var errEl) && errEl.ValueKind == JsonValueKind.String)
+            {
+                current = null;
+                continue;
             }
 
             if (!res.TryGetProperty("entries", out var entriesEl) || entriesEl.ValueKind != JsonValueKind.Array)

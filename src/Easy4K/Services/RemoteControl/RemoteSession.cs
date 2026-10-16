@@ -34,6 +34,13 @@ public sealed class RemoteSession
     private bool _paused;
     private long _lastFrame = -1;
 
+    /// <summary>连上之前本机的输出/临时目录 + 输入视频：断开时要把页面换回它们，
+    /// 否则会一直显示对方电脑的路径与视频信息</summary>
+    private string _localOutputRoot = "";
+    private string _localTempRoot = "";
+    private string _localInputVideo = "";
+    private VideoInfo? _localVideo;
+
     public bool IsConnected => _client.IsConnected;
     public string Host { get; private set; } = "";
     public int Port { get; private set; } = RemoteControlServer.Port;
@@ -67,6 +74,12 @@ public sealed class RemoteSession
         _client.Disconnected += OnDisconnected;
         _vm.PropertyChanged += OnVmPropertyChanged;
 
+        // 记下本机状态，断开时换回来（远端路径/视频只在本会话期间显示）
+        _localOutputRoot = _vm.OutputRoot;
+        _localTempRoot = _vm.TempRoot;
+        _localInputVideo = _vm.InputVideo;
+        _localVideo = _vm.Video;
+
         ApplyOptions(caps);
         // 占用每秒一条小消息，默认开；图片预览默认关（公网持续上传有 PCDN 风险）
         await _client.SetStreamAsync(preview: false, stats: true);
@@ -90,6 +103,16 @@ public sealed class RemoteSession
 
         await _client.DisconnectAsync();
         if (Current == this) Current = null;
+        // 断开后页面回到本机：显卡、路径、输入视频都要换回本机，否则一直显示对方电脑的
+        Run(() =>
+        {
+            _vm.InputVideo = _localInputVideo;
+            _vm.Video = _localVideo;
+            if (!string.IsNullOrEmpty(_localOutputRoot)) _vm.OutputRoot = _localOutputRoot;
+            if (!string.IsNullOrEmpty(_localTempRoot)) _vm.TempRoot = _localTempRoot;
+            // 放最后：ApplyGpu 内部会重算依赖显卡与视频的提示条（预计临时文件占用等）
+            _vm.ApplyGpu(null);
+        });
     }
 
     private void OnDisconnected(string reason)
@@ -109,11 +132,25 @@ public sealed class RemoteSession
     {
         var opt = RemoteControlClient.Sub(caps, "options");
         var paths = RemoteControlClient.Sub(caps, "paths");
+        var gpu = RemoteControlClient.Sub(caps, "gpu");
         Run(() =>
         {
             _applying = true;
             try
             {
+                // 显卡：遥控时显存状态条、显卡检测、模型可用性都按**远端**显卡算，
+                // 否则本机顶配卡会让用户误以为远端小显存卡也能跑 8G 起的补帧模型。
+                _vm.ApplyGpu(gpu.ValueKind == JsonValueKind.Object
+                    ? new GpuInfo
+                    {
+                        Name = RemoteControlClient.GetStr(gpu, "name"),
+                        VramMB = RemoteControlClient.GetInt(gpu, "vramMB"),
+                        IsNvidia = RemoteControlClient.GetBool(gpu, "isNvidia"),
+                        IsRtx = RemoteControlClient.GetBool(gpu, "isRtx"),
+                        Series = RemoteControlClient.GetInt(gpu, "series"),
+                        DriverVersion = RemoteControlClient.GetStr(gpu, "driver"),
+                    }
+                    : null);
                 _vm.SuperResolution = RemoteControlClient.GetBool(opt, "superResolution");
                 _vm.Interpolation = RemoteControlClient.GetBool(opt, "interpolation");
                 _vm.MergeVideo = RemoteControlClient.GetBool(opt, "mergeVideo");
@@ -196,6 +233,19 @@ public sealed class RemoteSession
 
                 CanStart = RemoteControlClient.GetBool(st, "canStart");
                 CanStartReason = RemoteControlClient.GetStr(st, "canStartReason");
+
+                // 路径：远端当前实际在用的输入/输出/临时/帧目录，页面照它显示（否则会显示本机的旧路径）
+                var resPaths = RemoteControlClient.Sub(res, "paths");
+                var outRoot = RemoteControlClient.GetStr(resPaths, "outputRoot");
+                if (outRoot.Length > 0) _vm.OutputRoot = outRoot;
+                var tRoot = RemoteControlClient.GetStr(resPaths, "tempRoot");
+                if (tRoot.Length > 0) _vm.TempRoot = tRoot;
+                var extFrames = RemoteControlClient.GetStr(resPaths, "externalFramesDir");
+                _vm.SetExternalFramesFromRemote(extFrames);
+
+                // 远端探测到的视频信息（帧文件夹模式下就是刚下发的手工参数），照它显示分辨率/帧率/时长
+                if (res.TryGetProperty("video", out var vEl) && vEl.ValueKind == JsonValueKind.Object)
+                    _vm.Video = ToVideoInfo(vEl);
             }
             finally { _applying = false; }
         });
@@ -290,6 +340,14 @@ public sealed class RemoteSession
                 if (!string.IsNullOrWhiteSpace(_vm.OutputRoot))
                     _ = PushConfigAsync(new { outputRoot = _vm.OutputRoot });
                 break;
+            case nameof(MainViewModel.TempRoot):
+                if (!string.IsNullOrWhiteSpace(_vm.TempRoot))
+                    _ = PushConfigAsync(new { tempRoot = _vm.TempRoot });
+                break;
+            case nameof(MainViewModel.ExternalFramesDir):
+                // 清除帧文件夹（空串也是有意义的指令，不能像上面那样跳过空值）
+                _ = PushConfigAsync(new { framesDir = _vm.ExternalFramesDir });
+                break;
         }
     }
 
@@ -336,6 +394,42 @@ public sealed class RemoteSession
         => path is null or ""
             ? _client.RequestAsync("list_dir", new { kind }, 20000)
             : _client.RequestAsync("list_dir", new { kind, path }, 20000);
+
+    /// <summary>把输出目录改到**远端电脑**上的某个目录（路径在对方机器上，本机无法校验）。</summary>
+    public Task SetOutputRootAsync(string path) => PushConfigAsync(new { outputRoot = path });
+
+    /// <summary>把临时目录改到**远端电脑**上的某个目录，并回带远端对该目录的缓存评估
+    /// （status: mismatch/match/none；有旧缓存时界面要弹三选一，与本机一致）。</summary>
+    public async Task<(string Status, string Source)> SetTempRootAsync(string path)
+    {
+        var res = await _client.RequestAsync("set_config", new { tempRoot = path }, 30000);
+        ApplyConfig(res);
+        var st = RemoteControlClient.Sub(res, "state");
+        return (RemoteControlClient.GetStr(st, "tempCacheStatus"), RemoteControlClient.GetStr(st, "tempCacheSource"));
+    }
+
+    /// <summary>让远端清空它自己的临时目录（界面选「覆盖老缓存」时调用）。清理可能要删几万帧，给足超时。</summary>
+    public Task CleanTempAsync() => _client.RequestAsync("clean_temp", null, 300000);
+
+    /// <summary>让远端使用（或传空串清除）外部帧文件夹。目录校验与 PNG 计数都在远端做。</summary>
+    public async Task SetFramesDirAsync(string path)
+    {
+        var res = await _client.RequestAsync("set_config", new { framesDir = path ?? "" }, 60000);
+        ApplyConfig(res);
+    }
+
+    /// <summary>帧文件夹模式没有原视频可探测，把用户在「帧文件夹参数」里填的分辨率/帧数/帧率下发到远端。</summary>
+    public async Task SetManualVideoInfoAsync(int width, int height, long totalFrames, double fps)
+    {
+        var res = await _client.RequestAsync("set_config", new
+        {
+            manualWidth = width,
+            manualHeight = height,
+            manualTotalFrames = (int)Math.Clamp(totalFrames, 0, int.MaxValue),
+            manualFps = fps
+        }, 30000);
+        ApplyConfig(res);
+    }
 
     // ===================== 执行控制 =====================
 

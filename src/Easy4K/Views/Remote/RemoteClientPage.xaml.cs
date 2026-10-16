@@ -28,6 +28,11 @@ public sealed partial class RemoteClientPage : Page
     private async void OnConnect(object sender, RoutedEventArgs e)
     {
         var (host, port) = NormalizeHost(HostBox.Text);
+        // 地址里没写端口时用右侧端口框的值（否则那个框填了也不生效）
+        if (port == RemoteControlServer.Port &&
+            int.TryParse(PortBox.Text.Trim(), out var boxPort) && boxPort is > 0 and < 65536)
+            port = boxPort;
+
         if (host.Length == 0)
         {
             ShowError("请填写对方电脑的 IP 或域名（IPv6 写成 [地址]:端口，例如 [240e::1]:11451）");
@@ -125,7 +130,18 @@ public sealed partial class RemoteClientPage : Page
             if (File.Exists(PrefFile))
             {
                 using var doc = JsonDocument.Parse(File.ReadAllText(PrefFile));
-                if (doc.RootElement.TryGetProperty("host", out var h)) return h.GetString() ?? "";
+                if (doc.RootElement.TryGetProperty("host", out var h))
+                {
+                    var host = h.GetString() ?? "";
+                    if (host.Length == 0) return "";
+                    var port = doc.RootElement.TryGetProperty("port", out var p) && p.TryGetInt32(out var pv)
+                        ? pv
+                        : RemoteControlServer.Port;
+                    if (port == RemoteControlServer.Port) return host;
+                    // 非默认端口时把端口一起回填，否则下次连接会悄悄退回 11451。
+                    // IPv6 必须加方括号，不然末尾那段会被当成端口。
+                    return host.Contains(':') ? $"[{host}]:{port}" : $"{host}:{port}";
+                }
             }
         }
         catch { }
