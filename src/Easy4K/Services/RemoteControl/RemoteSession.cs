@@ -122,6 +122,12 @@ public sealed class RemoteSession
                 _vm.DedupEnabled = RemoteControlClient.GetBool(opt, "dedup");
                 _vm.AudioSrEnabled = RemoteControlClient.GetBool(opt, "audioSr");
                 _vm.TurboMode = RemoteControlClient.GetBool(opt, "turboMode");
+                // 新增选项也要反向同步：否则连上后本机高级页显示的是自己的旧值，而不是远端的实际设置
+                _vm.KeepSubtitles = RemoteControlClient.GetBool(opt, "keepSubtitles");
+                _vm.Crf = RemoteControlClient.GetInt(opt, "crf");
+                _vm.HwQuality = RemoteControlClient.GetInt(opt, "hwQuality");
+                var remoteHwMode = RemoteControlClient.GetStr(opt, "hwQualityMode");
+                if (remoteHwMode is "" or "cq" or "qp") _vm.HwQualityMode = remoteHwMode;
                 var outRoot = RemoteControlClient.GetStr(paths, "outputRoot");
                 if (outRoot.Length > 0) _vm.OutputRoot = outRoot;
             }
@@ -162,6 +168,12 @@ public sealed class RemoteSession
                 _vm.DedupEnabled = RemoteControlClient.GetBool(opt, "dedup");
                 _vm.AudioSrEnabled = RemoteControlClient.GetBool(opt, "audioSr");
                 _vm.TurboMode = RemoteControlClient.GetBool(opt, "turboMode");
+                // 新增选项也要反向同步：否则连上后本机高级页显示的是自己的旧值，而不是远端的实际设置
+                _vm.KeepSubtitles = RemoteControlClient.GetBool(opt, "keepSubtitles");
+                _vm.Crf = RemoteControlClient.GetInt(opt, "crf");
+                _vm.HwQuality = RemoteControlClient.GetInt(opt, "hwQuality");
+                var remoteHwMode = RemoteControlClient.GetStr(opt, "hwQualityMode");
+                if (remoteHwMode is "" or "cq" or "qp") _vm.HwQualityMode = remoteHwMode;
 
                 _vm.SrScale = RemoteControlClient.GetInt(cfg, "srScale");
                 _vm.SrEngineIndex = RemoteControlClient.GetInt(cfg, "srEngineIndex");
@@ -297,6 +309,8 @@ public sealed class RemoteSession
             AudioCodec = RemoteControlClient.GetStr(e, "audioCodec"),
             TotalFrames = (long)RemoteControlClient.GetDbl(e, "totalFrames"),
             Duration = TimeSpan.FromSeconds(RemoteControlClient.GetDbl(e, "duration")),
+            // 远端视频有没有字幕流：决定本机那行「保留原视频内嵌字幕」能不能勾
+            HasSubtitles = RemoteControlClient.GetBool(e, "hasSubtitles"),
         };
         return info;
     }

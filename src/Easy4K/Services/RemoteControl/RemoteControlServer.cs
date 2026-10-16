@@ -745,7 +745,9 @@ public sealed class RemoteControlServer
             totalFrames = v.TotalFrames,
             bitrate = v.BitRate,
             audioCodec = v.AudioCodec,
-            hasAudio = v.HasAudio
+            hasAudio = v.HasAudio,
+            // 有没有字幕流：客户端据此解锁「保留原视频内嵌字幕」（没字幕就该禁用）
+            hasSubtitles = v.HasSubtitles
         };
     }
 
