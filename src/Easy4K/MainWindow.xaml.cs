@@ -944,9 +944,9 @@ public sealed partial class MainWindow : Window
         "· 音频超分：AudioSR 把音轨升到 48kHz 高带宽，勾选「将原音频合并进新视频」时替换视频音轨，\n" +
         "  未勾选则单独输出一份 48kHz WAV。";
 
-    /// <summary>快捷键正文</summary>
+    /// <summary>快捷键正文（Ctrl+O 已移除：主页有「浏览」按钮，该快捷键会被误触弹出文件选择框）</summary>
     private static string ShortcutsText =>
-        "Ctrl+O       打开视频\nCtrl+S        开始处理\nCtrl+Shift+S  停止处理\n" +
+        "Ctrl+S        开始处理\nCtrl+Shift+S  停止处理\n" +
         "Ctrl+L        清空日志\nF1            帮助\nAlt+F4        退出";
 
     /// <summary>关于正文（含免责声明）</summary>

@@ -386,22 +386,31 @@ public sealed partial class MainPage : Page
             "重新导入帧文件夹", async () => await ImportFrameFolderAsync());
     }
 
+    /// <summary>打开视频选择框是否已弹出（防止快捷键连击叠出多个选择框，关一个还剩一个）</summary>
+    private bool _pickVideoOpen;
+
     private async Task PickVideoAsync()
     {
-        var picker = new FileOpenPicker();
-        InitializePicker(picker);
-        picker.FileTypeFilter.Add(".mp4");
-        picker.FileTypeFilter.Add(".mkv");
-        picker.FileTypeFilter.Add(".avi");
-        picker.FileTypeFilter.Add(".mov");
-        picker.SuggestedStartLocation = PickerLocationId.VideosLibrary;
-        var file = await picker.PickSingleFileAsync();
-        if (file is not null)
+        if (_pickVideoOpen) return;
+        _pickVideoOpen = true;
+        try
         {
-            // 先记录路径，避免绑定刷新触发 TextChanged 导致重复检测
-            _lastVideoPath = file.Path;
-            await Vm.SetInputVideoAsync(file.Path);
+            var picker = new FileOpenPicker();
+            InitializePicker(picker);
+            picker.FileTypeFilter.Add(".mp4");
+            picker.FileTypeFilter.Add(".mkv");
+            picker.FileTypeFilter.Add(".avi");
+            picker.FileTypeFilter.Add(".mov");
+            picker.SuggestedStartLocation = PickerLocationId.VideosLibrary;
+            var file = await picker.PickSingleFileAsync();
+            if (file is not null)
+            {
+                // 先记录路径，避免绑定刷新触发 TextChanged 导致重复检测
+                _lastVideoPath = file.Path;
+                await Vm.SetInputVideoAsync(file.Path);
+            }
         }
+        finally { _pickVideoOpen = false; }
     }
 
     private async Task PickFolderAsync(Action<string> apply)
@@ -564,10 +573,29 @@ public sealed partial class MainPage : Page
 
     // ===================== 快捷键 =====================
 
-    private async void OnAcceleratorOpen(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; await PickVideoAsync(); }
-    private async void OnAcceleratorStart(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; await StartWithFrameParamsAsync(); }
-    private void OnAcceleratorStop(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; Vm.Stop(); }
-    private void OnAcceleratorClearLog(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; Vm.ClearLog(); }
+    /// <summary>本窗口线程里某键此刻是否真的按下。</summary>
+    private static bool IsKeyDown(Windows.System.VirtualKey key) =>
+        Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(key)
+            .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+
+    /// <summary>Ctrl 组合键闸门：WinUI 部分版本会忽略 KeyboardAccelerator 的 Modifiers，
+    /// 只按字母就触发 Invoked——在路径输入框里打 s/l 会误开始处理、误清日志。
+    /// 所以每个快捷键都按真实键态二次校验；校验不过时**不设 Handled**，把按键原样放行给控件当普通输入。
+    /// shift=true 时要求 Shift 同时按下（Ctrl+Shift+S），并要求不带 Shift（Ctrl+S）以免互相串。</summary>
+    private bool CtrlChord(KeyboardAcceleratorInvokedEventArgs args, bool shift = false)
+    {
+        if (!IsKeyDown(Windows.System.VirtualKey.Control)) return false;
+        if (IsKeyDown(Windows.System.VirtualKey.Shift) != shift) return false;
+        args.Handled = true;
+        return true;
+    }
+
+    private async void OnAcceleratorStart(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    { if (!CtrlChord(args)) return; await StartWithFrameParamsAsync(); }
+    private void OnAcceleratorStop(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    { if (!CtrlChord(args, shift: true)) return; Vm.Stop(); }
+    private void OnAcceleratorClearLog(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    { if (!CtrlChord(args)) return; Vm.ClearLog(); }
     private void OnAcceleratorHelp(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
         args.Handled = true;
