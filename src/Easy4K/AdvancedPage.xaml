@@ -241,9 +241,12 @@
                             <TextBlock Grid.Column="0" Text="CQ / QP 值" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
                             <NumberBox Grid.Column="1" Value="{x:Bind Vm.HwQuality, Mode=TwoWay}" Minimum="0" Maximum="51" SmallChange="1"
                                        SpinButtonPlacementMode="Compact" Width="120"/>
-                            <TextBlock Grid.Column="2" Text="取值范围 0~51，数值越小画质越好、码率越高；未勾选 CQ/QP 时用默认档。两者互斥：开一个另一个自动关闭。仅硬件编码生效（编码器由显卡自动选择：N 卡 NVENC / A 卡 AMF），CPU 处理模式下不可用。"
+                            <TextBlock Grid.Column="2" Text="取值范围 0~51，数值越小画质越好、码率越高；未勾选 CQ/QP 时用默认档。两者互斥：开一个另一个自动关闭。仅硬件编码生效，CPU 处理模式下不可用。"
                                        VerticalAlignment="Center" FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
                         </Grid>
+                        <!-- 硬件编码器对照：编码器由显卡自动选择，这里明确写清三家分别用哪个，并标出当前这张卡会用谁 -->
+                        <TextBlock Text="{x:Bind Vm.GpuEncoderHint, Mode=OneWay}" FontSize="10" Opacity="0.6"
+                                   TextWrapping="Wrap" Margin="0,2,0,0"/>
                         <CheckBox x:Name="SkipStartupSelfTestCb" Content="跳过测试（每次点开始处理不再先用 1 秒测试视频验证勾选流程，直接处理）"
                                   IsChecked="{x:Bind Vm.SkipStartupSelfTest, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="SafeFrameRateCb" Content="开启安全帧率 (NCNN 遇到设备丢失/显存/内存溢出时强制停止)" IsChecked="{x:Bind Vm.UseSafeFrameRate, Mode=TwoWay}" FontSize="12"/>

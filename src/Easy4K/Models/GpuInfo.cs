@@ -21,6 +21,12 @@ public sealed class GpuInfo
          Name.Contains("Radeon", StringComparison.OrdinalIgnoreCase) ||
          Name.Contains("ATI ", StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>是否 Intel 显卡/核显（Arc / Iris / Intel）。同样按名字推断，用于界面提示"这张卡会用 QSV"。</summary>
+    public bool IsIntel => !IsNvidia && !IsAmd &&
+        (Name.Contains("Intel", StringComparison.OrdinalIgnoreCase) ||
+         Name.Contains("Arc ", StringComparison.OrdinalIgnoreCase) ||
+         Name.Contains("Iris", StringComparison.OrdinalIgnoreCase));
+
     /// <summary>显存文本（VramMB 单位是 MB，按 GB 展示：6144MB → "6 GB"）</summary>
     public string VramText => VramMB > 0 ? $"{VramMB / 1024.0:0.#} GB" : "未知";
 

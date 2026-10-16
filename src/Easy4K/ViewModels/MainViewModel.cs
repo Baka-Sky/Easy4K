@@ -805,7 +805,26 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VramWarning))]
+    [NotifyPropertyChangedFor(nameof(GpuEncoderName))]
+    [NotifyPropertyChangedFor(nameof(GpuEncoderHint))]
     private GpuInfo _gpu = new();
+
+    /// <summary>当前显卡会自动使用哪个硬件编码器（合并视频用）：NVIDIA → NVENC / AMD → AMF / Intel → QSV。
+    /// 认不出来返回空串，此时合并走 CPU 编码（libx265）。编码器由显卡自动决定，界面只做展示。</summary>
+    public string GpuEncoderName => Gpu.IsNvidia ? "NVENC" : Gpu.IsAmd ? "AMF" : Gpu.IsIntel ? "QSV" : "";
+
+    /// <summary>编码器说明：三家对应关系 + 当前这张卡实际会用哪一个。
+    /// 遥控远端时 Gpu 已被换成远端显卡，所以这行提示也跟着显示对方的编码器。</summary>
+    public string GpuEncoderHint
+    {
+        get
+        {
+            const string map = "AMD → AMF，NVIDIA → NVENC，Intel → QSV（编码器由显卡自动选择，失败自动回退 CPU 编码）";
+            return GpuEncoderName.Length > 0
+                ? $"当前显卡 {Gpu.Name} → 合并视频用 {GpuEncoderName}；{map}"
+                : $"未识别到可用的硬件编码器 → 合并视频用 CPU 编码（libx265）；{map}";
+        }
+    }
 
     /// <summary>切换界面显示的显卡来源：遥控时灌入远端显卡，断开时传 null 恢复本机显卡。
     /// 显存状态条与警告文本都由 Gpu 推导，换完必须重算，否则会出现「本机 6G 卡却按远端的提示」这类错判。</summary>
