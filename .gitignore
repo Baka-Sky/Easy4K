@@ -32,3 +32,6 @@ re_stderr.txt
 DebugINFO.txt
 _selftest/out/
 _selftest/test_in/
+
+## 发布产物（单文件自包含 bin 体积上百 MB，不进仓库）
+dist/
