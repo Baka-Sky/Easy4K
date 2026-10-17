@@ -87,20 +87,6 @@
     <Exec IgnoreExitCode="true" Command="robocopy &quot;$(MSBuildThisFileDirectory)..\..\Tools&quot; &quot;$(OutDir)Tools&quot; /E /NFL /NDL /NJH /NJS /NP /XD .git obj __pycache__ &amp; if %25ERRORLEVEL% GEQ 8 exit /b 1" />
   </Target>
 
-  <!-- 帧去重命令行工具：算法已被主程序以项目引用方式共用（同一份源码），
-       这里额外把它的 exe 复制到输出目录，别的程序可以直接调用 Easy4K.SFDP.exe。 -->
-  <Target Name="CopySfdpCli" AfterTargets="Build" Condition="Exists('$(MSBuildThisFileDirectory)..\Easy4K.SFDP\Easy4K.SFDP.csproj')">
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Easy4K.SFDP\Easy4K.SFDP.csproj"
-             Targets="GetTargetPath"
-             Properties="Configuration=$(Configuration);Platform=$(Platform)">
-      <Output TaskParameter="TargetOutputs" ItemName="SfdpCliAssembly" />
-    </MSBuild>
-    <ItemGroup>
-      <SfdpCliFile Include="@(SfdpCliAssembly->'%(RootDir)%(Directory)Easy4K.SFDP.exe')" />
-    </ItemGroup>
-    <Copy SourceFiles="@(SfdpCliFile)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="Exists('%(SfdpCliFile.FullPath)')" />
-  </Target>
-
   <!-- 孤儿任务调度守护进程：单独一个无界面控制台 exe（Easy4K.Orphan.exe）。
        构建主程序时一并构建并复制到输出目录，保证 Debug/Release/publish 产物依旧是自包含的一份，
        不需要额外的构建步骤；孤儿模式在没有这个 exe 时会明确提示而不是静默失败。 -->

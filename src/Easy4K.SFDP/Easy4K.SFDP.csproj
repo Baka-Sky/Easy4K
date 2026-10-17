@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <!-- 动态链接库：别的程序直接引用 / 加载调用，不起独立进程 -->
+    <OutputType>Library</OutputType>
     <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>Easy4K.SFDP</RootNamespace>
@@ -11,20 +12,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <!-- 纯命令行工具（不需要 WinUI）：CA1416 是"仅 Windows"提示，本项目本来就只在 Windows 跑 -->
+    <!-- CA1416 是"仅 Windows"提示，本项目本来就只在 Windows 跑 -->
     <NoWarn>CA1416;CA1851;CS8602;CS8604</NoWarn>
     <InvariantGlobalization>true</InvariantGlobalization>
-  </PropertyGroup>
-
-  <!-- 单文件自包含发布（只有显式 -p:PublishSingleFile=true 时才生效，不影响日常 build）：
-       产物是**一个** Easy4K.SFDP.exe，不需要目标机装 .NET、也不需要旁边放 dll，
-       直接拷走就能被别的程序调用。
-         dotnet publish src/Easy4K.SFDP -c Release -r win-x64 -p:PublishSingleFile=true -o <输出目录>
-       不做 trimming：WinRT 投影（Windows.Graphics.Imaging）靠反射，裁剪会把它干掉。 -->
-  <PropertyGroup Condition="'$(PublishSingleFile)' == 'true'">
-    <SelfContained>true</SelfContained>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <DebugType>none</DebugType>
   </PropertyGroup>
 
 </Project>
