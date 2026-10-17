@@ -519,6 +519,9 @@ public sealed partial class AdvancedPage : Page
         HwCqCb.IsEnabled = enabled;
         HwQpCb.IsEnabled = enabled;
         HwQualityBox.IsEnabled = enabled;
+        // 标签与说明也一起变灰（CheckBox 的文字由主题自动变灰，这两个 TextBlock 不会）
+        HwQualityLabel.Opacity = enabled ? 1.0 : 0.35;
+        HwQualityHint.Opacity = enabled ? 0.6 : 0.25;
     }
 
     /// <summary>VM 属性兜底：CPU 处理模式变化时同步勾选状态与联动禁用。</summary>
