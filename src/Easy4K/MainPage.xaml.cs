@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
 
@@ -682,7 +683,11 @@ public sealed partial class MainPage : Page
             return;
         }
 
+        // 三列滚轮（日 / 月 / 年）。WinUI 的 DatePicker 模板把「月」那格写成 TextAlignment="Left"、
+        // 还带 9px 左内边距，月列又是 132 星宽（年/日只有 78 星），中文里那个「10月」就明显偏左，
+        // 看着跟年/日对不齐。模板改不了，只能等控件加载完把三列宽度拉平、把月那格改成居中。
         var datePicker = new DatePicker { Date = DateTimeOffset.Now, HorizontalAlignment = HorizontalAlignment.Stretch };
+        datePicker.Loaded += (_, _) => AlignDatePickerColumns(datePicker);
         var timePicker = new TimePicker
         {
             ClockIdentifier = "24HourClock",
@@ -716,9 +721,61 @@ public sealed partial class MainPage : Page
             return;
         }
 
+        // 二次确认：点「添加任务」会真的拉起一个无界面的后台进程（Easy4K.Orphan.exe），
+        // 用户需要知道它是什么、怎么取消，避免以为是普通提醒。
+        var videoName = Vm.HasExternalFrames
+            ? Path.GetFileName(Vm.ExternalFramesDir.TrimEnd('\\', '/'))
+            : Path.GetFileName(Vm.InputVideo);
+        var confirm = new ContentDialog
+        {
+            Title = "确认添加孤儿执行任务",
+            Content = "点「确认添加」后，Easy4K 会创建一个静默后台进程（Easy4K.Orphan.exe：没有窗口、不在任务栏显示）。\n\n"
+                    + $"它会一直等到 {when:MM-dd HH:mm}，到点自动启动 Easy4K 处理「{videoName}」，跑完再自动关闭。\n\n"
+                    + "期间可以继续排其它任务；不想执行了就在任务列表里点「删除」——最后一个任务删掉时，这个后台进程也会自动退出。",
+            PrimaryButtonText = "确认添加",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = XamlRoot
+        };
+        if (await confirm.ShowLocalizedAsync() != ContentDialogResult.Primary) return;
+
         var task = Vm.AddOrphanTask(when);
         App.MainWindow?.ShowNotice("已添加孤儿执行任务",
             $"{task.RunAt:MM-dd HH:mm:ss} 将自动启动 Easy4K 处理「{task.DisplayName}」。当前有 {Vm.OrphanTasks.Count} 个孤儿执行任务。");
+    }
+
+    /// <summary>DatePicker 的内联模板把三列设成 78*/132*/78*，「月」那格还写死左对齐 + 9px 左内边距，
+    /// 中文的「10月」因此不居中。这里等控件加载完直接改模板实例：三列等宽、月那格居中。</summary>
+    private static void AlignDatePickerColumns(DatePicker picker)
+    {
+        if (FindByName<Grid>(picker, "FlyoutButtonContentGrid") is { } grid
+            && grid.ColumnDefinitions.Count >= 5)
+        {
+            // 列顺序：日 / 间隔 / 月 / 间隔 / 年
+            grid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+            grid.ColumnDefinitions[2].Width = new GridLength(1, GridUnitType.Star);
+            grid.ColumnDefinitions[4].Width = new GridLength(1, GridUnitType.Star);
+        }
+
+        if (FindByName<TextBlock>(picker, "MonthTextBlock") is { } month)
+        {
+            month.TextAlignment = TextAlignment.Center;
+            month.Margin = new Thickness(0);
+            month.Padding = new Thickness(0, 3, 0, 6); // 与年/日同样的 DatePickerFlyoutPresenterItemPadding
+        }
+    }
+
+    /// <summary>在可视树里按名字找控件（模板块里的元素没有公开字段，只能这样拿）</summary>
+    private static T? FindByName<T>(DependencyObject root, string name) where T : FrameworkElement
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T hit && hit.Name == name) return hit;
+            if (FindByName<T>(child, name) is { } nested) return nested;
+        }
+        return null;
     }
 
     /// <summary>删除一条孤儿任务（按钮 Tag 里带的就是任务 id）</summary>
