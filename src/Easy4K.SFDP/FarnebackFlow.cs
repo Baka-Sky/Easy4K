@@ -1,6 +1,6 @@
 using System.Threading.Tasks;
 
-namespace Easy4K.Services;
+namespace Easy4K.SFDP;
 
 /// <summary>第四阶：Farnebäck 稠密光流（论文第四阶的终判依据）。
 ///

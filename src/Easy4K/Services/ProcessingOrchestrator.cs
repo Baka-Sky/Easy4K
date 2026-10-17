@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Easy4K.Models;
 using Easy4K.Services.CommandBuilders;
+using Easy4K.SFDP;
 
 namespace Easy4K.Services;
 

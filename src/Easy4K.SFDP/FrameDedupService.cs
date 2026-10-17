@@ -2,7 +2,7 @@ using System.IO;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Graphics.Imaging;
 
-namespace Easy4K.Services;
+namespace Easy4K.SFDP;
 
 /// <summary>相邻帧去重（论文「四阶级联判决」）。
 /// 第一阶像素差粗筛、第二阶 dHash 细筛、第三阶 QR 分解精判、第四阶 Farnebäck 光流终判。
