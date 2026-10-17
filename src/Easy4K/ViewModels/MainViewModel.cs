@@ -2244,8 +2244,9 @@ public partial class MainViewModel : ObservableObject
         return copy;
     }
 
-    /// <summary>新建一条孤儿任务并落盘，同时确保守护进程在跑。</summary>
-    public OrphanTask AddOrphanTask(DateTime runAt)
+    /// <summary>新建一条孤儿任务并落盘，同时确保守护进程在跑。
+    /// cleanTempBeforeRun：启动时是否先强制清理临时目录（与已排队任务同盘时由用户选）。</summary>
+    public OrphanTask AddOrphanTask(DateTime runAt, bool cleanTempBeforeRun = true)
     {
         var frames = ExternalFramesDir;
         var task = new OrphanTask
@@ -2255,7 +2256,8 @@ public partial class MainViewModel : ObservableObject
             InputVideo = HasExternalFrames ? "" : InputVideo,
             ExternalFramesDir = frames,
             DisplayName = HasExternalFrames ? FolderName(frames) : Path.GetFileName(InputVideo),
-            Settings = CaptureSettingsSnapshot()
+            Settings = CaptureSettingsSnapshot(),
+            CleanTempBeforeRun = cleanTempBeforeRun
         };
 
         OrphanTasks.Add(task);
@@ -2309,7 +2311,26 @@ public partial class MainViewModel : ObservableObject
         {
             SuppressCompletionDialog = true;
             _logger.Info($"=== 孤儿模式执行: {task.DisplayName}（预定 {task.RunAt:yyyy-MM-dd HH:mm:ss}）===");
-            CleanTemp(); // 清掉上次残留帧，避免旧帧干扰本次
+
+            // 默认先清掉上次残留帧，避免旧帧干扰本次。用户在添加任务时选了「不清理」就跳过，
+            // 但缓存明确来自别的视频时仍然强制清理，否则会直接复用别人的中间产物、产出错误结果。
+            if (task.CleanTempBeforeRun)
+            {
+                CleanTemp();
+            }
+            else
+            {
+                var (cacheStatus, cacheSource) = CheckTempCache(TempRoot);
+                if (cacheStatus == TempCacheStatus.Mismatch)
+                {
+                    _logger.Warn($"临时目录里的缓存来自「{cacheSource}」，与本次视频不符，按任务设置不清理也改为强制清理");
+                    CleanTemp();
+                }
+                else
+                {
+                    _logger.Info("孤儿模式：按任务设置跳过启动前清理，直接复用临时目录里已有的中间产物");
+                }
+            }
 
             if (!string.IsNullOrWhiteSpace(task.ExternalFramesDir))
             {

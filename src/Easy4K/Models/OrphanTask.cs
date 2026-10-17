@@ -27,6 +27,11 @@ public sealed class OrphanTask
     /// <summary>添加任务时的全部选项快照：孤儿执行进程用它替代 appsettings.json，因此不动用户配置</summary>
     public AppSettings Settings { get; set; } = new();
 
+    /// <summary>启动时是否先强制清理临时目录里上一次的中间产物。
+    /// 默认 true（与旧行为一致）；只有当新任务与已排队任务的临时目录在同一块盘上时，
+    /// 用户才会被问到这个问题，选「不清理」就置 false，让本次直接复用已有产物。</summary>
+    public bool CleanTempBeforeRun { get; set; } = true;
+
     /// <summary>上次执行结果（留空 = 尚未执行）</summary>
     public string LastResult { get; set; } = "";
 

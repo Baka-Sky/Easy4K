@@ -715,33 +715,94 @@ public sealed partial class MainPage : Page
         if (await dlg.ShowLocalizedAsync() != ContentDialogResult.Primary) return;
 
         var when = datePicker.Date.Date + timePicker.Time;
-        if (when <= DateTime.Now)
+        var today = DateTime.Now;
+
+        // 只能排在今年：跨年的孤儿任务没人盯着，很容易变成「明年才响」的幽灵任务。
+        if (when.Year < today.Year)
+        {
+            App.MainWindow?.ShowNotice("今夕是何年?",
+                $"现在是 {today:yyyy} 年，孤儿任务只能排在 {today:yyyy} 年内，不能往回排到 {when:yyyy} 年。");
+            return;
+        }
+        if (when.Year > today.Year)
+        {
+            App.MainWindow?.ShowNotice("并非永远哦",
+                $"孤儿任务只能排在 {today:yyyy} 年内，不能排到 {when:yyyy} 年。");
+            return;
+        }
+        if (when <= today)
         {
             App.MainWindow?.ShowNotice("启动时间已过去", "请选一个还没到的时间点，任务才能排进队列。");
             return;
         }
+
+        // 与已排队任务的临时目录在同一块盘上时问一句：启动前要不要先清掉上一次的产物。
+        // 两个任务虽然串行，但共用同一批中间文件，不清理就可能把上一个视频的帧当成自己的续跑。
+        var conflict = Vm.OrphanTasks
+            .Where(t => SameDrive(t.Settings.TempRoot, Vm.TempRoot))
+            .OrderBy(t => t.RunAt)
+            .FirstOrDefault();
 
         // 二次确认：点「添加任务」会真的拉起一个无界面的后台进程（Easy4K.Orphan.exe），
         // 用户需要知道它是什么、怎么取消，避免以为是普通提醒。
         var videoName = Vm.HasExternalFrames
             ? Path.GetFileName(Vm.ExternalFramesDir.TrimEnd('\\', '/'))
             : Path.GetFileName(Vm.InputVideo);
+        var content = "点「确认添加」后，Easy4K 会创建一个静默后台进程（Easy4K.Orphan.exe：没有窗口、不在任务栏显示）。\n\n"
+                    + $"启动时间：{when:yyyy-MM-dd HH:mm}\n"
+                    + $"到点会自动启动 Easy4K 处理「{videoName}」，跑完再自动关闭。\n\n"
+                    + "任务是一个接一个执行的：前一个没跑完，这个会等它结束再开始，不会同时开两个。\n\n"
+                    + "期间可以继续排其它任务；不想执行了就在任务列表里点「删除」——最后一个任务删掉时，这个后台进程也会自动退出。";
+        if (conflict is not null)
+        {
+            content += $"\n\n注意：已排队的「{conflict.DisplayName}」（{conflict.RunAt:yyyy-MM-dd HH:mm}）跟这条任务用的是同一块盘上的临时目录：\n"
+                     + $"{Vm.TempRoot}\n"
+                     + "两次执行会共用同一批中间产物。如果两次填的就是同一个临时目录，建议启动前先清一次，"
+                     + "否则上一次没跑完的帧会被当成这次的续跑结果。要不要在这条任务启动时先强制清理？";
+        }
+
         var confirm = new ContentDialog
         {
             Title = "确认添加孤儿执行任务",
-            Content = "点「确认添加」后，Easy4K 会创建一个静默后台进程（Easy4K.Orphan.exe：没有窗口、不在任务栏显示）。\n\n"
-                    + $"它会一直等到 {when:MM-dd HH:mm}，到点自动启动 Easy4K 处理「{videoName}」，跑完再自动关闭。\n\n"
-                    + "期间可以继续排其它任务；不想执行了就在任务列表里点「删除」——最后一个任务删掉时，这个后台进程也会自动退出。",
-            PrimaryButtonText = "确认添加",
-            CloseButtonText = "取消",
+            Content = content,
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = XamlRoot
         };
-        if (await confirm.ShowLocalizedAsync() != ContentDialogResult.Primary) return;
+        if (conflict is null)
+        {
+            confirm.PrimaryButtonText = "确认添加";
+            confirm.CloseButtonText = "取消";
+        }
+        else
+        {
+            confirm.PrimaryButtonText = "启动前强制清理";
+            confirm.SecondaryButtonText = "不清理，直接启动";
+            confirm.CloseButtonText = "取消";
+        }
 
-        var task = Vm.AddOrphanTask(when);
+        var result = await confirm.ShowLocalizedAsync();
+        if (result == ContentDialogResult.None) return; // 取消
+
+        var cleanTemp = conflict is null || result == ContentDialogResult.Primary;
+        var task = Vm.AddOrphanTask(when, cleanTemp);
         App.MainWindow?.ShowNotice("已添加孤儿执行任务",
-            $"{task.RunAt:MM-dd HH:mm:ss} 将自动启动 Easy4K 处理「{task.DisplayName}」。当前有 {Vm.OrphanTasks.Count} 个孤儿执行任务。");
+            $"{task.RunAt:yyyy-MM-dd HH:mm:ss} 将自动启动 Easy4K 处理「{task.DisplayName}」。当前有 {Vm.OrphanTasks.Count} 个孤儿执行任务。");
+    }
+
+    /// <summary>两个目录是否在同一块磁盘上（盘符相同）。路径为空或非法时按「不同盘」处理，不打扰用户。</summary>
+    private static bool SameDrive(string a, string b)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return false;
+            var ra = Path.GetPathRoot(Path.GetFullPath(a));
+            var rb = Path.GetPathRoot(Path.GetFullPath(b));
+            return !string.IsNullOrEmpty(ra) && ra.Equals(rb, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>DatePicker 的内联模板把三列设成 78*/132*/78*，「月」那格还写死左对齐 + 9px 左内边距，
