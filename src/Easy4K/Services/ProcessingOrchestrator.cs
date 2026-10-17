@@ -2286,8 +2286,11 @@ public sealed class ProcessingOrchestrator
             }
             var useTorchBlock = ctx.IfDriverKey.Length > 0;
             var args = useTorchBlock
+                // 与逐阶段路径保持一致：涡轮块里也要把「降低部分画质」落到 PyTorch 的 --fp16。
+                // 之前这里误把「安全帧率」当 sceneDetect 传进来，既开了不该开的切镜检测，又漏了 --fp16。
                 ? VfiTorchCommandBuilder.Build(ctx.Tools.VfiDriverScript, ctx.IfDriverKey, ifInput, ifOut, toolCount,
-                    VfiTorchCommandBuilder.ScaleFor(ctx.Video.Width), ctx.Settings.UseSafeFrameRate)
+                    VfiTorchCommandBuilder.ScaleFor(ctx.Video.Width), sceneDetect: false,
+                    threads: Math.Clamp(ctx.Settings.ThreadCount, 1, 32), fp16: ctx.Settings.LowerQualityForVram)
                 : RifeCommandBuilder.Build(ifInput, ifOut, ctx.IfModel, ifMult, toolCount, jThreads,
                     ctx.Settings.LowerQualityForVram, useCpu: cpu);
             var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating,
