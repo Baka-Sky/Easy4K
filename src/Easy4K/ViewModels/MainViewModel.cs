@@ -1670,14 +1670,22 @@ public partial class MainViewModel : ObservableObject
         if (Gpu.VramMB > 0)
             warns.AppendLine($"当前显卡: {Gpu.Name} ({(int)Math.Round(Gpu.VramMB / 1024.0)}GB)");
 
-        // 估算临时文件占用：每帧 PNG 约 2MB（1080p）→ 4K 约 8MB
+        // 估算临时文件峰值占用：PNG 大致 1 字节/像素（1080p≈2MB/帧，4K≈8MB/帧）。
+        // 旧算法一律按「输入 2MB + 超分 8MB + 补帧 8MB×倍率」算，1080p 会被高估三到四倍，
+        // 长视频能算出上千 GB。这里按真实输出分辨率分别算三批帧：拆帧、超分帧、补帧输出。
         if (Video is not null && Video.IsValid && Video.TotalFrames > 0)
         {
-            var perFrameMb = (SuperResolution ? Video.Width * SrScale : Video.Width) >= 3840 ? 8.0 : 2.0;
-            var totalMb = Video.TotalFrames * perFrameMb * 1.0; // input
-            if (SuperResolution) totalMb += Video.TotalFrames * 8.0; // 4k
-            if (Interpolation) totalMb += Video.TotalFrames * IfMultiplier * 8.0;
-            warns.AppendLine($"预计临时文件占用: {totalMb / 1024.0:F1} GB");
+            var outW = SuperResolution ? Video.Width * SrScale : Video.Width;
+            var outH = SuperResolution ? Video.Height * SrScale : Video.Height;
+            double MbPerFrame(int w, int h) => w * (double)h / (1024 * 1024);
+
+            var srcMb = Video.TotalFrames * MbPerFrame(Video.Width, Video.Height);
+            var srMb = SuperResolution ? Video.TotalFrames * MbPerFrame(outW, outH) : 0;
+            var ifMb = Interpolation ? ExpectedIfFrames * MbPerFrame(outW, outH) : 0;
+            var peakMb = srcMb + srMb + ifMb;
+            warns.AppendLine(peakMb >= 1024 * 1024
+                ? $"预计临时文件峰值占用: {peakMb / 1024 / 1024:F2} TB"
+                : $"预计临时文件峰值占用: {peakMb / 1024:F1} GB");
         }
 
         if (!Tools.CoreToolsOk)
