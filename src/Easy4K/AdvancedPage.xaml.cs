@@ -205,6 +205,8 @@ public sealed partial class AdvancedPage : Page
     /// <summary>按 VM 回填音频超分单选与提示（程序赋值，不触发写回）</summary>
     private void SyncAudioSrFromVm()
     {
+        // 恢复配置时可能残留「CPU 模式 + FP16」的非法组合，先纠正再回填单选
+        if (Vm.UseCpuProcessing && Vm.AudioSrPrecision == "fp16") Vm.AudioSrPrecision = "fp32";
         _audioSrSyncing = true;
         AudioSrFp16Rb.IsEnabled = AudioSrFp16Available;
         AudioSrFp16Rb.IsChecked = Vm.AudioSrPrecision == "fp16";
@@ -221,6 +223,8 @@ public sealed partial class AdvancedPage : Page
             AudioSrHint.Text = "未找到 Tools\\AudioSR\\audiosr_onnx.py，音频超分无法启用。";
         else if (!AudioSrFp16Available)
             AudioSrHint.Text = "未检测到 FP16 权重包（Tools\\AudioSR\\models-fp16），该选项不可用；请放入权重包或改用 FP32。";
+        else if (Vm.UseCpuProcessing)
+            AudioSrHint.Text = "已开启 CPU 处理模式：AudioSR 只能用 FP32 高精度（FP16 权重包需要 GPU，选了会自动改回 FP32）。";
         else
             AudioSrHint.Text = "精度跟随你的选择，后端降级不会改档：N 卡按 CUDA → DirectML → CPU 逐级尝试，其它显卡按 DirectML → CPU；三级都起不来才会报错。";
     }
@@ -235,11 +239,32 @@ public sealed partial class AdvancedPage : Page
         UpdateAudioSrHint();
     }
 
-    /// <summary>精度单选：选 FP16 时校验权重包是否就绪。</summary>
-    private void OnAudioSrPrecisionChecked(object sender, RoutedEventArgs e)
+    /// <summary>CPU 处理模式下选 FP16：FP16 权重包只能在 GPU 上推理，弹窗说明并改回 FP32。</summary>
+    private async Task ShowAudioSrFp16BlockedAsync()
+    {
+        var dlg = new ContentDialog
+        {
+            Title = "CPU 处理模式下不能用 FP16",
+            Content = "FP16 权重包只能在 GPU 上推理，已经开启「使用 CPU 处理所有模型」，所以音频超分精度只能是 FP32。\n\n" +
+                      "本次已把精度改回 FP32 高精度；想用 FP16 请先关掉 CPU 处理模式。",
+            CloseButtonText = "知道了",
+            XamlRoot = XamlRoot
+        };
+        await dlg.ShowLocalizedAsync();
+    }
+
+    /// <summary>精度单选：选 FP16 时校验权重包与 CPU 处理模式。</summary>
+    private async void OnAudioSrPrecisionChecked(object sender, RoutedEventArgs e)
     {
         if (_audioSrSyncing) return;
         var wantFp16 = AudioSrFp16Rb.IsChecked == true;
+
+        if (wantFp16 && Vm.UseCpuProcessing)
+        {
+            RevertAudioSrToFp32();
+            await ShowAudioSrFp16BlockedAsync();
+            return;
+        }
 
         if (wantFp16 && !AudioSrFp16Available)
         {
@@ -508,7 +533,9 @@ public sealed partial class AdvancedPage : Page
         if (CpuProcessingCb.IsChecked != Vm.UseCpuProcessing)
             CpuProcessingCb.IsChecked = Vm.UseCpuProcessing;
 
-        // 精度不随 CPU 模式改变：后端逐级降级，不改动用户选的权重包
+        // CPU 处理模式与 FP16 互斥：程序侧变化（恢复配置、手机遥控）也要把精度拉回 FP32
+        if (Vm.UseCpuProcessing && Vm.AudioSrPrecision == "fp16") RevertAudioSrToFp32();
+
         UpdateAudioSrHint();
     }
 
@@ -613,7 +640,10 @@ public sealed partial class AdvancedPage : Page
             if (result == ContentDialogResult.Primary)
             {
                 // 确认开启 → 写回 VM（触发联动：取消勾选安全帧率/降低画质/GPU加速并禁用，保存 config）
+                var hadFp16 = Vm.AudioSrPrecision == "fp16";
                 Vm.UseCpuProcessing = true;
+                // CPU 模式与 FP16 互斥：原来选了 FP16 就说明一下为什么被改回 FP32
+                if (hadFp16) await ShowAudioSrFp16BlockedAsync();
             }
             else
             {
