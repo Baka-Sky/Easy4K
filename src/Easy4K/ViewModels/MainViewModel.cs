@@ -173,6 +173,12 @@ public partial class MainViewModel : ObservableObject
         _dedupMode = _app.DedupMode;
         _audioSrEnabled = _app.AudioSrEnabled;
         _audioSrPrecision = string.Equals(_app.AudioSrPrecision, "fp32", StringComparison.OrdinalIgnoreCase) ? "fp32" : "fp16";
+        // 配置里残留「CPU 处理 + FP16」的非法组合时，启动即纠正（FP16 权重包只能在 GPU 上跑）
+        if (_useCpuProcessing)
+        {
+            _audioSrPrecision = "fp32";
+            _sfAudioPrecision = "fp32";
+        }
         _turboMode = _app.TurboMode;
         _turboBlockFrames = Math.Clamp(_app.TurboBlockFrames, 32, 4000);
         _autoRemoteOnStartup = _app.AutoRemoteOnStartup;
@@ -633,6 +639,9 @@ public partial class MainViewModel : ObservableObject
             UseSafeFrameRate = false;
             LowerQualityForVram = false;
             UseGpuAcceleration = false;
+            // 音频超分的 FP16 权重包只能在 GPU 上跑：主管线与单文件都拉回 FP32
+            if (string.Equals(AudioSrPrecision, "fp16", StringComparison.OrdinalIgnoreCase)) AudioSrPrecision = "fp32";
+            if (string.Equals(SfAudioPrecision, "fp16", StringComparison.OrdinalIgnoreCase)) SfAudioPrecision = "fp32";
         }
     }
 
@@ -1226,6 +1235,13 @@ public partial class MainViewModel : ObservableObject
     /// <summary>音频超分精度档：fp16（仅 GPU）/ fp32（CPU 也行）</summary>
     [ObservableProperty] private string _sfAudioPrecision = "fp16";
 
+    /// <summary>统一成小写（界面下拉框、手机端遥控、配置里都按 fp16/fp32 比对）</summary>
+    partial void OnSfAudioPrecisionChanged(string value)
+    {
+        var canonical = string.Equals(value, "fp32", StringComparison.OrdinalIgnoreCase) ? "fp32" : "fp16";
+        if (!string.Equals(canonical, value, StringComparison.Ordinal)) SfAudioPrecision = canonical;
+    }
+
     /// <summary>单文件任务状态文案（显示在卡片里；详细输出在「进行中」页日志）</summary>
     [ObservableProperty] private string _sfStatus = "";
 
@@ -1425,7 +1441,8 @@ public partial class MainViewModel : ObservableObject
     /// <summary>单个音频文件超分：ffmpeg 转 48kWAV → audiosr_onnx.py → 把结果复制到输出目录</summary>
     private async Task RunSingleAudioAsync(string input, CancellationToken ct)
     {
-        var precision = string.Equals(SfAudioPrecision, "fp32", StringComparison.OrdinalIgnoreCase) ? "fp32" : "fp16";
+        // CPU 处理模式下只能用 FP32（FP16 权重包只能在 GPU 上跑），这里再兜一道
+        var precision = (UseCpuProcessing || string.Equals(SfAudioPrecision, "fp32", StringComparison.OrdinalIgnoreCase)) ? "fp32" : "fp16";
         var packText = precision == "fp16" ? "FP16 低精度性能模式" : "FP32 高精度完美模式";
 
         if (!Tools.AudioSrScriptExists)

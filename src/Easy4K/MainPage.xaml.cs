@@ -120,11 +120,43 @@ public sealed partial class MainPage : Page
         await dlg.ShowLocalizedAsync();
     }
 
+    /// <summary>程序回填单文件音频精度时抑制联动（避免自己触发自己的提示）</summary>
+    private bool _sfAudioPrecisionSyncing;
+
     /// <summary>VM 属性兜底：模型变化 → 刷新倍率锁定。</summary>
     private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(Vm.IfModel))
             Vm.RefreshIfMultiplierLock(Vm.IfModel);
+    }
+
+    /// <summary>单文件「精度」下拉框：CPU 处理模式下不能选 fp16（FP16 权重包只能在 GPU 上跑）。
+    /// 用控件事件而不是 VM 属性变更，确保用户手点一定能弹提示。</summary>
+    private async void OnSfPrecisionSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        await Task.Yield(); // 等 x:Bind 把 SelectedItem 写进 VM 再判断
+        if (_sfAudioPrecisionSyncing) return;
+        if (!Vm.UseCpuProcessing) return;
+        if (!string.Equals(Vm.SfAudioPrecision, "fp16", StringComparison.OrdinalIgnoreCase)) return;
+
+        SetSfAudioPrecision("fp32");
+        var dlg = new ContentDialog
+        {
+            Title = "CPU 处理模式下不能用 FP16",
+            Content = "FP16 权重包只能在 GPU 上推理，已经开启「使用 CPU 处理所有模型」，所以单文件 AudioSR 也只能用 FP32。\n\n" +
+                      "本次已把精度改回 fp32；想用 fp16 请先在高级页关掉 CPU 处理模式。",
+            CloseButtonText = "知道了",
+            XamlRoot = XamlRoot
+        };
+        await dlg.ShowLocalizedAsync();
+    }
+
+    /// <summary>带抑制标记地改单文件音频精度（防止再触发一次提示）</summary>
+    private void SetSfAudioPrecision(string value)
+    {
+        _sfAudioPrecisionSyncing = true;
+        try { Vm.SfAudioPrecision = value; }
+        finally { _sfAudioPrecisionSyncing = false; }
     }
 
     // ===================== 补帧模型选择（重写：整体重建下拉框，避开 ComboBox 绑定联动 0x80070490 闪退） =====================

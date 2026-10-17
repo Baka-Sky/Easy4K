@@ -314,9 +314,10 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="精度" Style="{StaticResource FieldLabel}"/>
                             <ComboBox Grid.Column="1" SelectedItem="{x:Bind Vm.SfAudioPrecision, Mode=TwoWay}" MinWidth="200"
+                                      SelectionChanged="OnSfPrecisionSelectionChanged"
                                       HorizontalAlignment="Stretch" Style="{StaticResource GlassComboBox}">
-                                <x:String>FP16</x:String>
-                                <x:String>FP32</x:String>
+                                <x:String>fp16</x:String>
+                                <x:String>fp32</x:String>
                             </ComboBox>
                         </Grid>
                         <TextBlock Text="{x:Bind Vm.SfOutputText, Mode=OneWay}" Opacity="0.6" FontSize="11" TextTrimming="CharacterEllipsis"/>
