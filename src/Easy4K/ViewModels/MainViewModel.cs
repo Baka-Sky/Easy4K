@@ -1685,7 +1685,9 @@ public partial class MainViewModel : ObservableObject
             var peakMb = srcMb + srMb + ifMb;
             warns.AppendLine(peakMb >= 1024 * 1024
                 ? $"预计临时文件峰值占用: {peakMb / 1024 / 1024:F2} TB"
-                : $"预计临时文件峰值占用: {peakMb / 1024:F1} GB");
+                : peakMb >= 1024
+                    ? $"预计临时文件峰值占用: {peakMb / 1024:F1} GB"
+                    : $"预计临时文件峰值占用: {peakMb:F0} MB");
         }
 
         if (!Tools.CoreToolsOk)

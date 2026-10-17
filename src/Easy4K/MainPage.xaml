@@ -397,10 +397,19 @@
                         </Grid>
                         <TextBlock Text="{x:Bind Vm.CanStartReason, Mode=OneWay}" Foreground="Orange" FontSize="11" TextWrapping="Wrap"
                                    Visibility="{x:Bind Vm.StartBlockReasonVis, Mode=OneWay}"/>
-                        <TextBlock Text="{x:Bind Vm.FinalOutputName, Mode=OneWay}" Opacity="0.6" FontSize="11" TextTrimming="CharacterEllipsis"/>
-
-                        <TextBlock Text="孤儿模式：到点自动启动 Easy4K，按上面的选项处理这支视频，跑完自动关闭；可依次排队多个任务。"
-                                   FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="{x:Bind Vm.FinalOutputName, Mode=OneWay}" Opacity="0.6" FontSize="11"
+                                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                            <!-- 孤儿模式说明与上一行「输出文件名」同一排，靠窗口最右侧 -->
+                            <TextBlock Grid.Column="1"
+                                       Text="孤儿模式：到点自动启动 Easy4K，按上面的选项处理这支视频，跑完自动关闭；可依次排队多个任务。"
+                                       FontSize="10" Opacity="0.6" TextWrapping="Wrap"
+                                       HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                        </Grid>
                         <StackPanel Spacing="3" Visibility="{x:Bind Vm.OrphanListVis, Mode=OneWay}">
                             <TextBlock Text="{x:Bind Vm.OrphanCountText, Mode=OneWay}" FontWeight="SemiBold" FontSize="12"/>
                             <ItemsControl ItemsSource="{x:Bind Vm.OrphanTasks}">
