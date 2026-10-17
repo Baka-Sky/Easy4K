@@ -1670,14 +1670,16 @@ public partial class MainViewModel : ObservableObject
         if (Gpu.VramMB > 0)
             warns.AppendLine($"当前显卡: {Gpu.Name} ({(int)Math.Round(Gpu.VramMB / 1024.0)}GB)");
 
-        // 估算临时文件峰值占用：PNG 大致 1 字节/像素（1080p≈2MB/帧，4K≈8MB/帧）。
-        // 旧算法一律按「输入 2MB + 超分 8MB + 补帧 8MB×倍率」算，1080p 会被高估三到四倍，
-        // 长视频能算出上千 GB。这里按真实输出分辨率分别算三批帧：拆帧、超分帧、补帧输出。
+        // 估算临时文件峰值占用：按实测 PNG 体积 ~1.5 字节/像素算（1080p≈3MB/帧，4K≈12MB/帧）。
+        // 旧算法一律按「输入 2MB + 超分 8MB + 补帧 8MB×倍率」相加，1080p 会被高估、
+        // 4K 又会被低估，长视频能算出上千 GB 的离谱数字。这里按真实输出分辨率算三批帧：
+        // 拆帧（源分辨率）、超分帧（输出分辨率）、补帧输出（输出分辨率，按补帧后总帧数）。
         if (Video is not null && Video.IsValid && Video.TotalFrames > 0)
         {
             var outW = SuperResolution ? Video.Width * SrScale : Video.Width;
             var outH = SuperResolution ? Video.Height * SrScale : Video.Height;
-            double MbPerFrame(int w, int h) => w * (double)h / (1024 * 1024);
+            const double BytesPerPixel = 1.5;
+            double MbPerFrame(int w, int h) => w * (double)h * BytesPerPixel / (1024 * 1024);
 
             var srcMb = Video.TotalFrames * MbPerFrame(Video.Width, Video.Height);
             var srMb = SuperResolution ? Video.TotalFrames * MbPerFrame(outW, outH) : 0;
