@@ -2624,11 +2624,51 @@ public partial class MainViewModel : ObservableObject
     /// <summary>临时目录缓存检测结果</summary>
     public enum TempCacheStatus { None, Match, Mismatch }
 
-    /// <summary>读取目录中的旧缓存来源视频；无 cache.json 返回 null</summary>
+    /// <summary>临时目录里的「中间产物」白名单：与清理逻辑用的是同一份目录/文件名。
+    /// 判断"有没有老文件"不能只看 cache.json —— 上次被强杀、手工删过 cache.json、或清理了一半时，
+    /// 目录里可能剩着上万帧却没有 cache.json。</summary>
+    private static readonly string[] TempArtifactDirs =
+    {
+        "input_frames", "4k_frames", "output_frames", "expanded_frames",
+        "input_frames_dedup_removed", "if_input_kept", "if_input_kept_b"
+    };
+
+    private static readonly string[] TempArtifactFiles =
+    {
+        "audio.flac", "temp_video.mkv", "hdr_video.mkv", "audio_embedded.mkv",
+        "dedup_map.json", "audiosr_in_48k.wav", "audiosr_out_48k.wav",
+        "if_input_kept.done.json", "if_input_kept_b.done.json"
+    };
+
+    /// <summary>目录里是否残留上次处理的中间产物（不看 cache.json）</summary>
+    private static bool HasTempArtifacts(string dir)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) return false;
+            foreach (var d in TempArtifactDirs)
+            {
+                var p = Path.Combine(dir, d);
+                if (Directory.Exists(p) && Directory.EnumerateFileSystemEntries(p).Any()) return true;
+            }
+            foreach (var f in TempArtifactFiles)
+                if (File.Exists(Path.Combine(dir, f))) return true;
+        }
+        catch { }
+        return false;
+    }
+
+    /// <summary>读取目录中的旧缓存来源视频；无 cache.json 返回 null。
+    /// 没有 cache.json 但还留着帧/中间文件时同样算「有旧文件」—— 否则要等拆帧跑完才发现，
+    /// 清完还得从头再拆一遍（用户实测踩到）。</summary>
     public (TempCacheStatus Status, string SourceVideo) CheckTempCache(string dir)
     {
         var p = Path.Combine(dir, "cache.json");
-        if (!File.Exists(p)) return (TempCacheStatus.None, "");
+        if (!File.Exists(p))
+        {
+            if (HasTempArtifacts(dir)) return (TempCacheStatus.Mismatch, "上次处理残留的旧文件（无 cache.json 记录）");
+            return (TempCacheStatus.None, "");
+        }
         try
         {
             using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(p));

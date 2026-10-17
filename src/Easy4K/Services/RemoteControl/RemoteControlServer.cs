@@ -59,6 +59,16 @@ public sealed class RemoteControlServer
     private string? _uploadPath;
     private long _uploadExpected;
 
+    /// <summary>最近一次处理的最终结果。手机端在后台掉线期间跑完的结果，
+    /// 重连后不可能再收到那条 result 事件 —— 所以留一份，随 capabilities/config 一起补发给客户端，
+    /// 否则手机永远停在「进行中」，主页也不会出现「下载成品」。</summary>
+    private (bool Ok, string Output, string Steps, double Elapsed, long TimeMs)? _lastResult;
+
+    /// <summary>把 lastResult 序列化成协议字段（没有就返回 null）</summary>
+    private object? LastResultPayload => _lastResult is { } r
+        ? new { success = r.Ok, output = r.Output, steps = r.Steps, elapsed = r.Elapsed, time = r.TimeMs }
+        : null;
+
     public RemoteControlServer(MainViewModel vm, DispatcherQueue ui)
     {
         _vm = vm;
@@ -561,6 +571,8 @@ public sealed class RemoteControlServer
             type = "capabilities",
             version = _vm.Version,
             protocol = ProtocolVersion,
+            // 断线重连后补回上一次的结果（完成 + 成品路径），客户端据此恢复「下载成品」卡片
+            lastResult = LastResultPayload,
             gpu = new
             {
                 name = gpu.Name,
@@ -1080,6 +1092,8 @@ public sealed class RemoteControlServer
         return (object)new
         {
             type = "config",
+            // 同上：重连后补发上一次结果；另外把是否正在处理也带上，客户端据此纠正「一直显示进行中」
+            lastResult = LastResultPayload,
             // 远端当前探测到的视频信息：客户端据此显示分辨率/帧率/时长（帧文件夹模式也靠它同步手工填的参数）
             video = (object?)(_vm.Video is { IsValid: true } vv
                 ? new
@@ -1133,6 +1147,9 @@ public sealed class RemoteControlServer
             paths = new { input = _vm.InputVideo, outputRoot = _vm.OutputRoot, tempRoot = _vm.TempRoot, outputName = _vm.FinalOutputName, externalFramesDir = _vm.ExternalFramesDir },
             state = new
             {
+                // 是否正在处理：客户端重连后据此纠正「一直显示进行中」（掉线期间已经跑完了）
+                isProcessing = _vm.IsProcessing,
+                isPaused = _vm.IsPaused,
                 canStart = _vm.CanStart,
                 canStartReason = _vm.CanStartReason,
                 // 临时目录是否残留了别的视频的旧缓存：客户端在开始处理前先问一次，
@@ -1217,14 +1234,20 @@ public sealed class RemoteControlServer
 
     // ===================== VM 事件转发 =====================
 
-    private void OnProcessingCompleted(ProcessingResult r) => Send(new
+    private void OnProcessingCompleted(ProcessingResult r)
     {
-        type = "result",
-        success = r.Success,
-        output = r.OutputPath,
-        steps = r.StepsText,
-        elapsed = r.Elapsed.TotalSeconds
-    });
+        // 先留档再推送：客户端此刻可能已经掉线，重连后靠 lastResult 补回「完成 + 下载成品」
+        _lastResult = (r.Success, r.OutputPath ?? "", r.StepsText ?? "", r.Elapsed.TotalSeconds,
+            DateTimeOffset.Now.ToUnixTimeMilliseconds());
+        Send(new
+        {
+            type = "result",
+            success = r.Success,
+            output = r.OutputPath,
+            steps = r.StepsText,
+            elapsed = r.Elapsed.TotalSeconds
+        });
+    }
 
     private void OnStartFailed(string msg) => Send(new { type = "error", message = msg });
 
