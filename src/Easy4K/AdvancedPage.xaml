@@ -239,7 +239,7 @@
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="CQ / QP 值" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
-                            <NumberBox Grid.Column="1" Value="{x:Bind Vm.HwQuality, Mode=TwoWay}" Minimum="0" Maximum="51" SmallChange="1"
+                            <NumberBox x:Name="HwQualityBox" Grid.Column="1" Value="{x:Bind Vm.HwQuality, Mode=TwoWay}" Minimum="0" Maximum="51" SmallChange="1"
                                        SpinButtonPlacementMode="Compact" Width="120"/>
                             <TextBlock Grid.Column="2" Text="取值范围 0~51，数值越小画质越好、码率越高；未勾选 CQ/QP 时用默认档。两者互斥：开一个另一个自动关闭。仅硬件编码生效（编码器由显卡自动选择：N 卡 NVENC / A 卡 AMF），CPU 处理模式下不可用。"
                                        VerticalAlignment="Center" FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>

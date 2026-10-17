@@ -512,8 +512,13 @@ public sealed partial class AdvancedPage : Page
         SafeFrameRateCb.IsEnabled = enabled;
         LowerQualityCb.IsEnabled = enabled;
         GpuAccelerationCb.IsEnabled = enabled;
+
+        // CPU 模式下合并一律走 libx265，CQ/QP 完全不生效：先把两个开关弹回未勾选（写回配置），
+        // 再连同右侧数值一起置灰，避免「勾着却是灰的」这种看着别扭的状态。
+        if (!enabled && !string.IsNullOrEmpty(Vm.HwQualityMode)) Vm.HwQualityMode = "";
         HwCqCb.IsEnabled = enabled;
         HwQpCb.IsEnabled = enabled;
+        HwQualityBox.IsEnabled = enabled;
     }
 
     /// <summary>VM 属性兜底：CPU 处理模式变化时同步勾选状态与联动禁用。</summary>
