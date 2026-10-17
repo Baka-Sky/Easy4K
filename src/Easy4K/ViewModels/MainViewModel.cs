@@ -2798,8 +2798,12 @@ public partial class MainViewModel : ObservableObject
         return text;
     }
 
-    /// <summary>本地版本号（config 文件 appsettings.json 里的 Version，标题栏显示 v{Version}）</summary>
-    public string Version => _app.Version;
+    /// <summary>本地版本号（标题栏显示 v{Version}）。以程序集版本为准：配置文件里的 Version 是出厂模板值，
+    /// MSIX 升级时 %LOCALAPPDATA% 下的旧配置不会被覆盖，读配置会让标题栏一直停在旧版本。</summary>
+    public string Version =>
+        typeof(MainViewModel).Assembly.GetName().Version is { Major: > 0 } v
+            ? $"{v.Major}.{v.Minor}.{v.Build}"
+            : _app.Version;
 
     /// <summary>配置文件中保存的主题模式（light/dark/system/acrylic）</summary>
     public string SavedTheme => _app.Theme;
