@@ -13,9 +13,15 @@
 - **拆帧** — 使用 FFmpeg 将视频按原始质量逐帧导出 PNG（可选 GPU 硬解加速）
 - **AI 超分** — 集成 Real-ESRGAN-ncnn-vulkan，支持 x2 / x3 / x4 倍率与多个模型
 - **AI 补帧** — 支持两种引擎：NCNN（rife-ncnn-vulkan，40+ 模型）与 Offical（PyTorch 官方实现，10+ 模型），2 倍帧率提升
+- **帧去重 (SFDP)** — 自研四阶级联判决（像素差 → dHash → QR 分解 → Farnebäck 光流）剔除相邻重复帧；性能模式只跑前两阶，完美模式四阶全开
+- **目标帧率** — 可手动指定成片帧率（填了就锁掉补帧倍率），0 则按补帧倍率计算
 - **合并视频** — FFmpeg (libx265 / CRF 18) 将处理后的帧合成新视频（可选 GPU 硬件编码器，失败自动回退 CPU）
+- **编码质量** — CPU CRF / 硬件编码 CQ·QP 二选一，编码器随显卡自动选择（AMD→AMF，NVIDIA→NVENC，Intel→QSV）
 - **音频嵌入** — 自动提取原视频音轨并嵌入新视频（PCM 24bit / 96kHz）
+- **保留内嵌字幕** — 成片里复制原视频的字幕流（原视频没有字幕时自动禁用）
 - **SDR→HDR** — NVIDIA RTX 显卡可开启（NVEncC 驱动），非 RTX 自动禁用
+- **远程控制** — 电脑端可作服务端（手机 HikariAPP 遥控）或客户端（遥控另一台 Easy4K），支持 IP / 域名 / IPv6
+- **孤儿任务** — 把当前这套设置排成定时任务，到点自动启动 Easy4K 跑完再自动关闭，可排队多个
 - **CPU 处理模式** — 勾选后全部模型使用 CPU 推理（超分不支持 CPU 时自动升级 GPU 处理），适合 GPU 不可用/不稳定时
 - **安全帧率** — 遇到设备丢失/显存/内存溢出时强制停止，保护显卡
 - **降低画质** — `-u` UHD / Offical FP16，降低显存/内存占用
@@ -86,6 +92,24 @@
 - **命令日志** — 全部子进程实时输出，支持多行选择、滚动到底部、自动裁剪（最多保留 200 行）
 - **CPU/GPU 监控** — 实时占用率环形指示器
 
+## 远程控制（手机 / 另一台电脑）
+
+电脑端既能当**服务端**，也能当**客户端**，走同一套「一行一条 JSON」的文本协议（端口 `11451`）。
+
+**作为服务端**（用手机 HikariAPP 遥控这台电脑）
+
+1. 设置页 → 远程控制 → 启动远程控制（也可设为开机自动进入）
+2. 监听是**双栈**的：局域网 IPv4、IPv6 直连、以及域名解析出的地址都能连
+3. 手机端连上后可以：选电脑上的视频/目录、改动全部处理选项、启停与暂停、看进度与日志、把成品下载回手机
+4. 服务端会把显卡、模型列表、当前视频信息、临时目录缓存状态一并推给手机端
+
+**作为客户端**（遥控另一台开着远程控制的 Easy4K）
+
+- 设置 → 遥控另一台 Easy4K，填对方地址
+- 支持 `192.168.31.156`、`home.example.com`、`home.example.com:11451`、`[240e::1]:11451`（IPv6 要加方括号）
+- 连上后**不另开界面**：直接用本窗口的主页 / 高级 / 进行中操作对方电脑，顶部出现黄色「已连接至 …」横幅
+- 目录选择、显卡信息、输出/临时目录、显存提示全部按**对方电脑**的真实情况显示
+
 ## 功能细节
 
 ### 进度显示
@@ -112,7 +136,6 @@
 
 | 快捷键 | 功能 |
 | --- | --- |
-| `Ctrl+O` | 打开视频 |
 | `Ctrl+S` | 开始处理 |
 | `Ctrl+Shift+S` | 停止处理 |
 | `Ctrl+L` | 清空日志 |
@@ -127,6 +150,7 @@
 ```
 Easy4K/
 ├── Easy4K.exe                  # 主程序
+├── Easy4K.SFDP.dll             # 帧去重动态库（主程序直接调用，也可给别的 .NET 程序用）
 ├── appsettings.json            # 配置（工具路径、默认模型、线程数等）
 ├── Assets/                     # 应用资源（图标等）
 ├── FFmpeg-Lei/                 # FFmpeg 工具（ffmpeg.exe / ffprobe.exe）
@@ -141,13 +165,24 @@ Easy4K/
 > 程序启动时按以下顺序自动定位工具根目录：
 > `exe\Tools\` → `exe\`（根下直接放工具）→ 向上逐级查找 → 开发期兜底路径。
 
+### 一键编译（推荐）
+
+双击仓库根目录的 **`一键编译.bat`**（或 `powershell -ExecutionPolicy Bypass -File build-all.ps1`）：
+
+1. 依次编译 `Easy4K.SFDP` 与 `Easy4K` 的 **Debug + Release**
+2. 把 Release 版帧去重动态库同步到 `lib\Easy4K.SFDP\Easy4K.SFDP.dll`
+3. 打印 Debug / Release 主程序与动态库的完整路径
+
+> 编译前若 Easy4K 正在运行会直接提示先关闭（否则 exe 被占用，MSB3021）。
+> `build-all.ps1` 必须保持 **UTF-8 with BOM**：PowerShell 5.1 会把无 BOM 的文件按 ANSI 解码，中文可能直接导致语法错误。
+
 ### 从源码构建
 
 要求：.NET SDK 10 + Windows App SDK 2.4 支持
 
 ```powershell
 cd src/Easy4K
-dotnet build -c Debug -r win-x64
+dotnet build -c Debug -r win-x64 -p:Platform=x64
 ```
 
 发布：
@@ -159,6 +194,32 @@ dotnet publish -c Release -r win-x64
 - 应用图标通过 `<ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>` 嵌入 exe
 - 打包前需把 `Tools/` 下 4 个工具目录复制到输出目录（`bin\...\win-x64\`）与 exe 同级
 - 开发期间工具位于仓库根 `Tools/`，运行时自动向上查找定位
+
+## Easy4K.SFDP（帧去重动态库）
+
+`lib/Easy4K.SFDP/Easy4K.SFDP.dll` 是把「相邻帧去重 SFDP」单独拆出来的**动态链接库**。
+主程序直接引用它（不起独立进程），其他 .NET 程序也可以直接调用：
+
+```csharp
+using Easy4K.SFDP;
+
+var opt = FrameDedupService.Options.FromMode("performance"); // 或 "uhd"（完美模式）
+
+// framesDir 里放 00000001.png 这类连续帧；progress 可传 null
+var result = await FrameDedupService.AnalyzeAsync(framesDir, opt, progress: null, ct);
+
+result.Total            // 总帧数
+result.DuplicateCount   // 判重帧数
+result.KeptCount        // 实际需要送去超分/补帧的帧数
+result.DedupRate        // 去重率 0~1
+result.Decisions        // 逐帧判决：Index / Duplicate / Mad / Hamming / Qr / MeanFlow / VarFlow / Decided
+result.ExpandMap        // 回填表：展开后第 k 帧对应原始第几帧
+```
+
+- 算法源码在 `src/Easy4K.SFDP`，主程序以**项目引用**共用同一份实现 —— 改一边两边同时生效
+- 判决只做分析，**不改动任何帧文件**；剔除与回填由调用方自己按 `Decisions` / `ExpandMap` 处理
+- 运行时依赖 `Microsoft.Windows.SDK.NET.dll`（解 PNG 用的 WinRT 投影，随 Easy4K 一起分发）
+- `lib\` 里那份由「一键编译」自动刷新，不要手改
 
 ## 命令行自测模式（开发 / 排障用）
 
@@ -261,6 +322,11 @@ HDR    NVEncC64 SDR→HDR（仅 RTX）
 - **语言**：C# / .NET 10（`net10.0-windows10.0.26100.0`）
 - **MVVM**：CommunityToolkit.Mvvm 8.4.0（`[ObservableProperty]` + 编译期 `x:Bind`）
 - **外部工具**：FFmpeg、Real-ESRGAN-ncnn-vulkan、RIFE-ncnn-vulkan、NVEncC
+- **解决方案结构**：
+  - `src/Easy4K` — 主程序（WinUI 3）
+  - `src/Easy4K.SFDP` — 帧去重动态库（四阶级联判决 + Farnebäck 光流）
+  - `src/Easy4K.Orphan` — 孤儿任务定时守护进程（无界面控制台 exe）
+- **构建**：`一键编译.bat` → `build-all.ps1`（Debug + Release 全量编译并同步动态库）
 
 ## 许可 / 致谢
 
