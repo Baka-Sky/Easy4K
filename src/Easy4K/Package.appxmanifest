@@ -11,7 +11,7 @@
   <Identity
     Name="WellsJiang.Easy4K"
     Publisher="CN=2E0B1BB6-EB54-446B-B641-48F45953E99B"
-    Version="2.1.1.0" />
+    Version="2.1.2.0" />
 
   <mp:PhoneIdentity PhoneProductId="2E0B1BB6-EB54-446B-B641-48F45953E99B" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
