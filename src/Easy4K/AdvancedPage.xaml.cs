@@ -17,7 +17,7 @@ public sealed partial class AdvancedPage : Page
     /// <summary>程序回写滑块期间置位：期间触发的 ValueChanged 不参与判断/不回退</summary>
     private bool _threadSyncing;
 
-    /// <summary>会话级：高线程警告只弹一次（确认/拒绝后均不再弹）</summary>
+    /// <summary>会话级：用户点「是」确认高线程后不再提醒；点「否」不置位，下次仍会提醒</summary>
     private static bool _threadWarnShown;
 
     /// <summary>警告弹窗是否已打开（防止拖动期间重复弹）</summary>
@@ -549,8 +549,8 @@ public sealed partial class AdvancedPage : Page
         UpdateAudioSrHint();
     }
 
-    /// <summary>线程滑块变化：调到 1:8:8（8）及以上时弹窗确认（会话内只弹一次），
-    /// 弹窗前释放滑块指针捕获（相当于自动松开鼠标左键，避免弹窗期间滑块继续被拖动），拒绝则回退到上次确认值。</summary>
+    /// <summary>线程滑块变化：调到 1:8:8（8）及以上时弹窗确认；选「是」本次会话不再提醒，
+    /// 选「否」回退到上次确认值且下次仍会提醒。弹窗前释放滑块指针捕获（相当于自动松开鼠标左键）。</summary>
     private async void OnThreadSliderValueChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
         if (_threadSyncing) return;   // 程序回写滑块时不参与判断（避免回退被再次当成用户拖动）
@@ -590,13 +590,13 @@ public sealed partial class AdvancedPage : Page
             {
                 _threadDialogOpen = false;
             }
-            _threadWarnShown = true; // 本次会话不再重复弹出（选是、选否都一样，避免"点否下次又来一次"）
 
             if (result != ContentDialogResult.Primary)
             {
                 // 拒绝 → 滑块与 VM 一起退回上次确认值。
                 // 只写 VM 不够：TwoWay 绑定下拖动过程已把新值写进 VM，回退可能被滑块的后续事件覆盖，
                 // 于是出现"点了否却还是按高线程跑"。两边都显式写回，并在回写期间屏蔽本处理函数。
+                // 不置 _threadWarnShown：点「否」下次拖到高线程还要继续提醒，直到用户点「是」为止。
                 _threadSyncing = true;
                 try
                 {
@@ -606,6 +606,9 @@ public sealed partial class AdvancedPage : Page
                 finally { _threadSyncing = false; }
                 return;
             }
+
+            // 用户点「是」确认高线程 → 本次会话不再重复提醒
+            _threadWarnShown = true;
         }
         _lastConfirmedThreads = newVal;
     }
