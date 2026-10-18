@@ -1487,7 +1487,18 @@ public sealed class ProcessingOrchestrator
             if (keptFiles.Length == 0) return false;
             Array.Sort(keptFiles, StringComparer.OrdinalIgnoreCase);
 
-            if (Directory.Exists(expandedDir)) Directory.Delete(expandedDir, true);
+            if (Directory.Exists(expandedDir))
+            {
+                // 上一次中断留下的展开目录可能有几万帧：同步删除会卡死 UI，表现为进度文字不动
+                var cleanText = "回填：清理上次展开文件…";
+                ProgressChanged?.Invoke(new ProcessProgress
+                {
+                    Stage = ProcessStage.Merging,
+                    StageText = cleanText,
+                    CustomDetail = cleanText
+                });
+                await Task.Run(() => Directory.Delete(expandedDir, true), ct);
+            }
             Directory.CreateDirectory(expandedDir);
 
             // 预扫：每个槽位所属"重复段"的长度。expandPos 非递减，同值连续区间 = 一个重复段
@@ -1735,7 +1746,19 @@ public sealed class ProcessingOrchestrator
 
         try
         {
-            if (Directory.Exists(turboRoot)) Directory.Delete(turboRoot, true);
+            if (Directory.Exists(turboRoot))
+            {
+                // 上次中断留下的块目录可能有上万个文件：同步递归删除会卡住 UI 线程，
+                // 表现就是进度文字一直停在"准备中"却还在跑。这里先给文案，再丢后台线程删。
+                var cleanText = "准备中：清理上次涡轮临时文件…";
+                ProgressChanged?.Invoke(new ProcessProgress
+                {
+                    Stage = ProcessStage.SuperRes,
+                    StageText = cleanText,
+                    CustomDetail = cleanText
+                });
+                await Task.Run(() => Directory.Delete(turboRoot, true), ct);
+            }
             Directory.CreateDirectory(turboRoot);
             await CleanPartialOutputAsync(srFrames, ProcessStage.SuperRes, "超分中", ct);
             if (ctx.Options.Interpolation)
@@ -2425,6 +2448,18 @@ public sealed class ProcessingOrchestrator
         if (!Directory.Exists(dir)) return;
         var files = Directory.GetFiles(dir, "*.png");
         if (files.Length == 0) return;
+        // 先立刻推一条 0/N：否则大目录要删到第 200 个文件才有反馈，界面看起来像没反应
+        var startText = $"{stageText}（清理上次残留）0/{files.Length}";
+        _logger.Info(startText);
+        ProgressChanged?.Invoke(new ProcessProgress
+        {
+            Stage = stage,
+            StageText = stageText,
+            Current = 0,
+            Total = files.Length,
+            PercentDisplay = true,
+            CustomDetail = startText
+        });
         await Task.Run(() =>
         {
             for (var i = 0; i < files.Length; i++)

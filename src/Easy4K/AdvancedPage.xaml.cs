@@ -14,6 +14,8 @@ public sealed partial class AdvancedPage : Page
 
     /// <summary>上次确认的线程数（调到 1:8:8 及以上弹窗，拒绝则回退到该值）</summary>
     private int _lastConfirmedThreads;
+    /// <summary>程序回写滑块期间置位：期间触发的 ValueChanged 不参与判断/不回退</summary>
+    private bool _threadSyncing;
 
     /// <summary>会话级：高线程警告只弹一次（确认/拒绝后均不再弹）</summary>
     private static bool _threadWarnShown;
@@ -551,7 +553,10 @@ public sealed partial class AdvancedPage : Page
     /// 弹窗前释放滑块指针捕获（相当于自动松开鼠标左键，避免弹窗期间滑块继续被拖动），拒绝则回退到上次确认值。</summary>
     private async void OnThreadSliderValueChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
-        var newVal = (int)e.NewValue;
+        if (_threadSyncing) return;   // 程序回写滑块时不参与判断（避免回退被再次当成用户拖动）
+        var newVal = (int)Math.Round(e.NewValue);
+        if (newVal == _lastConfirmedThreads) return;
+
         if (newVal >= 8 && newVal > _lastConfirmedThreads)
         {
             if (_threadWarnShown)
@@ -567,23 +572,38 @@ public sealed partial class AdvancedPage : Page
             ReleaseMouseLeftButton();
             if (sender is Slider slider) slider.ReleasePointerCaptures();
 
-            var dlg = new ContentDialog
+            var result = ContentDialogResult.None;
+            try
             {
-                Title = "高线程警告",
-                Content = $"将线程设置为 1:{newVal}:{newVal} 可能会导致 Vulkan 设备丢失或显卡内存溢出，您确定？",
-                PrimaryButtonText = "是",
-                CloseButtonText = "否",
-                DefaultButton = ContentDialogButton.Close,
-                XamlRoot = XamlRoot
-            };
-            var result = await dlg.ShowLocalizedAsync();
-            _threadDialogOpen = false;
-            _threadWarnShown = true; // 本次会话不再重复弹出
+                var dlg = new ContentDialog
+                {
+                    Title = "高线程警告",
+                    Content = $"将线程设置为 1:{newVal}:{newVal} 可能会导致 Vulkan 设备丢失或显卡内存溢出，您确定？",
+                    PrimaryButtonText = "是",
+                    CloseButtonText = "否",
+                    DefaultButton = ContentDialogButton.Close,
+                    XamlRoot = XamlRoot
+                };
+                result = await dlg.ShowLocalizedAsync();
+            }
+            finally
+            {
+                _threadDialogOpen = false;
+            }
+            _threadWarnShown = true; // 本次会话不再重复弹出（选是、选否都一样，避免"点否下次又来一次"）
 
             if (result != ContentDialogResult.Primary)
             {
-                // 拒绝 → 回退到上次确认值（TwoWay 绑定会同步更新滑块）
-                Vm.ThreadCount = _lastConfirmedThreads;
+                // 拒绝 → 滑块与 VM 一起退回上次确认值。
+                // 只写 VM 不够：TwoWay 绑定下拖动过程已把新值写进 VM，回退可能被滑块的后续事件覆盖，
+                // 于是出现"点了否却还是按高线程跑"。两边都显式写回，并在回写期间屏蔽本处理函数。
+                _threadSyncing = true;
+                try
+                {
+                    if (sender is Slider s2) s2.Value = _lastConfirmedThreads;
+                    Vm.ThreadCount = _lastConfirmedThreads;
+                }
+                finally { _threadSyncing = false; }
                 return;
             }
         }
@@ -655,8 +675,17 @@ public sealed partial class AdvancedPage : Page
             }
             else
             {
-                // 拒绝 → 回退取消勾选（VM 同步关闭，UI 经 PropertyChanged 同步取消勾选）
-                Vm.UseCpuProcessing = false;
+                // 拒绝 → 回退取消勾选。
+                // 注意：勾选框没有 IsChecked 绑定，只有 Checked/Unchecked 事件；此时 VM 本来就是 false，
+                // 再赋一次 false 不会触发 PropertyChanged，OnVmPropertyChanged 也就不会去改勾选框 ——
+                // 结果是弹窗选了"取消"但框还勾着（看起来就是"点了否功能还在用"）。所以这里必须显式取消勾选。
+                _cpuDialogFromLoad = true;
+                try
+                {
+                    CpuProcessingCb.IsChecked = false;
+                    Vm.UseCpuProcessing = false;
+                }
+                finally { _cpuDialogFromLoad = false; }
             }
         }
         finally
