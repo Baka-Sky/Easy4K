@@ -1160,6 +1160,18 @@ public sealed class ProcessingOrchestrator
                 : Array.Empty<string>();
             if (stale.Length > 0)
             {
+                // 先立刻推一条 0/N：中断重跑时这里要删掉上次的保留帧子集，大目录删到第 200 个才有反馈会像卡死
+                var startText = $"帧去重：准备补帧输入（清理上次残留）0/{stale.Length}";
+                _logger.Info(startText);
+                ProgressChanged?.Invoke(new ProcessProgress
+                {
+                    Stage = ProcessStage.Splitting,
+                    StageText = "帧去重：准备补帧输入",
+                    Current = 0,
+                    Total = stale.Length,
+                    PercentDisplay = true,
+                    CustomDetail = startText
+                });
                 await Task.Run(() =>
                 {
                     for (var i = 0; i < stale.Length; i++)
