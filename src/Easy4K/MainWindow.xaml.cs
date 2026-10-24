@@ -1188,6 +1188,7 @@ public sealed partial class MainWindow : Window
         "运行环境：Python（PSF）、PyTorch（BSD-3-Clause）、CuPy（MIT）、NumPy / SciPy（BSD-3-Clause）、\n" +
         "OpenCV（Apache-2.0）、timm（Apache-2.0）、WAFT（BSD-3-Clause，随包附带源码）、\n" +
         "omegaconf / einops / loguru / yacs / easydict / tqdm / tensorboard / sympy / mpmath（MIT / Apache-2.0 / BSD-3-Clause）\n" +
+        "模型分发：Hugging Face Hub / huggingface_hub（Apache-2.0，部分模型权重的下载与缓存）\n" +
         "多媒体：FFmpeg（GPL v3，含 libx264 / libx265 / libvpx / libaom）、NVEncC（MIT）\n" +
         "界面字体：HarmonyOS Sans SC（Regular / Medium / Bold 三个字面，Huawei Device Co., Ltd.，\n" +
         "HarmonyOS Sans 字体许可）；Segoe UI、Segoe Fluent Icons / Segoe MDL2 Assets、Consolas（微软，随 Windows 提供，不随包分发）\n\n" +

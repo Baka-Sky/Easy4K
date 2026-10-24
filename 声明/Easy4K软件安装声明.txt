@@ -137,7 +137,8 @@ LICENSE 文件逐项核对：
      用途：GIMM-VFI 的 FlowFormer 主干网络
  (30) 其他 Python 依赖
      omegaconf / einops / loguru / yacs / easydict / tqdm /
-     tensorboard / sympy / mpmath 等，许可分别为 MIT、Apache-2.0 或
+     tensorboard / sympy / mpmath / huggingface_hub（模型权重
+     下载与缓存）等，许可分别为 MIT、Apache-2.0 或
      BSD-3-Clause，详见各包随附的 LICENSE 文件。
 
 【界面字体与品牌素材】
