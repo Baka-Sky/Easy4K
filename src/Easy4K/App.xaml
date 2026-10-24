@@ -93,8 +93,12 @@
 
             <!-- 所有下拉框（含没写 Style 的）统一内嵌字体；否则一部分走 GlassComboBox、
                  一部分走模板默认字族，中文观感不一致（有的发虚）。
-                 下拉项继承 ComboBox 的字体，不需要单独再定义 ComboBoxItem 样式。 -->
+                 下拉项也单独指定字体：ComboBoxItem 模板里的 ContentPresenter 不一定会继承
+                 ComboBox 的 FontFamily，展开后的列表就会有的清晰有的发虚。 -->
             <Style TargetType="ComboBox" BasedOn="{StaticResource DefaultComboBoxStyle}">
+                <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
+            </Style>
+            <Style TargetType="ComboBoxItem" BasedOn="{StaticResource DefaultComboBoxItemStyle}">
                 <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
             </Style>
 
