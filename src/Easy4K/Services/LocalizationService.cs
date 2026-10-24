@@ -109,12 +109,15 @@ public static class Loc
     /// <summary>元素 → 首次见到时的原文。切换语言时用原文重新查表，避免"译文再翻译"。</summary>
     private static readonly ConditionalWeakTable<DependencyObject, string> _origin = new();
 
-    /// <summary>遍历可视树，把已知的中文原文替换成当前语言译文（未收录的文案原样保留）。</summary>
+    /// <summary>遍历可视树，把已知的中文原文替换成当前语言译文（未收录的文案原样保留）。
+    /// 顺带把内嵌字体刷到每个文本元素上：主题字典覆盖管不到控件模板里写死 FontFamily 的地方，
+    /// 模板又是运行期才实例化的，只能在树上逐个兑现。</summary>
     public static void LocalizeTree(DependencyObject? root)
     {
         if (root is null) return;
         try
         {
+            ApplyAppFont(root);
             LocalizeElement(root);
             var count = VisualTreeHelper.GetChildrenCount(root);
             for (var i = 0; i < count; i++)
@@ -124,6 +127,61 @@ public static class Loc
         {
             // 树结构异常（元素尚未加载完）时跳过，下次导航会再试
         }
+    }
+
+    // ===================== 内嵌字体兜底 =====================
+
+    private static FontFamily? _appFont;
+
+    /// <summary>内嵌字体（App.xaml 里的 AppFontFamily）。取不到就退回系统默认，不让界面崩。</summary>
+    private static FontFamily AppFont
+    {
+        get
+        {
+            if (_appFont is not null) return _appFont;
+            try
+            {
+                if (Application.Current.Resources.TryGetValue("AppFontFamily", out var v) && v is FontFamily f)
+                    return _appFont = f;
+            }
+            catch { }
+            return _appFont = new FontFamily("Segoe UI");
+        }
+    }
+
+    /// <summary>该字族要不要替换成内嵌字体。图标字体（Fluent Icons / MDL2 / Symbol）与等宽日志（Consolas）
+    /// 是刻意保留的，不能动；已经是内嵌字体的也不重复设置。</summary>
+    private static bool ShouldReplaceFont(FontFamily? f)
+    {
+        var s = f?.Source ?? "";
+        if (s.Length == 0) return true;
+        if (s.Contains("HarmonyOS", StringComparison.OrdinalIgnoreCase)) return false;
+        if (s.Contains("Consolas", StringComparison.OrdinalIgnoreCase)) return false;
+        if (s.Contains("Fluent Icons", StringComparison.OrdinalIgnoreCase)) return false;
+        if (s.Contains("MDL2", StringComparison.OrdinalIgnoreCase)) return false;
+        if (s.Contains("Symbol", StringComparison.OrdinalIgnoreCase)) return false;
+        return s.Contains("Segoe", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("YaHei", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("Arial", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("XamlAutoFontFamily", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("Global User Interface", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void ApplyAppFont(DependencyObject el)
+    {
+        try
+        {
+            switch (el)
+            {
+                case TextBlock tb when ShouldReplaceFont(tb.FontFamily):
+                    tb.FontFamily = AppFont;
+                    break;
+                case Control c when ShouldReplaceFont(c.FontFamily):
+                    c.FontFamily = AppFont;
+                    break;
+            }
+        }
+        catch { }
     }
 
     /// <summary>代码里 new 出来的 ContentDialog 不在可视树里（弹窗挂在 XamlRoot 的 popup 层），
