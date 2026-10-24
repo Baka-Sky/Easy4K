@@ -1140,8 +1140,30 @@ public sealed partial class MainWindow : Window
         }
         catch { }
 
+        // UI 更新时间：源码里最新改动的 .xaml（用来确认界面改动是否已经被本次构建包含）
+        var uiTime = buildTime;
+        try
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            for (var i = 0; i < 8 && dir is not null; i++, dir = dir.Parent)
+            {
+                if (File.Exists(Path.Combine(dir.FullName, "Easy4K.csproj")))
+                {
+                    var sep = Path.DirectorySeparatorChar;
+                    var newest = dir.EnumerateFiles("*.xaml", SearchOption.AllDirectories)
+                        .Where(f => !f.FullName.Contains($"{sep}obj{sep}") && !f.FullName.Contains($"{sep}bin{sep}"))
+                        .Select(f => f.LastWriteTime)
+                        .DefaultIfEmpty(DateTime.MinValue)
+                        .Max();
+                    if (newest > DateTime.MinValue) uiTime = newest.ToString("yyyy MM dd HH mm");
+                    break;
+                }
+            }
+        }
+        catch { }
+
         DebugInfoText.Text =
-            "Run -> Easy4K Devcode:Hikari Future -> Easy4K Devcode:Imagination\n" +
+            $"Run -> Easy4K Devcode:Hikari Future -> Easy4K Devcode:Imagination    UI Update on {uiTime}\n" +
             $"BuildTime {buildTime} Do not distribute";
 
         RootLayout.PointerMoved += OnDebugPointerMoved;
