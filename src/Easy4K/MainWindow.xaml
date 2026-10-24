@@ -16,6 +16,13 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
+        <!-- 普通主题的窗口底色：用 ThemeResource 绑定，跟随系统主题实时切换
+             （WinUI 3 的 Window 没有默认背景，不铺这一层，浅色下露出的就是系统黑底）。
+             亚克力/图片主题时由代码隐藏，露出背景材质。 -->
+        <Border x:Name="ThemeBackdrop" Grid.Row="0" Grid.RowSpan="2"
+                Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
+                IsHitTestVisible="False"/>
+
         <!-- 图片背景主题：整窗铺满背景图（含标题栏区域），上覆一层应用内亚克力（模糊+着色）。
              默认隐藏，仅 theme=image 时由 ApplyBackdropImage 打开；未选图时只剩亚克力遮罩，
              底下仍是系统亚克力 backdrop，不会出现"空背景"。 -->
