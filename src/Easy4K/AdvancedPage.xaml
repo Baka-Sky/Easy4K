@@ -256,6 +256,8 @@
                                   FontSize="12"/>
                         <CheckBox x:Name="NoReportCb" Content="不生成配置文件（处理完成后不再生成 HTML 报告文件）"
                                   IsChecked="{x:Bind Vm.NoReport, Mode=TwoWay}" FontSize="12"/>
+                        <CheckBox x:Name="ReportAutoOpenCb" Content="报告生成后自动用浏览器打开（关掉后报告照常生成，但不再弹浏览器）"
+                                  IsChecked="{x:Bind Vm.ReportAutoOpen, Mode=TwoWay}" FontSize="12"/>
                     </StackPanel>
                 </Border>
 

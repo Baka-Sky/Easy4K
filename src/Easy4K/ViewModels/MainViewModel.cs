@@ -93,6 +93,7 @@ public partial class MainViewModel : ObservableObject
         _useGpuAcceleration = app.UseGpuAcceleration;
         _useCpuProcessing = app.UseCpuProcessing;
         _noReport = !app.ReportEnabled;
+        _reportAutoOpen = app.ReportAutoOpen;
         _skipStartupSelfTest = !app.StartupSelfTest;
         _threadCount = Math.Clamp(app.ThreadCount, 1, 32);
         // 编码质量（高级页）：CRF / CQ-QP / 保留字幕
@@ -581,6 +582,17 @@ public partial class MainViewModel : ObservableObject
     /// <summary>勾选=处理完成后不生成 HTML 配置文件(报告)（反相存入配置 ReportEnabled，与向导第4/5步同一开关）</summary>
     [ObservableProperty]
     private bool _noReport;
+
+    /// <summary>报告生成后是否自动用浏览器打开（关掉后报告照旧生成，只是不弹浏览器）</summary>
+    [ObservableProperty]
+    private bool _reportAutoOpen = true;
+
+    partial void OnReportAutoOpenChanged(bool value)
+    {
+        _app.ReportAutoOpen = value;
+        _settings.Save(_app, _pathConfig);
+        _logger.Info(value ? "已开启：报告生成后自动用浏览器打开" : "已关闭：报告生成后不再自动打开浏览器");
+    }
 
     /// <summary>勾选=跳过处理前测试（反相存入配置 StartupSelfTest；勾选后点开始处理不再先跑测试视频验证）</summary>
     [ObservableProperty]

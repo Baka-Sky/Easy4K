@@ -74,6 +74,7 @@ public partial class MainViewModel
         _app.ReportEnabled = reportEnabled;
         NoReport = !reportEnabled;   // 高级页的开关与向导同源，否则两处显示不一致
         _app.ReportAutoOpen = reportAutoOpen;
+        ReportAutoOpen = reportAutoOpen;   // 高级页开关同源
         _app.Theme = theme;
         _app.SetupCompleted = true;
         _settings.Save(_app, _pathConfig);
@@ -298,7 +299,13 @@ public partial class MainViewModel
     {
         // 报告开关有两个入口（向导的 ReportEnabled、高级页反相的 NoReport），
         // 任一处表示"不生成"就都不生成——否则用户关掉开关后仍会看到报告，只能靠内存里的旧值碰运气。
-        if (outputPath is null || !_app.ReportEnabled || NoReport || IsStartupSelfTest) return;
+        if (outputPath is null) return;
+        if (!_app.ReportEnabled || NoReport || IsStartupSelfTest)
+        {
+            // 把判定依据写进日志：以后再遇到"关了还生成"，一眼能看出是哪个开关没生效
+            _logger.Info($"已跳过 HTML 报告（配置 ReportEnabled={_app.ReportEnabled}，界面「不生成」={NoReport}，启动自检={IsStartupSelfTest}）");
+            return;
+        }
         try
         {
             var optionLines = BuildReportOptionLines();
@@ -317,7 +324,8 @@ public partial class MainViewModel
             if (file is null) return;
 
             _logger.Success($"HTML 报告已生成: {file}");
-            if (_app.ReportAutoOpen) OpenReportFile(file);
+            if (ReportAutoOpen) OpenReportFile(file);
+            else _logger.Info("报告生成后不自动打开（可在「高级」页开启）");
         }
         catch (Exception ex)
         {
