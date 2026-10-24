@@ -15,6 +15,10 @@ public sealed partial class AboutPage : Page
     /// <summary>当前 logo 对应的主题（避免重复解码同一张图）</summary>
     private bool _logoDark;
 
+    /// <summary>logo 解码请求序号：主题刚解析出来时会连续发两次请求（先 Default 再真实主题），
+    /// 两张图解码完成顺序不定，不加序号会被旧结果覆盖 → 黑白图片偶发反色。</summary>
+    private int _logoRequest;
+
     public AboutPage()
     {
         InitializeComponent();
@@ -74,6 +78,7 @@ public sealed partial class AboutPage : Page
         if (dark == _logoDark && AboutLogo.Source is not null) return;
         _logoDark = dark;
 
+        var seq = ++_logoRequest;
         var path = Path.Combine(AppContext.BaseDirectory, "Assets",
             dark ? "AboutLogo_white.png" : "AboutLogo_black.png");
 
@@ -93,12 +98,15 @@ public sealed partial class AboutPage : Page
             using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 await bmp.SetSourceAsync(fs.AsRandomAccessStream());
 
+            // 期间可能又因为主题解析发起了新请求，过期结果直接丢弃，否则黑白会反
+            if (seq != _logoRequest) return;
+
             AboutLogo.Source = bmp;
             AboutLogo.Visibility = Visibility.Visible;
         }
         catch
         {
-            AboutLogo.Visibility = Visibility.Collapsed;
+            if (seq == _logoRequest) AboutLogo.Visibility = Visibility.Collapsed;
         }
     }
 
