@@ -35,14 +35,13 @@ _backup/
 .dbg/
 SFDP NET AI/
 
-## 根目录设计素材（README 用的 logo/demo 除外；素材放本地，不入库）
+## 根目录素材（统一归档到 docs/；根下零散素材不再入库）
 /*.png
-!/logo.png
-!/demo.png
 /*.jpg
 /*.jpeg
 /*.xmind
 /*.wav
+/*.ico
 
 ## 发布产物（单文件自包含 bin 体积上百 MB，不进仓库）
 dist/

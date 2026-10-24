@@ -1,4 +1,4 @@
-# Easy4K 一键视频超分补帧工具 <img align="right" style="margin-right:48px" src="logo.png" width="144" alt="Easy4K Logo"/>
+# Easy4K 一键视频超分补帧工具 <img align="right" style="margin-right:48px" src="docs/assets/logo.png" width="144" alt="Easy4K Logo"/>
 
 基于 **WinUI 3 (Windows App SDK 2.4)** 的 Windows 桌面应用，一站式完成：
 
@@ -43,7 +43,7 @@
 
 ## 截图
 
-![主界面](demo.png)
+![主界面](docs/assets/demo.png)
 
 ## 快速开始
 

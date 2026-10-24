@@ -58,8 +58,8 @@
 
   <!-- 品牌素材：logo 复制到输出目录 -->
   <ItemGroup>
-    <None Include="..\..\logo.png" Link="Assets\logo.png" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\logo.png" Link="Res\logo.png" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\docs\assets\logo.png" Link="Assets\logo.png" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\docs\assets\logo.png" Link="Res\logo.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- Tool binaries are copied alongside the exe at publish time. During dev (unpackaged),

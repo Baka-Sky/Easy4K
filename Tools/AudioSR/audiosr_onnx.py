@@ -35,6 +35,7 @@ SR = 48000                       # AudioSR 固定工作采样率
 LIB_N_FFT, LIB_HOP = 2048, 512   # librosa.stft/istft 默认参数（postprocessing 用）
 
 EXIT_ALL_BACKENDS_FAILED = 3     # CUDA / DirectML / CPU 三级后端全部无法启动
+EXIT_VRAM_OOM = 4                # 显存不足，且窗口已缩到最小值仍然失败
 
 
 def log(m):
@@ -43,6 +44,19 @@ def log(m):
 
 def warn(m):
     print(f"[AudioSR][警告] {m}", flush=True)
+
+
+class VramOOM(RuntimeError):
+    """显存不足（与普通推理错误区分，便于自动缩小窗口重试）。"""
+
+
+_OOM_HINTS = ("out of memory", "cuda failure 2", "cudamalloc", "cuda_error_out_of_memory",
+              "failed to allocate", "memory allocation failure", "insufficient memory")
+
+
+def is_oom(exc):
+    s = str(exc).lower()
+    return any(h in s for h in _OOM_HINTS)
 
 
 # ============================ WAV I/O ============================
@@ -387,6 +401,12 @@ def open_sessions(models_dir, device):
         so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         if providers[0][0] == "DmlExecutionProvider":
             so.enable_mem_pattern = False
+        if providers[0][0] == "CUDAExecutionProvider":
+            # 6GB 级显卡（P106 / GTX1060）上，CUDA EP 默认的 kNextPowerOfTwo 显存扩张策略
+            # 会把 arena 成倍放大，叠加 EXHAUSTIVE 卷积搜索的 workspace，很容易直接爆显存。
+            # 改成按需分配 + 启发式搜索，并关掉 CPU arena / 内存复用，换来峰值显存的可控。
+            so.enable_cpu_mem_arena = False
+            so.enable_mem_pattern = False
         sess = {k: ort.InferenceSession(os.path.join(models_dir, v), so, providers=providers)
                 for k, v in GRAPHS.items()}
         if want_ep is not None:
@@ -420,11 +440,18 @@ def open_sessions(models_dir, device):
         if ep not in avail:
             continue
         try:
-            sess, _ = build([(ep, {"device_id": 0}), "CPUExecutionProvider"], want_ep=ep)
+            pv = {ep: ({"device_id": 0,
+                        "arena_extend_strategy": "kSameAsRequested",
+                        "cudnn_conv_algo_search": "HEURISTIC"}
+                       if ep == "CUDAExecutionProvider" else {"device_id": 0})}
+            sess, _ = build([(ep, pv[ep]), "CPUExecutionProvider"], want_ep=ep)
             probe(sess, tag)
             return sess, tag
         except Exception as e:
-            warn(f"{tag} 不可用（{type(e).__name__}: {e}）")
+            if is_oom(e):
+                warn(f"{tag} 显存不足（{e}）")
+            else:
+                warn(f"{tag} 不可用（{type(e).__name__}: {e}）")
             # CUDA 包内没有 DirectML 后端，要退到 DX12 只能换成另一个包重跑一次
             if ep == "CUDAExecutionProvider" and os.environ.get(ORT_PKG_ENV) != "dml":
                 log("改用 DirectML 后端重新运行（进程重启一次）")
@@ -552,6 +579,8 @@ def process_file(input_path, output_path, models_dir=None, steps=50, guidance=3.
     eng = AudioSR(a.models, a.device, a.steps, a.guidance, a.seed, a.overlap)
     if a.window:
         eng.window_seconds = float(a.window)
+    elif os.environ.get("EASY4K_SR_WINDOW"):     # 显存不足自动缩窗后重启传下来的窗口
+        eng.window_seconds = float(os.environ["EASY4K_SR_WINDOW"])
     log(f"权重包 {precision} / 后端 {eng.backend} / DDIM {eng.steps} 步 / CFG {eng.guidance} / "
         f"窗口 {eng.window_seconds}s / 重叠 {a.overlap:.0%} / 种子 {a.seed}")
     log("高频护栏：已启用（限制相对源音频新增的 8kHz 以上能量）" if not a.no_hf_guard
@@ -642,29 +671,50 @@ def process_file(input_path, output_path, models_dir=None, steps=50, guidance=3.
                 log(f"进度 {pct}%  窗口 {win_idx + 1}/{n_win}  声道 {ch_idx + 1}/{n_ch}  步 {done}/{n_steps}")
         return cb
 
-    for n, f0 in enumerate(starts):
-        ts = time.time()
-        s0 = f0 * 480
-        gt = x[:, s0:s0 + win_len]
-        if gt.shape[1] < win_len:
-            gt = np.pad(gt, ((0, 0), (0, win_len - gt.shape[1])))
-        outs = [eng.run_window(in_mel[c, f0:f0 + win_frames][None].astype(np.float32),
-                               gt[c:c + 1], mel_cutoff, wave_cutoff, step_cb(n, c))
-                for c in range(x.shape[0])]
-        m = min(win_len, outs[0].shape[0], acc.shape[1] - s0)
-        w = ramp[:m]
-        for c, o in enumerate(outs):
-            acc[c, s0:s0 + m] += o[:m] * w
-        wsum[s0:s0 + m] += w
-        el = time.time() - t0
-        # 进度行：Easy4K 用正则抓 "进度 N%"，格式不要随意改
-        log(f"进度 {int((n + 1) / n_win * 100)}%  窗口 {n + 1}/{n_win}  本窗 {time.time() - ts:.1f}s  "
-            f"累计 {el:.0f}s  预计剩余 {el / (n + 1) * (n_win - n - 1):.0f}s")
-        if (n + 1) % 20 == 0:                      # 长音频保护：每 20 窗落一次盘，中断不至于全丢
+    try:
+        for n, f0 in enumerate(starts):
+            ts = time.time()
+            s0 = f0 * 480
+            gt = x[:, s0:s0 + win_len]
+            if gt.shape[1] < win_len:
+                gt = np.pad(gt, ((0, 0), (0, win_len - gt.shape[1])))
             try:
-                write_wav(a.output + ".partial.wav", finalize().astype(np.float32), SR, a.bits)
+                outs = [eng.run_window(in_mel[c, f0:f0 + win_frames][None].astype(np.float32),
+                                       gt[c:c + 1], mel_cutoff, wave_cutoff, step_cb(n, c))
+                        for c in range(x.shape[0])]
             except Exception as e:
-                warn(f"中途落盘失败（不影响继续）：{e}")
+                if is_oom(e):
+                    raise VramOOM(str(e)) from e
+                raise
+            m = min(win_len, outs[0].shape[0], acc.shape[1] - s0)
+            w = ramp[:m]
+            for c, o in enumerate(outs):
+                acc[c, s0:s0 + m] += o[:m] * w
+            wsum[s0:s0 + m] += w
+            el = time.time() - t0
+            # 进度行：Easy4K 用正则抓 "进度 N%"，格式不要随意改
+            log(f"进度 {int((n + 1) / n_win * 100)}%  窗口 {n + 1}/{n_win}  本窗 {time.time() - ts:.1f}s  "
+                f"累计 {el:.0f}s  预计剩余 {el / (n + 1) * (n_win - n - 1):.0f}s")
+            if (n + 1) % 20 == 0:                      # 长音频保护：每 20 窗落一次盘，中断不至于全丢
+                try:
+                    write_wav(a.output + ".partial.wav", finalize().astype(np.float32), SR, a.bits)
+                except Exception as e:
+                    warn(f"中途落盘失败（不影响继续）：{e}")
+    except VramOOM as e:
+        # 6GB 级显卡（P106 / GTX1060）在默认 5.12s 窗口下会被 DDIM 的 UNet 激活顶到上限。
+        # 窗口减半只增加窗口数量与耗时，不改变低频回填/响度恢复的口径，比直接失败好得多。
+        cur = float(eng.window_seconds)
+        nxt = max(2.0, cur / 2.0)
+        if nxt < cur - 0.01 and os.environ.get("EASY4K_SR_SHRINK") != "1":
+            warn(f"显存不足（{e}），窗口 {cur:.2f}s → {nxt:.2f}s 后自动重跑")
+            os.environ["EASY4K_SR_WINDOW"] = f"{nxt:.2f}"
+            os.environ["EASY4K_SR_SHRINK"] = "1"
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        warn(f"显存不足，且窗口已缩到 {cur:.2f}s：{e}")
+        warn("请关闭占用显存的其它程序（或改用 fp16 权重包）后重试")
+        sys.exit(EXIT_VRAM_OOM)
 
     write_wav(a.output, finalize().astype(np.float32), SR, a.bits)
     for p in (a.output + ".partial.wav",):
