@@ -1157,7 +1157,8 @@ public sealed partial class MainWindow : Window
         // 界面自己在动（进度条、动画、页面切换）也由渲染帧兜底
         CompositionTarget.Rendering += OnDebugRendering;
 
-        Activated += (_, _) => MarkUiUpdated();
+        // 只认本窗口：窗口失活（切到别的程序）期间不再统计，切回来也不算"界面刷新"
+        Activated += (_, e) => _isActivated = e.WindowActivationState != WindowActivationState.Deactivated;
 #endif
     }
 
@@ -1167,6 +1168,9 @@ public sealed partial class MainWindow : Window
 
     /// <summary>上一次真正写过左下角文本的时刻（用于节流与自激抑制）</summary>
     private DateTime _lastDebugTextAt = DateTime.MinValue;
+
+    /// <summary>Easy4K 窗口当前是否处于激活状态</summary>
+    private bool _isActivated = true;
 
     /// <summary>界面有任何动作/刷新时调用，更新左下角时间。</summary>
     private void MarkUiUpdated()
@@ -1178,6 +1182,10 @@ public sealed partial class MainWindow : Window
     /// <summary>渲染帧回调：界面真有变化才打点；写文本自身产生的帧要忽略，否则会自己刷自己。</summary>
     private void OnDebugRendering(object? sender, object e)
     {
+        // 只统计 Easy4K 自己的界面，窗口失活时不打点
+        if (!_isActivated) return;
+        if (!AppWindow.IsVisible) return;
+
         // 刚写过文本 → 紧随其后的几帧是这次写入引起的，跳过
         if ((DateTime.Now - _lastDebugTextAt).TotalMilliseconds < 400) return;
         MarkUiUpdated();
