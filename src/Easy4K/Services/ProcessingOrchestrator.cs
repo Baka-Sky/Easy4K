@@ -358,6 +358,10 @@ public sealed class ProcessingOrchestrator
         return true;
     }
 
+    /// <summary>分段涡轮里帧去重的全局闸门：ONNX/DirectML 会话在多线程同时创建/推理会直接把进程带崩
+    /// （无托管异常、不写失败报告），所以多段并行时去重判决逐个段串行执行，SR/IF 仍然并行。</summary>
+    private static readonly SemaphoreSlim DedupGate = new(1, 1);
+
     /// <summary>内部优化：涡轮块级流水 + 帧去重（原阶段1.5），并计算超分/补帧的目标帧数。</summary>
     private async Task RunTurboAndDedupAsync(PipelineState st, CancellationToken ct)
     {
@@ -398,7 +402,19 @@ public sealed class ProcessingOrchestrator
         // 剔除与上一帧重复的画面 → 超分/补帧只算保留帧；合并前按 map 回填，时长与帧率不变。
         st.DedupKept = turboDedupKept; // 0 = 未启用/未生效
         if (ctx.Settings.DedupEnabled && st.DedupKept == 0)
-            st.DedupKept = await RunDedupAsync(ctx, tempRoot, inputFrames, totalFrames, ct);
+        {
+            if (st.Segmented)
+            {
+                // 分段并行时去重判决串行化：AI 模型会话不能多线程同时用（会硬崩）
+                await DedupGate.WaitAsync(ct);
+                try { st.DedupKept = await RunDedupAsync(ctx, tempRoot, inputFrames, totalFrames, ct); }
+                finally { DedupGate.Release(); }
+            }
+            else
+            {
+                st.DedupKept = await RunDedupAsync(ctx, tempRoot, inputFrames, totalFrames, ct);
+            }
+        }
 
         var dedupKept = st.DedupKept;
         // 去重生效后：勾选补帧时超分仍处理全部源帧（去重只省补帧的算力），未勾选补帧时超分只算保留帧；

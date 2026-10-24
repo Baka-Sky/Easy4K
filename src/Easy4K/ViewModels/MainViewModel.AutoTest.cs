@@ -350,6 +350,48 @@ public partial class MainViewModel
         Add(true, true, false, true, true, false, dftSr, 2, null, 2,
             "组合 CPU处理模式（超分代表性模型，最慢）", safe: true, cpu: true, threads: 8);
 
+        // ---------- 跨功能组合矩阵：超分 × 补帧 × SFDP 去重 × 涡轮 ----------
+        // 每个倍率：超分 + 补帧 + SFDP（性能 / 完美各一例）
+        foreach (var scale in new[] { 2, 3, 4 })
+        {
+            var m = SrCatalog.ModelsFor(0, scale)
+                .FirstOrDefault(x => File.Exists(SrCommandBuilder.ExeFor(Tools, x)));
+            if (m is null) continue;
+            Add(true, true, true, true, true, false, m, scale, ncnnDefault, 2,
+                $"组合 超分×{scale} + 补帧×2 + SFDP·性能", dedup: true, dedupMode: "performance");
+            Add(true, true, true, true, true, false, m, scale, ncnnDefault, 2,
+                $"组合 超分×{scale} + 补帧×2 + SFDP·完美", dedup: true, dedupMode: "uhd");
+        }
+
+        // 每个超分算法族：族代表模型 + 补帧 + SFDP + 涡轮 2 段
+        for (var fi = 0; fi < SrCatalog.Families.Count; fi++)
+        {
+            var m = SrCatalog.ModelsFor(fi, 2)
+                .FirstOrDefault(x => File.Exists(SrCommandBuilder.ExeFor(Tools, x)));
+            if (m is null) continue;
+            var label = SrCatalog.Families[fi].Label;
+            Add(true, true, true, true, true, false, m, 2, ncnnDefault, 2,
+                $"组合 {label} + 补帧 + SFDP + 涡轮2段",
+                threads: 1, dedup: true, dedupMode: "performance", turbo: true, turboSegments: 2);
+        }
+
+        // 超分 + SFDP（不补帧）/ 补帧 × 倍率 + SFDP（不超分）
+        Add(true, true, false, true, true, false, dftSr, 2, null, 2,
+            "组合 超分×2 + SFDP·完美（不补帧）", dedup: true, dedupMode: "uhd");
+        foreach (var mult in new[] { 2, 3 })
+        {
+            Add(true, false, true, true, true, false, null, 2, ncnnDefault, mult,
+                $"组合 补帧×{mult} + SFDP·性能（不超分）", dedup: true, dedupMode: "performance");
+        }
+
+        // 超分 + 补帧 + SFDP + 涡轮（三/五段压力）
+        Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
+            "组合 超分 + 补帧 + SFDP·完美 + 涡轮3段",
+            threads: 1, dedup: true, dedupMode: "uhd", turbo: true, turboSegments: 3);
+        Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
+            "组合 超分 + 补帧 + SFDP·完美 + 涡轮5段",
+            threads: 1, dedup: true, dedupMode: "uhd", turbo: true, turboSegments: 5);
+
         // ---------- 涡轮分段（新方案）：按帧号切 N 段，多段流水线并行 ----------
         Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
             "涡轮·2 段（超分+补帧+合并+音频）", threads: 1, turbo: true, turboSegments: 2);
@@ -756,7 +798,7 @@ public partial class MainViewModel
             sw.Stop();
 
             var ok = r?.Ok == true;
-            var note = r?.Note ?? "子进程未产出结果";
+            var note = r is null ? "子进程未产出结果（崩溃或超时）" : (r.Note ?? "");
             results.Add(new AutoResult(c, ok, sw.Elapsed, r?.Output, note));
             _logger.Info($"---- [{i + 1}/{cases.Count}] {c.Name} → {(ok ? "通过" : "失败")}，耗时 {sw.Elapsed.TotalSeconds:F1}s{(string.IsNullOrEmpty(note) ? "" : $"（{note}）")} ----");
 

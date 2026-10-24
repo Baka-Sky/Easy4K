@@ -23,8 +23,9 @@ public static class SrCommandBuilder
     }
 
     /// <summary>构建命令。jThreads 形如 "1:2:2"，空串则不加 -j（用工具默认）。
-    /// lowVram：勾了「降低部分画质以降低显存占用」时，仅 Real-ESRGAN 走 -u（UHD 省显存模式）；
-    /// 其余 ncnn 引擎默认自动分块（-t 0 auto），本身就按显存自适应，不加额外参数。</summary>
+    /// 注意：本地部署的 ncnn 超分引擎（Real-ESRGAN / Real-CUGAN / RealSR / SRMD / waifu2x）**都不支持 -u**，
+    /// 传了会直接打印用法并以 exit=-1 退出；所以「降低画质省显存」只作用于补帧（RIFE 的 -u），
+    /// 超分这边靠 ncnn 自带的 -t 0 自动分块按显存自适应。</summary>
     public static string Build(string modelName, int scale,
         string input, string output, string jThreads, bool lowVram = false, bool useCpu = false)
     {
@@ -38,10 +39,9 @@ public static class SrCommandBuilder
         if (!Path.HasExtension(output)) Directory.CreateDirectory(output);
 
         var extra = hit.Variant.ArgsTemplate.Replace("{scale}", scale.ToString(CultureInfo.InvariantCulture));
-        var u = lowVram && hit.Family.ExeKey == "esrgan" ? " -u" : "";
         var j = string.IsNullOrEmpty(jThreads) ? "" : $" -j {jThreads}";
         var g = useCpu ? "-g -1" : "-g 0";
 
-        return $"-i \"{input}\" -o \"{output}\" {extra} {g}{u}{j}";
+        return $"-i \"{input}\" -o \"{output}\" {extra} {g}{j}";
     }
 }
