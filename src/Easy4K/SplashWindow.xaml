@@ -7,17 +7,12 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <!-- 启动画面：整窗铺启动图（100% 比例、圆角由 DWM 裁切），
-         底部半透明状态条显示检测进度 -->
-    <Grid x:Name="Root">
-        <Image x:Name="SplashImage" Stretch="UniformToFill"/>
-
-        <Border VerticalAlignment="Bottom" Padding="20,12" Background="#99000000">
-            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                <ProgressRing IsActive="True" Width="18" Height="18" Foreground="White"/>
-                <TextBlock x:Name="StatusText" Text="正在检查必要组件…"
-                           Foreground="White" FontSize="13" VerticalAlignment="Center"/>
-            </StackPanel>
+    <!-- 启动画面：整窗铺启动图（100% 比例）。
+         窗口本身透明，图片放在圆角 Border 里 —— 这样四角能被真正裁圆，
+         不依赖 DWM（无边框窗口上 DWM 圆角经常不生效）。 -->
+    <Grid Background="Transparent">
+        <Border x:Name="Root" CornerRadius="12" Background="#1A1A1A">
+            <Image x:Name="SplashImage" Stretch="UniformToFill"/>
         </Border>
     </Grid>
 </Window>
