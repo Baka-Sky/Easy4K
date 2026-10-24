@@ -1160,14 +1160,10 @@ public sealed partial class MainWindow : Window
     /// <summary>关于正文（含免责声明）：关于页面与弹窗共用同一份文本。</summary>
     public string AboutText =>
         $"Easy4K v{Vm.Version} - 一键视频超分补帧工具\n\n基于 WinUI 3 / Windows App SDK\n\n" +
-        "超分引擎：Real-ESRGAN / Real-CUGAN / waifu2x / SRMD / RealSR（ncnn + Vulkan，共 25 个模型，\n" +
-        "NVIDIA / AMD / Intel 显卡通用）\n" +
-        "补帧引擎：NCNN-RIFE（Vulkan，全显卡通用）/ RIFE、DRBA、GMFSS、GIMM-VFI（PyTorch，仅 NVIDIA）\n" +
-        "音频超分：AudioSR（ONNX Runtime，CUDA / DirectML / CPU 自动降级）\n" +
-        "其他组件：FFmpeg / NVEncC / Python / PyTorch / CuPy / OpenCV\n" +
         "本软件免费分发；唯一收费内容为自研的帧去重（SFDP）算法及其相关服务。\n\n" +
         "附加能力（「高级」页，默认关闭）：帧去重（自研 SFDP 孪生网络 ONNX 模型：整帧 128×128 分块算相似度，\n" +
         "FP16 性能模式与 FP32 完美模式，DirectML / CPU 自动降级）/ 音频超分（AudioSR，48kHz 高带宽重建，FP16 性能模式与 FP32 完美模式）\n\n" +
+        "所用到的全部超分 / 补帧 / 音频引擎与依赖库见下方「使用的开源项目」。\n\n" +
         "========== 免责声明 ==========\n\n" +
         "1. 本软件以\"现状\"（AS-IS）提供，开发者不对其正确性、可靠性、完整性及适用性作任何明示或暗示保证。\n\n" +
         "2. 使用本软件及所调用第三方组件（FFmpeg / ncnn / PyTorch / AudioSR / NVEncC 等）产生的一切后果，包括但不限于：\n" +
@@ -1194,12 +1190,16 @@ public sealed partial class MainWindow : Window
         "OpenCV（Apache-2.0）、timm（Apache-2.0）、WAFT（BSD-3-Clause，随包附带源码）、\n" +
         "omegaconf / einops / loguru / yacs / easydict / tqdm / tensorboard / sympy / mpmath（MIT / Apache-2.0 / BSD-3-Clause）\n" +
         "多媒体：FFmpeg（GPL v3，含 libx264 / libx265 / libvpx / libaom）、NVEncC（MIT）\n" +
-        "界面字体：HarmonyOS Sans SC（Huawei Device Co., Ltd.，HarmonyOS Sans 字体许可）\n\n" +
+        "界面字体：HarmonyOS Sans SC（Regular / Medium / Bold 三个字面，Huawei Device Co., Ltd.，\n" +
+        "HarmonyOS Sans 字体许可）；Segoe UI、Segoe Fluent Icons / Segoe MDL2 Assets、Consolas（微软，随 Windows 提供，不随包分发）\n" +
+        "自主研发：Easy4K 客户端与界面、超分 / 补帧 / 音频各阶段调度流水线、\n" +
+        "SFDP 帧去重算法（像素差与分块局部检查 / dHash / QR 分解 / Farnebäck 稠密光流四阶级联判决）、\n" +
+        "Siamese NET AI 孪生网络及其 FP16 / FP32 ONNX 权重 —— 非第三方项目，版权归作者所有\n\n" +
         "完整清单、版本与许可原文见程序目录《Easy4K 软件安装声明》与各组件随附的 LICENSE 文件。\n\n" +
         "========== 版权信息 ==========\n\n" +
         $"Copyright © 2025-{DateTime.Now.Year} Baka-Sky. All rights reserved.\n" +
         "本项目以 GPL-3.0 许可开源：https://github.com/Baka-Sky/Easy4K\n" +
-        "Easy4K 名称、图标与自研的帧去重（SFDP）算法版权归作者所有。\n" +
+        "Easy4K 名称、图标、自研的帧去重（SFDP）算法与 Siamese NET AI 模型版权归作者所有。\n" +
         "内置字体、系统字体与第三方组件的版权与许可见上方「使用的开源项目」及程序目录" +
         "《Easy4K 软件安装声明》。";
 
