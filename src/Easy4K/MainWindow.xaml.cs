@@ -38,6 +38,16 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
 
+        // 标题栏走 48 高的 Tall 模式：系统的最小化/最大化/关闭按钮跟着变高，
+        // 与自定义标题栏同高，否则按钮会偏上、悬停高亮与标题栏错位。
+        try
+        {
+            AppWindow.TitleBar.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
+            AppWindow.TitleBar.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
+            AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
+        }
+        catch { /* 旧版 Windows 不支持，保持默认高度 */ }
+
         AppWindow.SetIcon("Assets/AppIcon.ico");
 
         // 标题追加版本号（版本号来自 config 文件 appsettings.json 的 Version）
@@ -259,6 +269,12 @@ public sealed partial class MainWindow : Window
                 ShowThemeBackdrop(true);
                 break;
         }
+
+        // 系统标题栏按钮（— □ ✕）颜色跟着实际主题走：浅色黑字、深色白字。
+        // ActualThemeChanged 能同时覆盖手动切主题与系统深浅色变化两条路径。
+        RootLayout.ActualThemeChanged += (_, _) => UpdateTitleBarColors();
+        if (RootLayout.IsLoaded) UpdateTitleBarColors();
+        else RootLayout.Loaded += (_, _) => UpdateTitleBarColors();
 
         // 导航：默认选中第 1 项（主页）；随窗口宽度在顶栏/左侧最小化之间自适应
         if (RootNav.MenuItems.Count > 0) RootNav.SelectedItem = RootNav.MenuItems[0];
@@ -1036,6 +1052,34 @@ public sealed partial class MainWindow : Window
             XamlRoot = RootFrame.XamlRoot
         };
         await dlg.ShowLocalizedAsync();
+    }
+
+    /// <summary>系统标题栏按钮（— □ ✕）不跟随应用的 ElementTheme，必须按当前实际主题手动上色，
+    /// 否则浅色主题下按钮还是白的、看不见，深色主题下又可能出现白底方块。</summary>
+    private void UpdateTitleBarColors()
+    {
+        try
+        {
+            var bar = AppWindow.TitleBar;
+            var dark = RootLayout.ActualTheme == ElementTheme.Dark;
+            var fg = dark
+                ? Windows.UI.Color.FromArgb(255, 255, 255, 255)
+                : Windows.UI.Color.FromArgb(255, 0, 0, 0);
+
+            bar.ButtonForegroundColor = fg;
+            bar.ButtonHoverForegroundColor = fg;
+            bar.ButtonPressedForegroundColor = fg;
+            bar.ButtonInactiveForegroundColor = dark
+                ? Windows.UI.Color.FromArgb(255, 160, 160, 160)
+                : Windows.UI.Color.FromArgb(255, 100, 100, 100);
+            bar.ButtonHoverBackgroundColor = dark
+                ? Windows.UI.Color.FromArgb(40, 255, 255, 255)
+                : Windows.UI.Color.FromArgb(24, 0, 0, 0);
+            bar.ButtonPressedBackgroundColor = dark
+                ? Windows.UI.Color.FromArgb(64, 255, 255, 255)
+                : Windows.UI.Color.FromArgb(40, 0, 0, 0);
+        }
+        catch { /* 旧版 Windows 不支持自定义标题栏颜色 */ }
     }
 
     /// <summary>普通主题显示窗口底色层，亚克力/图片主题隐藏（露出背景材质）。
