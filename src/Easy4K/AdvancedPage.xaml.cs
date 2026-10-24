@@ -49,13 +49,9 @@ public sealed partial class AdvancedPage : Page
         // 元素挂进可视树后 ActualTheme 才真正解析出来，Loaded 时再确认一次（有解码缓存，代价很小）
         Loaded += (_, _) => ApplyCardArt();
 
-        // 涡轮模式的磁盘检查：手动切换时触发；另外每次启动也检查一遍已开启的涡轮
+        // 涡轮 + 机械盘的检查：手动切换时触发；另外每次启动也检查一遍已开启的涡轮
         Loaded += (_, _) => DispatcherQueue.TryEnqueue(() => _turboUiReady = true);
         Loaded += (_, _) => DispatcherQueue.TryEnqueue(WarnTurboHddOnStartup);
-
-        // 块大小滑块：绑定回填期间抑制事件，页面加载完成后再放行（避免构造期弹警告）
-        _turboBlockSyncing = true;
-        Loaded += (_, _) => DispatcherQueue.TryEnqueue(() => _turboBlockSyncing = false);
 
         // 去重模式单选：程序回填时不写回，避免构造期覆盖配置
         _dedupSyncing = true;
@@ -330,63 +326,9 @@ public sealed partial class AdvancedPage : Page
     /// <summary>页面初始化回填开关状态时也会触发 Toggled，要等绑定完成后再允许弹磁盘提示</summary>
     private bool _turboUiReady;
 
-    /// <summary>程序回填块大小输入框时抑制写回。初值必须为 true：InitializeComponent()
-    /// 在构造函数体之前执行，XAML/绑定回填会在构造期就触发 ValueChanged。</summary>
-    private bool _turboBlockSyncing = true;
-
-    /// <summary>块大小越界警告本次运行只提示一次（拖动滑块不会反复打扰）。
-    /// 用 static：语义是"每次启动最多提醒一次"，重进页面也不再重复弹。</summary>
-    private static bool _turboBlockWarned;
-
     /// <summary>本次启动是否已就"涡轮 + 机械盘"提醒过。用 static = 每次启动提醒一次：
     /// 以前这条只在用户手动切换涡轮时才检查，配置里记住的涡轮开启状态在启动后不会再有提醒。</summary>
     private static bool _turboDiskWarnedThisLaunch;
-
-    /// <summary>块大小调整：写回配置；明显越界时弹窗警告（本次运行只提醒一次）。</summary>
-    private async void OnTurboBlockChanged(object sender, RangeBaseValueChangedEventArgs e)
-    {
-        if (_turboBlockSyncing) return;
-
-        // 页面尚未进入可视树时 XamlRoot 为 null，此时显示 ContentDialog 会抛异常
-        if (XamlRoot is null) return;
-
-        // 写回由 TwoWay 绑定负责（与「处理线程」滑块同一套），这里只做越界提醒
-        var value = (int)Math.Round(e.NewValue);
-
-        if (_turboBlockWarned) return;
-
-        string? title = null;
-        string? body = null;
-        if (value < 64)
-        {
-            title = "涡轮模式：块太小";
-            body = $"当前每块 {value} 帧。\n\n" +
-                   "超分与补帧工具每处理一个块都要重新加载一次模型，还要按块多复制一轮帧文件，块太小时这些开销会超过并行带来的收益。\n\n" +
-                   "建议 64 帧以上（默认 240）。";
-        }
-        else if (value > 600)
-        {
-            title = "涡轮模式：块太大";
-            body = $"当前每块 {value} 帧。\n\n" +
-                   "块太大时 CPU 与 GPU 重叠的时间会变短，涡轮模式的收益会变小；实测开了帧去重时 296 帧素材上块 240 比块 64 慢 17%。\n\n" +
-                   "建议 64 ~ 600 帧。";
-        }
-        if (title is null) return;
-
-        _turboBlockWarned = true;
-        var dlg = new ContentDialog
-        {
-            Title = title,
-            Content = new ScrollViewer
-            {
-                MaxHeight = 420,
-                Content = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Text = body }
-            },
-            CloseButtonText = "知道了",
-            XamlRoot = XamlRoot
-        };
-        await dlg.ShowLocalizedAsync();
-    }
 
     /// <summary>涡轮 + 机械盘 的统一警告弹窗（选「切换硬盘」返回 Primary）。</summary>
     private async Task<ContentDialogResult> ShowTurboHddWarningAsync()
@@ -507,7 +449,7 @@ public sealed partial class AdvancedPage : Page
     {
         var dlg = new ContentDialog
         {
-            Title = "涡轮模式：让所有阶段同时开工",
+            Title = "涡轮模式：多段流水线并行",
             Content = new ScrollViewer
             {
                 MaxHeight = 420,
@@ -516,37 +458,28 @@ public sealed partial class AdvancedPage : Page
                     TextWrapping = TextWrapping.Wrap,
                     FontSize = 12,
                     Text =
-                        "平时处理是「一段一段排队」：拆帧全部跑完才轮到超分，超分跑完才轮到补帧 —— 在不碰显卡的时段里，GPU 其实是空转的。\n\n" +
+                        "平时处理是「一段一段排队」：拆帧全部跑完才轮到超分，超分跑完才轮到补帧——不碰显卡的时段里 GPU 其实在空转。\n\n" +
                         "【涡轮模式做了什么】\n" +
-                        "把帧序列切成若干块，两条 GPU 流水同时推进：超分 worker 处理第 N+1 块时，补帧 worker 正在处理第 N 块，" +
-                        "两个外部进程各占一份显存、真正并发；CPU 侧负责把下一块的帧拷进独立目录（外部工具只吃目录，没法只喂指定几帧），" +
-                        "开了帧去重时，去重判决（AI 孪生网络按 128×128 分块算相似度）也放在这一侧按块流式跑，与 GPU 重叠。\n" +
-                        "两条流水之间用容量 2 的有界队列衔接，队列满了上游会自动等一等（背压），不会把磁盘和显存同时吃爆。\n" +
-                        "两条流水都按「处理线程」滑块设定的线程数跑（刻意不做「各分一半」：单个进程用满线程比两个进程各半高效得多，" +
-                        "实测各分一半反而慢 24%）。\n\n" +
-                        "【与普通模式的结果一致性】\n" +
-                        "块边界的末帧在 RIFE 里没有「下一帧」，直接按块跑会退化成定格；这里会把下一块的首帧借来当「下一帧」，" +
-                        "多算一份插值丢掉不用，因此块边界与整段处理完全一致。实测同一素材（296 帧 360p）：" +
-                        "不开帧去重、性能模式去重、完美模式去重三组，涡轮（块 64 与块 240 两种切法）与串行的超分帧、补帧帧、" +
-                        "回填展开帧逐帧 MD5 全部相同，成品时长、帧率、音频对齐与普通模式一致。\n\n" +
-                        "【单卡的真实收益】\n" +
-                        "超分与补帧都是 GPU 密集阶段，只有一块显卡时同时跑会互相抢算力，GPU 那部分总时长基本不变；" +
-                        "涡轮真正能省下的是 CPU 侧的活（主要是帧去重判决）。实测（RX 580，296 帧 360p，线程 8）：\n" +
-                        "· 不开帧去重：串行 58.6s / 涡轮 56.5s（块 64）→ 1.04×\n" +
-                        "· 完美模式去重（判决 19s）：串行 82.8s / 涡轮 70.7s（块 64）→ 1.17×\n" +
-                        "· 同样完美模式去重、块放大到 240：84.8s —— 块太大重叠变粗，反而更慢\n" +
-                        "上限就是「1 + 去重耗时 ÷ 其余总耗时」：去重越慢（完美模式）、素材越短，比例越高；" +
-                        "反过来一盘 7000 帧 1080p 的素材，去重只占百分之几，提速也就百分之几。\n" +
-                        "结论：单卡上收益上限在 1.2× 上下，结果与普通模式逐帧一致，代价是多占一份临时盘空间。\n\n" +
-                        "【当前不参与并行的部分】\n" +
-                        "官方 PyTorch 补帧引擎（入参结构与 NCNN 不同）仍按逐阶段串行处理，日志里会写明「当前组合暂不支持块级流水」；" +
-                        "音频链路不在流水线内。\n\n" +
+                        "把视频按帧号精确切成 N 段（1 ~ 5 段），每段单独跑一条完整流水线：拆帧 → 帧去重 → 超分 → 补帧，N 段同时开工；\n" +
+                        "所有段都完成后，按第 1 段到第 N 段的顺序把成品帧汇总、重新编号，再统一做 AudioSR / 合并 / HDR / 视频审查。\n" +
+                        "也就是「多个流水线同时启动 → 完成的片段汇总到第 1 段的目录并排序 → 合并」。\n\n" +
+                        "【线程固定 1:1:1】\n" +
+                        "N 条流水线并行时，每条再各开多线程只会互相抢 CPU 和显存，所以开启涡轮期间线程被锁定为 1:1:1、滑块不可修改；\n" +
+                        "关闭涡轮后会恢复你原本设置的线程数。\n\n" +
+                        "【结果一致性】\n" +
+                        "切段用的是解码后的帧序号（select between(n, 起, 止)），段与段之间不重叠也不缺帧：实测 60 帧切 2 段得到 30 + 30，\n" +
+                        "拼接后与整段解码逐帧 MD5 完全一致；成片时长、帧率、音频对齐与不开涡轮时一致。\n" +
+                        "帧去重按段独立执行，段首帧不会和上一段末帧比较（跨段边界不做判重）。\n\n" +
+                        "【代价与建议】\n" +
+                        "显存、磁盘吞吐、模型内存都要乘以段数：单卡开 5 段很容易因为显存不足反而变慢甚至失败，建议按显卡能力选 2 ~ 3 段。\n" +
+                        "分段拆帧时每段都要从头解码一遍源视频（解码远快于超分/补帧，一般可忽略）；\n" +
+                        "「导入已有帧文件夹」模式没有视频可切，会自动按单条流水线处理。\n\n" +
                         "【为什么要求固态临时目录】\n" +
-                        "块级流水会同时读写多个块目录：一边在读上一块的输入、一边在写超分结果、一边在写补帧结果。机械硬盘的随机读写会成为" +
-                        "整条流水线的瓶颈，甚至拖到比不开涡轮还慢；固态盘上这些读写才能真正重叠。\n\n" +
-                        "【保留的能力】\n" +
-                        "任一块失败或产物数量与判决表对不上都会自动回退逐阶段串行重跑，本次任务不会被做废；去重帧搬不动时会改判为保留，" +
-                        "保证判决表、磁盘与超分产物三者一致；安全帧率、显存降级重试照常生效。关闭涡轮即回到与原来完全一致的处理方式。"
+                        "多段流水会同时读写各自的临时目录：一边拆帧、一边写超分结果、一边写补帧结果。机械硬盘的随机读写会成为瓶颈，\n" +
+                        "甚至拖到比不开涡轮还慢；固态盘上这些读写才真正重叠。\n\n" +
+                        "【失败处理】\n" +
+                        "任意一段失败即整次任务失败并生成完整 ERROR 报告；安全帧率、显存降级重试、超分 CPU 不兼容询问等原有保护照常生效。\n" +
+                        "关闭涡轮即回到与原来完全一致的逐阶段串行处理。"
                 }
             },
             CloseButtonText = "关闭",

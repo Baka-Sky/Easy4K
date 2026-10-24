@@ -95,6 +95,9 @@ public sealed class AppSettings
     public bool TurboMode { get; set; }
     /// <summary>涡轮模式每块帧数：太小会反复加载模型，太大会降低并行度（默认 240）</summary>
     public int TurboBlockFrames { get; set; } = 240;
+    /// <summary>涡轮分段数（1 ~ 5）：把视频按帧号切成 N 段，每段各自跑一条完整流水线并行处理，
+    /// 跑完按顺序汇总帧再统一合并。1 = 不分段。</summary>
+    public int TurboSegments { get; set; } = 2;
 
     // ===================== 远程控制 =====================
     /// <summary>每次启动 Easy4K 自动进入远程连接模式（等价于启动时附加 --remote）。

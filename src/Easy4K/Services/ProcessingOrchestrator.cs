@@ -106,6 +106,11 @@ public sealed class ProcessingOrchestrator
         public string? StandaloneAudioWav;
         /// <summary>视频审查：本次合并的期望帧数</summary>
         public long ExpectedFrames;
+        /// <summary>分段涡轮：本段只拆 [SplitFrom, SplitTo] 这个帧号区间（0 基闭区间，-1 = 不限）</summary>
+        public long SplitFrom = -1;
+        public long SplitTo = -1;
+        /// <summary>是否由分段涡轮创建的子流水线（子流水线内部不再启用块级涡轮）</summary>
+        public bool Segmented;
     }
 
     /// <summary>本次是否抑制桌面 ERROR 报告（用户主动中止，如选择「更换其他模型」）。</summary>
@@ -120,17 +125,27 @@ public sealed class ProcessingOrchestrator
         var st = PreparePipeline(ctx);
         if (st is null) return null;
 
-        // ============ 阶段2：拆帧 ============
-        if (!await SplitStageAsync(st, ct)) return null;
+        if (CanSegmentTurbo(ctx, st))
+        {
+            // 涡轮分段：N 条完整流水线并行，产出帧汇总到主临时目录后统一合并
+            if (!await RunSegmentedTurboAsync(st, ct)) return null;
+            // 每段内部已做完去重回填，主流程不能再展开一次
+            st.DedupKept = 0;
+        }
+        else
+        {
+            // ============ 阶段2：拆帧 ============
+            if (!await SplitStageAsync(st, ct)) return null;
 
-        // 内部优化（不属于对外阶段）：涡轮块级流水 + 帧去重（原阶段1.5）
-        await RunTurboAndDedupAsync(st, ct);
+            // 内部优化（不属于对外阶段）：涡轮块级流水 + 帧去重（原阶段1.5）
+            await RunTurboAndDedupAsync(st, ct);
 
-        // ============ 阶段3：超分 ============
-        if (!await SuperResStageAsync(st, ct)) return null;
+            // ============ 阶段3：超分 ============
+            if (!await SuperResStageAsync(st, ct)) return null;
 
-        // ============ 阶段4：补帧 ============
-        if (!await InterpolationStageAsync(st, ct)) return null;
+            // ============ 阶段4：补帧 ============
+            if (!await InterpolationStageAsync(st, ct)) return null;
+        }
 
         // ============ 阶段5：AudioSR 分支 ============
         await AudioSrStageAsync(st, ct);
@@ -261,6 +276,38 @@ public sealed class ProcessingOrchestrator
 
         if (!ctx.Options.SplitFrames) return true;
 
+        // 涡轮分段：只拆 [SplitFrom, SplitTo] 帧号区间（0 基闭区间），输出重新从 1 连续编号
+        if (st.SplitFrom >= 0 && st.SplitTo >= st.SplitFrom)
+        {
+            var rangeUseGpu = ctx.Settings.UseGpuAcceleration;
+            var rangeText = rangeUseGpu ? "拆帧中(GPU加速)" : "拆帧中";
+            _logger.Info($"开始拆帧（分段 {st.SplitFrom + 1} ~ {st.SplitTo + 1} 帧）: {Path.GetFileName(ctx.InputVideo)}");
+
+            var (rangeArgs, _) = FFmpegCommandBuilder.SplitFramesRange(
+                ctx.InputVideo, inputFrames, st.SplitFrom, st.SplitTo, rangeUseGpu);
+            _logger.Command($"ffmpeg {rangeArgs}");
+            var rangeExit = await RunStageWithProgress(ProcessStage.Splitting, rangeText, totalFrames,
+                ctx.Tools.FFmpegExe, rangeArgs, ParseFfmpegFrame, inputFrames, ct);
+
+            if (rangeExit != 0 && rangeUseGpu)
+            {
+                _logger.Warn("分段拆帧 GPU 解码失败，自动降级为 CPU 处理");
+                (rangeArgs, _) = FFmpegCommandBuilder.SplitFramesRange(
+                    ctx.InputVideo, inputFrames, st.SplitFrom, st.SplitTo, false);
+                _logger.Command($"ffmpeg {rangeArgs}");
+                rangeExit = await RunStageWithProgress(ProcessStage.Splitting, "拆帧中(降级CPU)", totalFrames,
+                    ctx.Tools.FFmpegExe, rangeArgs, ParseFfmpegFrame, inputFrames, ct);
+            }
+
+            if (rangeExit != 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                Fail("拆帧失败（分段）");
+                return false;
+            }
+            return true;
+        }
+
         var existing = CountFrames(inputFrames);
         if (existing >= (st.CachedDedupKept > 0 ? st.CachedDedupKept : totalFrames))
         {
@@ -323,9 +370,10 @@ public sealed class ProcessingOrchestrator
         var ifMult = st.IfMult;
         var cpu = st.Cpu;
 
-        // ============ 涡轮模式：块级流水（CPU 侧按块判决/准备 与 GPU 侧超分/补帧 同时进行） ============
+        // ============ 块级涡轮流水（CPU 侧按块判决/准备 与 GPU 侧超分/补帧 同时进行） ============
+        // 分段涡轮的子流水线里不再套块级涡轮：段已经并行，再嵌套一层只会互相抢资源
         var turboDedupKept = 0;
-        if (ctx.Settings.TurboMode)
+        if (ctx.Settings.TurboMode && !st.Segmented)
         {
             if (TurboSupported(ctx))
             {
@@ -357,6 +405,240 @@ public sealed class ProcessingOrchestrator
         // 补帧始终只算保留帧（= 回填前的数量）。
         st.SrTarget = dedupKept > 0 && !ctx.Options.Interpolation ? dedupKept : totalFrames;
         st.IfTarget = dedupKept > 0 ? (long)dedupKept * ifMult : st.TargetFrames;
+    }
+
+    // ===================== 涡轮分段（N 条完整流水线并行） =====================
+
+    /// <summary>分段涡轮适用性：需要真正拆帧（外部帧文件夹没有视频可切），且帧数够分。</summary>
+    private static bool CanSegmentTurbo(ProcessingContext ctx, PipelineState st)
+    {
+        if (!ctx.Settings.TurboMode) return false;
+        if (Math.Clamp(ctx.Settings.TurboSegments, 1, 5) <= 1) return false;
+        if (!ctx.Options.SplitFrames) return false;
+        if (!string.IsNullOrEmpty(ctx.ExternalFramesDir) && Directory.Exists(ctx.ExternalFramesDir)) return false;
+        return st.TotalFrames >= 8;
+    }
+
+    /// <summary>把总帧数按段均分（余数分给前几段），返回各段的 [起, 止] 帧号（0 基闭区间）。</summary>
+    private static List<(long From, long To)> BuildFrameRanges(long total, int segments)
+    {
+        var ranges = new List<(long From, long To)>(segments);
+        var size = total / segments;
+        var extra = total % segments;
+        long start = 0;
+        for (var i = 0; i < segments; i++)
+        {
+            var len = size + (i < extra ? 1 : 0);
+            ranges.Add((start, start + len - 1));
+            start += len;
+        }
+        return ranges;
+    }
+
+    /// <summary>按文件名里的数字排序（帧号可能不连续，不能靠字符串排序）。</summary>
+    private static List<string> SortFramesByNumber(string dir)
+    {
+        var list = new List<(long Number, string Path)>();
+        if (Directory.Exists(dir))
+        {
+            foreach (var file in Directory.EnumerateFiles(dir, "*.png"))
+            {
+                var name = Path.GetFileNameWithoutExtension(file);
+                list.Add((long.TryParse(name, out var n) ? n : long.MaxValue, file));
+            }
+        }
+        list.Sort((a, b) => a.Number.CompareTo(b.Number));
+        return list.Select(x => x.Path).ToList();
+    }
+
+    /// <summary>分段涡轮主流程：并行跑 N 条完整流水线（各自独立的临时目录），
+    /// 全部完成后按段顺序把成品帧汇总到主目录并重新编号，再由主流程统一做 AudioSR / 合并 / HDR / 审查。</summary>
+    private async Task<bool> RunSegmentedTurboAsync(PipelineState main, CancellationToken ct)
+    {
+        var ctx = main.Ctx;
+        var segments = Math.Clamp(ctx.Settings.TurboSegments, 2, 5);
+        var total = main.TotalFrames;
+        var ranges = BuildFrameRanges(total, segments);
+
+        _logger.Info($"[分段涡轮] 启用 {segments} 段并行流水线："
+            + string.Join(" / ", ranges.Select(r => $"第 {r.From + 1}-{r.To + 1} 帧")) + $"（共 {total} 帧）");
+        if (ctx.Settings.DedupEnabled)
+            _logger.Info("[分段涡轮] 帧去重按段独立执行：段首帧不和上一段末帧比较（跨段边界不做判重）");
+
+        // 清空上次的分段目录与汇总目录，避免残留帧混进本次结果
+        var turboRoot = Path.Combine(main.TempRoot, "turbo").Replace('\\', '/');
+        var targetDir = ctx.Options.Interpolation ? main.IfFrames
+            : ctx.Options.SuperResolution ? main.SrFrames : main.InputFrames;
+        foreach (var dir in new[] { turboRoot, targetDir })
+        {
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+            Directory.CreateDirectory(dir);
+        }
+
+        var progress = new double[segments];
+        var stageTexts = new string[segments];
+        var outputs = new string?[segments];
+        var errors = new string?[segments];
+
+        var tasks = new List<Task>(segments);
+        for (var i = 0; i < segments; i++)
+        {
+            var index = i;
+            var range = ranges[i];
+            tasks.Add(Task.Run(async () =>
+            {
+                try
+                {
+                    var segRoot = Path.Combine(turboRoot, $"seg{index + 1}").Replace('\\', '/');
+                    var subCtx = new ProcessingContext
+                    {
+                        InputVideo = ctx.InputVideo,
+                        TempRoot = segRoot,
+                        OutputRoot = ctx.OutputRoot,
+                        ExternalFramesDir = "",
+                        Video = ctx.Video,
+                        Options = ctx.Options,
+                        SrModel = ctx.SrModel,
+                        SrScale = ctx.SrScale,
+                        IfModel = ctx.IfModel,
+                        IfDriverKey = ctx.IfDriverKey,
+                        IfMultiplier = ctx.IfMultiplier,
+                        HdrSaturation = ctx.HdrSaturation,
+                        HdrContrast = ctx.HdrContrast,
+                        Gpu = ctx.Gpu,
+                        Settings = ctx.Settings,
+                        Tools = ctx.Tools,
+                        OnSrCpuIncompatibleAsync = ctx.OnSrCpuIncompatibleAsync
+                    };
+
+                    var orch = new ProcessingOrchestrator(_runner, _logger);
+                    orch.ProgressChanged += p =>
+                    {
+                        stageTexts[index] = p.StageText;
+                        progress[index] = p.Total > 0 ? Math.Clamp((double)p.Current / p.Total, 0, 1) : 0;
+                        ReportSegmentedProgress(segments, index, p, progress, stageTexts, total);
+                    };
+
+                    var seg = orch.PreparePipeline(subCtx);
+                    if (seg is null) { errors[index] = "初始化失败"; return; }
+
+                    seg.Segmented = true;
+                    seg.SplitFrom = range.From;
+                    seg.SplitTo = range.To;
+                    seg.TotalFrames = range.To - range.From + 1;
+                    seg.TargetFrames = ctx.Options.Interpolation
+                        ? (long)Math.Round(seg.TotalFrames * seg.IfRatio)
+                        : seg.TotalFrames;
+
+                    if (!await orch.SplitStageAsync(seg, ct)) { errors[index] = "拆帧失败"; return; }
+                    await orch.RunTurboAndDedupAsync(seg, ct);
+                    if (!await orch.SuperResStageAsync(seg, ct)) { errors[index] = "超分失败"; return; }
+                    if (!await orch.InterpolationStageAsync(seg, ct)) { errors[index] = "补帧失败"; return; }
+
+                    outputs[index] = await orch.CollectSegmentFramesAsync(seg, ct);
+                    if (outputs[index] is null) errors[index] = "帧回填失败";
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { errors[index] = ex.Message; }
+                finally { progress[index] = 1; }
+            }, ct));
+        }
+
+        try { await Task.WhenAll(tasks); }
+        catch (OperationCanceledException) { throw; }
+
+        var failed = errors.FirstOrDefault(e => e is not null);
+        if (failed is not null)
+        {
+            Fail($"分段流水线处理失败：{failed}");
+            return false;
+        }
+
+        // 按段顺序汇总：第 1 段 → 第 N 段，重新编号成 1..M 的连续序列
+        long seq = 0;
+        for (var i = 0; i < segments; i++)
+        {
+            foreach (var file in SortFramesByNumber(outputs[i]!))
+            {
+                seq++;
+                var dest = Path.Combine(targetDir, $"{seq:00000000}.png").Replace('\\', '/');
+                try
+                {
+                    if (File.Exists(dest)) File.Delete(dest);
+                    File.Move(file, dest);
+                }
+                catch
+                {
+                    try { File.Copy(file, dest, true); } catch (Exception ex) { _logger.Warn($"分段帧汇总失败：{ex.Message}"); }
+                }
+            }
+        }
+
+        if (seq == 0)
+        {
+            Fail("分段流水线没有产出任何帧");
+            return false;
+        }
+
+        _logger.Success($"[分段涡轮] {segments} 段全部完成，已按顺序汇总 {seq} 帧到 {targetDir}");
+        main.TargetFrames = seq;
+        // 不补帧时：汇总帧数就是成片帧数；补帧时按比例反推源帧数，供合并阶段校验
+        main.TotalFrames = ctx.Options.Interpolation
+            ? (long)Math.Round(seq / Math.Max(1.0, main.IfRatio))
+            : seq;
+        return true;
+    }
+
+    /// <summary>把某一段流水线的成品帧收拢到一个目录：开了帧去重就先按索引表回填成完整序列。</summary>
+    private async Task<string?> CollectSegmentFramesAsync(PipelineState seg, CancellationToken ct)
+    {
+        var framesDir = seg.Ctx.Options.Interpolation ? seg.IfFrames
+            : seg.Ctx.Options.SuperResolution ? seg.SrFrames : seg.InputFrames;
+
+        if (seg.DedupKept <= 0) return framesDir;
+
+        var expanded = Path.Combine(seg.TempRoot, "expanded_frames").Replace('\\', '/');
+        var ratio = seg.Ctx.Options.Interpolation ? seg.IfRatio : 1.0;
+        var block = seg.Ctx.Options.Interpolation ? seg.IfMult : 1;
+        var selfDir = seg.Ctx.Options.Interpolation
+            ? (seg.Ctx.Options.SuperResolution ? seg.SrFrames : seg.InputFrames)
+            : null;
+
+        var ok = await TryExpandDedupFramesAsync(seg.TempRoot, framesDir, expanded, ratio, block, ct, selfDir);
+        return ok ? expanded : null;
+    }
+
+    /// <summary>分段并行进度：总进度按各段进度平均，预览区每段一格。</summary>
+    private void ReportSegmentedProgress(int segments, int index, ProcessProgress segmentProgress,
+        double[] progress, string[] stageTexts, long totalFrames)
+    {
+        double overall = 0;
+        for (var i = 0; i < segments; i++) overall += progress[i];
+        overall /= segments;
+
+        var pipelines = new List<PipelineFramePreview>(segments);
+        for (var i = 0; i < segments; i++)
+        {
+            pipelines.Add(new PipelineFramePreview
+            {
+                Key = $"seg{i + 1}",
+                Label = $"分段 {i + 1}/{segments}（{(string.IsNullOrEmpty(stageTexts[i]) ? "准备中" : stageTexts[i])}）",
+                FramePath = i == index ? segmentProgress.LatestFramePath : "",
+                FrameIndex = 0
+            });
+        }
+
+        ProgressChanged?.Invoke(new ProcessProgress
+        {
+            Stage = segmentProgress.Stage,
+            StageText = $"分段并行 {segments} 段",
+            Current = (long)Math.Round(overall * 1000),
+            Total = 1000,
+            PercentDisplay = true,
+            CustomDetail = $"{segmentProgress.StageText}  ·  总进度 {overall * 100:0}%（{segments} 段并行，共 {totalFrames} 帧）",
+            LatestFramePath = segmentProgress.LatestFramePath,
+            Pipelines = pipelines
+        });
     }
 
     /// <summary>阶段3 超分：读取拆分帧 → 模型 → 倍率 → 构建启动代码 → 超分中。

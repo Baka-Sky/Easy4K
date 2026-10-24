@@ -182,6 +182,10 @@ public partial class MainViewModel : ObservableObject
         }
         _turboMode = _app.TurboMode;
         _turboBlockFrames = Math.Clamp(_app.TurboBlockFrames, 32, 4000);
+        _turboSegments = Math.Clamp(_app.TurboSegments, 1, 5);
+        // 涡轮模式下线程固定 1:1:1（记住用户原本的线程数，关闭涡轮时恢复）
+        _threadsBeforeTurbo = _threadCount;
+        if (_turboMode) _threadCount = 1;
         _autoRemoteOnStartup = _app.AutoRemoteOnStartup;
         _superResolution = _app.DefaultSuperResolution;
         _interpolation = _app.DefaultInterpolation;
@@ -488,6 +492,9 @@ public partial class MainViewModel : ObservableObject
     /// <summary>涡轮模式：帧序列按块切分，超分与补帧两条 GPU 流水经有界队列同时推进（CPU 侧准备块输入）</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(TurboBlockVis))]
+    [NotifyPropertyChangedFor(nameof(ThreadsEditable))]
+    [NotifyPropertyChangedFor(nameof(ThreadHintText))]
+    [NotifyPropertyChangedFor(nameof(TurboSegmentsVis))]
     private bool _turboMode;
 
     /// <summary>涡轮模式每块帧数（用户可调）：太小会反复加载模型，太大会降低并行度</summary>
@@ -495,12 +502,31 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(TurboBlockLabel))]
     private int _turboBlockFrames = 240;
 
+    /// <summary>涡轮分段数（1 ~ 5）：分段并行流水，每段处理一段连续的帧，跑完按顺序汇总再合并</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TurboSegmentsLabel))]
+    private int _turboSegments = 2;
+
     /// <summary>块大小滑块只在涡轮模式开启时出现（关闭时整块收起，不占位）</summary>
     public Microsoft.UI.Xaml.Visibility TurboBlockVis =>
         TurboMode ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
 
+    /// <summary>分段数只在涡轮模式开启时出现</summary>
+    public Microsoft.UI.Xaml.Visibility TurboSegmentsVis => TurboBlockVis;
+
     /// <summary>块大小右侧的数值文本</summary>
     public string TurboBlockLabel => $"{TurboBlockFrames} 帧";
+
+    /// <summary>分段数右侧的数值文本</summary>
+    public string TurboSegmentsLabel => $"{TurboSegments} 段";
+
+    /// <summary>涡轮模式强制线程 1:1:1：开启期间线程滑块不可修改</summary>
+    public bool ThreadsEditable => !TurboMode;
+
+    /// <summary>线程说明文字（涡轮模式下改为固定 1:1:1 的说明）</summary>
+    public string ThreadHintText => TurboMode
+        ? "涡轮模式固定使用 1:1:1 线程（开启涡轮期间不可修改）"
+        : "处理线程（NCNN: -j 1:x:x），范围 1 ~ 32，默认 2";
 
     partial void OnAudioSrEnabledChanged(bool value)
     {
@@ -511,9 +537,23 @@ public partial class MainViewModel : ObservableObject
     partial void OnTurboModeChanged(bool value)
     {
         _app.TurboMode = value;
+
+        // 涡轮模式强制 1:1:1：多条流水线同时跑，每条再用多线程会互相抢 CPU/显存，
+        // 反而拖慢整体；开启期间线程数锁定，关闭后恢复用户自己的设置。
+        if (value)
+        {
+            if (ThreadCount > 1) _threadsBeforeTurbo = ThreadCount;
+            ThreadCount = 1;
+        }
+        else if (ThreadCount <= 1)
+        {
+            // 关闭涡轮：恢复开启前的线程数，不把用户原来的 1:8:8 悄悄改成 1:1:1
+            ThreadCount = Math.Clamp(_threadsBeforeTurbo, 1, 32);
+        }
+
         _settings.Save(_app, _pathConfig);
         _logger.Info(value
-            ? $"涡轮模式已开启：帧序列按 {Math.Max(32, _app.TurboBlockFrames)} 帧切块，超分与补帧两条 GPU 流水同时推进；请确保临时目录位于固态硬盘"
+            ? $"涡轮模式已开启：把视频切成 {Math.Clamp(TurboSegments, 1, 5)} 段并行处理，线程固定 1:1:1；请确保临时目录位于固态硬盘"
             : "涡轮模式已关闭：恢复逐阶段串行处理");
     }
 
@@ -521,6 +561,21 @@ public partial class MainViewModel : ObservableObject
     {
         _app.TurboBlockFrames = value;
         _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnTurboSegmentsChanged(int value)
+    {
+        var normalized = Math.Clamp(value, 1, 5);
+        if (normalized != value)
+        {
+            TurboSegments = normalized;
+            return;
+        }
+        _app.TurboSegments = normalized;
+        _settings.Save(_app, _pathConfig);
+        _logger.Info(normalized <= 1
+            ? "涡轮分段数：1 段（不分段，按单条流水线处理）"
+            : $"涡轮分段数：{normalized} 段（并行流水线，每段处理连续的帧）");
     }
 
     // ===================== 远程控制 =====================
@@ -621,6 +676,9 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(ThreadWarnText))]
     [NotifyPropertyChangedFor(nameof(ThreadWarnVis))]
     private int _threadCount = 2;
+
+    /// <summary>开启涡轮前的线程数（关闭涡轮时恢复，避免用户的 1:8:8 被永久改成 1:1:1）</summary>
+    private int _threadsBeforeTurbo = 2;
 
     partial void OnUseSafeFrameRateChanged(bool value)
     {

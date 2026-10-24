@@ -73,7 +73,7 @@ public static class CrashReportService
             sb.AppendLine($"线程/显存  : 线程 {s.ThreadCount} / 安全帧率 {s.UseSafeFrameRate} / 低画质省显存 {s.LowerQualityForVram}");
             sb.AppendLine($"硬件加速   : GPU加速 {s.UseGpuAcceleration} / CPU处理 {s.UseCpuProcessing}");
             sb.AppendLine($"编码       : preset {s.EncodePreset} / CRF {s.Crf} / 硬编 {s.HwQualityMode} {s.HwQuality}");
-            sb.AppendLine($"涡轮模式   : {s.TurboMode} / 块大小 {s.TurboBlockFrames}");
+            sb.AppendLine($"涡轮模式   : {s.TurboMode} / 分段 {s.TurboSegments}");
             sb.AppendLine($"HDR        : 饱和度 {ctx.HdrSaturation} / 对比度 {ctx.HdrContrast}");
 
             Head("三、失败现场");

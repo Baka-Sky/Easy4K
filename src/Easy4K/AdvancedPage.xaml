@@ -139,7 +139,7 @@
                             <Button Grid.Column="1" HorizontalAlignment="Left"
                                     Padding="3" Background="Transparent" BorderThickness="0"
                                     VerticalAlignment="Center" Click="OnTurboInfoClick"
-                                    ToolTipService.ToolTip="帧序列按块切分，超分与补帧两条 GPU 流水经有界队列同时推进&#x0a;开了帧去重时，去重判决也在 CPU 侧按块流式跑，与 GPU 重叠&#x0a;&#x0a;点击图标查看详细讲解"
+                                    ToolTipService.ToolTip="把视频按帧号切成 1~5 段，每段各自跑一条完整流水线并行处理&#x0a;全部完成后按原顺序汇总帧，再统一做音频 / 合并 / HDR / 审查&#x0a;&#x0a;点击图标查看详细讲解"
                                     AutomationProperties.Name="涡轮模式说明">
                                 <FontIcon Glyph="&#xE946;" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             </Button>
@@ -149,29 +149,28 @@
                                       IsOn="{x:Bind Vm.TurboMode, Mode=TwoWay}" Toggled="OnTurboToggled" FontSize="12"/>
 
                         <TextBlock TextWrapping="Wrap" FontSize="11" Opacity="0.6"
-                                   Text="将勾选的所有操作同时进行。由于数据吞吐巨大，本功能要求临时目录必须为固态存储介质。"/>
+                                   Text="把视频按帧号切成若干段，每段各自跑一条完整流水线并行处理，全部完成后按顺序汇总帧再统一合并。由于数据吞吐巨大，本功能要求临时目录必须为固态存储介质。"/>
 
-                        <!-- 每块帧数：只在涡轮模式开启时出现；越界由弹窗提醒（见 AdvancedPage.xaml.cs） -->
+                        <!-- 分段数：只在涡轮模式开启时出现（1 = 不分段） -->
                         <StackPanel x:Name="TurboBlockPanel" Spacing="4"
-                                    Visibility="{x:Bind Vm.TurboBlockVis, Mode=OneWay}">
+                                    Visibility="{x:Bind Vm.TurboSegmentsVis, Mode=OneWay}">
                             <Grid ColumnSpacing="8">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <Slider Grid.Column="0" Minimum="32" Maximum="2000" StepFrequency="8" TickFrequency="64"
-                                        Value="{x:Bind Vm.TurboBlockFrames, Mode=TwoWay}"
-                                        ValueChanged="OnTurboBlockChanged"
+                                <Slider Grid.Column="0" Minimum="1" Maximum="5" StepFrequency="1" TickFrequency="1"
+                                        Value="{x:Bind Vm.TurboSegments, Mode=TwoWay}"
                                         HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="1" Text="{x:Bind Vm.TurboBlockLabel, Mode=OneWay}"
+                                <TextBlock Grid.Column="1" Text="{x:Bind Vm.TurboSegmentsLabel, Mode=OneWay}"
                                            VerticalAlignment="Center" FontSize="12" MinWidth="70" TextAlignment="Right"/>
                             </Grid>
-                            <TextBlock Text="每块帧数（默认 240，建议 64 ~ 600）：块越小 CPU 与 GPU 重叠越充分，但超分 / 补帧模型会被反复加载"
+                            <TextBlock Text="涡轮分段（默认 2 段，最大 5 段）：段数越多越吃 CPU / 显存带宽；1 段等于不分段。"
                                        FontSize="11" Opacity="0.6" TextWrapping="Wrap"/>
                         </StackPanel>
 
                         <TextBlock x:Name="TurboHint" FontSize="11" Opacity="0.6" TextWrapping="Wrap"
-                                   Text="单卡建议 64~256 帧：块越小 CPU 与 GPU 重叠越充分，但外部工具重复加载模型、按块复制帧的开销也越多；改完立即写入配置。"/>
+                                   Text="段与段之间互不重叠：每段按帧号精确切分，处理完按原顺序汇总，成片时长与帧率不变；开启涡轮期间处理线程固定 1:1:1。"/>
                     </StackPanel>
                 </Border>
 
@@ -204,13 +203,14 @@
                             </Grid.ColumnDefinitions>
                             <Slider Grid.Column="0" Minimum="1" Maximum="32" StepFrequency="1" TickFrequency="1"
                                     Value="{x:Bind Vm.ThreadCount, Mode=TwoWay}"
+                                    IsEnabled="{x:Bind Vm.ThreadsEditable, Mode=OneWay}"
                                     ValueChanged="OnThreadSliderValueChanged"
                                     HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
                             <TextBlock Grid.Column="1" Text="{x:Bind Vm.ThreadLabel, Mode=OneWay}"
                                        VerticalAlignment="Center" FontSize="12" MinWidth="70" TextAlignment="Right"/>
                         </Grid>
-                        <TextBlock Text="处理线程（NCNN: -j 1:x:x），范围 1 ~ 32，默认 2"
-                                   FontSize="11" Opacity="0.6"/>
+                        <TextBlock Text="{x:Bind Vm.ThreadHintText, Mode=OneWay}"
+                                   FontSize="11" Opacity="0.6" TextWrapping="Wrap"/>
                         <TextBlock Text="{x:Bind Vm.ThreadWarnText, Mode=OneWay}" Foreground="Orange"
                                    FontSize="11" TextWrapping="Wrap" Visibility="{x:Bind Vm.ThreadWarnVis, Mode=OneWay}"/>
 

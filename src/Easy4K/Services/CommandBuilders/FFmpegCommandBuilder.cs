@@ -24,6 +24,23 @@ public static class FFmpegCommandBuilder
         return (args, pattern);
     }
 
+    /// <summary>只拆出指定帧号区间（0 基、闭区间）的帧，输出仍从 1 开始连续编号。
+    /// 用 select 按解码后的帧序号筛选，边界精确、段与段之间不重叠也不缺帧；
+    /// 代价是每个分段都要从头解码一遍源视频（解码远快于超分/补帧，可接受）。
+    /// 涡轮分段模式用它把视频切成 N 段，各段流水线并行处理后再按顺序汇总。</summary>
+    public static (string args, string framePattern) SplitFramesRange(
+        string videoPath, string framesDir, long fromFrame, long toFrame, bool useGpu = false)
+    {
+        Directory.CreateDirectory(framesDir);
+        var pattern = Path.Combine(framesDir, "%08d.png").Replace('\\', '/');
+        var hw = useGpu ? " -hwaccel auto" : "";
+        var from = Math.Max(0, fromFrame);
+        var to = Math.Max(from, toFrame);
+        var select = $"select='between(n\\,{from}\\,{to})'";
+        var args = $"-y{hw} -i \"{videoPath}\" -vf \"{select}\" -q:v 2 -fps_mode passthrough \"{pattern}\"";
+        return (args, pattern);
+    }
+
     /// <summary>把 PNG 序列合成视频。BUG-08：自动探测起始帧编号。
     /// encArgs 由上层决定（GPU 硬件编码或 CPU libx265）；-threads 0 = 使用全部 CPU 核心，不限制。
     /// subtitleSource 非空时把该文件作为第二个输入，只取它的字幕流原样复制（-map 1:s?，没有字幕也不报错）：
