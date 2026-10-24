@@ -4,7 +4,9 @@ using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Windows.UI.Text;
 
 namespace Easy4K.Services;
 
@@ -132,22 +134,29 @@ public static class Loc
     // ===================== 内嵌字体兜底 =====================
 
     private static FontFamily? _appFont;
+    private static FontFamily? _appBoldFont;
 
     /// <summary>内嵌字体（App.xaml 里的 AppFontFamily）。取不到就退回系统默认，不让界面崩。</summary>
-    private static FontFamily AppFont
+    private static FontFamily AppFont => _appFont ??= ResolveFont("AppFontFamily", "Segoe UI");
+
+    /// <summary>内嵌粗体（真实 Bold 字面）。不单独指定的话，SemiBold/Bold 会由 Regular 合成假粗体，
+    /// 笔画发虚、边缘发毛，小字号下尤其明显。</summary>
+    private static FontFamily AppBoldFont => _appBoldFont ??= ResolveFont("AppFontBoldFamily", "Segoe UI Semibold");
+
+    private static FontFamily ResolveFont(string key, string fallback)
     {
-        get
+        try
         {
-            if (_appFont is not null) return _appFont;
-            try
-            {
-                if (Application.Current.Resources.TryGetValue("AppFontFamily", out var v) && v is FontFamily f)
-                    return _appFont = f;
-            }
-            catch { }
-            return _appFont = new FontFamily("Segoe UI");
+            if (Application.Current.Resources.TryGetValue(key, out var v) && v is FontFamily f)
+                return f;
         }
+        catch { }
+        return new FontFamily(fallback);
     }
+
+    /// <summary>按字重选字面：SemiBold 及以上用真实 Bold 文件，其余用 Regular。</summary>
+    private static FontFamily FontForWeight(FontWeight weight) =>
+        weight.Weight >= FontWeights.SemiBold.Weight ? AppBoldFont : AppFont;
 
     /// <summary>该字族要不要替换成内嵌字体。图标字体（Fluent Icons / MDL2 / Symbol）与等宽日志（Consolas）
     /// 是刻意保留的，不能动；已经是内嵌字体的也不重复设置。</summary>
@@ -174,10 +183,10 @@ public static class Loc
             switch (el)
             {
                 case TextBlock tb when ShouldReplaceFont(tb.FontFamily):
-                    tb.FontFamily = AppFont;
+                    tb.FontFamily = FontForWeight(tb.FontWeight);
                     break;
                 case Control c when ShouldReplaceFont(c.FontFamily):
-                    c.FontFamily = AppFont;
+                    c.FontFamily = FontForWeight(c.FontWeight);
                     break;
             }
         }
