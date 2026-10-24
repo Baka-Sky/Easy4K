@@ -900,70 +900,30 @@ public sealed partial class MainWindow : Window
     /// 点击后执行 action 回到触发处继续操作；不传 actionText 则只有"知道了"。</summary>
     public void ShowNotice(string title, string message, string? actionText = null, Action? action = null)
     {
-        NoticeTip.Title = title;
-        NoticeTip.Subtitle = message;
-        NoticeTip.ActionButtonContent = actionText; // null → 不显示动作按钮
+        NoticeTitle.Text = title;
+        NoticeMessage.Text = message;
+        NoticeActionButton.Content = actionText;
+        NoticeActionButton.Visibility = actionText is null ? Visibility.Collapsed : Visibility.Visible;
         _noticeAction = actionText is null ? null : action;
 
-        // 已显示时只替换内容（同一时刻只留最新一条），避免先关后开同帧内弹不出来
-        if (!NoticeTip.IsOpen) NoticeTip.IsOpen = true;
-
-        // 通知条（TeachingTip）的内容在弹出层，页面本地化时遍历不到，字体/字号会停在模板默认值；
-        // 等模板实例化后补刷一次：换内嵌字体 + 把 12px 的副标题提到 13px
-        DispatcherQueue.TryEnqueue(RefreshNoticeFonts);
+        // 已显示时只替换内容（同一时刻只留最新一条）
+        NoticeBar.Visibility = Visibility.Visible;
     }
 
-    /// <summary>通知条弹出后补刷字体（模板默认是系统字族 + 12px 小字，中文看着发毛）。</summary>
-    private void RefreshNoticeFonts()
-    {
-        try
-        {
-            Loc.ApplyFonts(NoticeTip);
-            BumpNoticeText(NoticeTip);
-
-            // 模板内容实际挂在 XamlRoot 的弹出层，从 NoticeTip 自身不一定遍历得到
-            if (RootLayout.XamlRoot is not null)
-            {
-                foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(RootLayout.XamlRoot))
-                {
-                    if (popup.Child is null || !ContainsElement(popup.Child, NoticeTip)) continue;
-                    Loc.ApplyFonts(popup.Child);
-                    BumpNoticeText(popup.Child);
-                }
-            }
-        }
-        catch { /* 通知条未实例化时忽略 */ }
-    }
-
-    private static bool ContainsElement(DependencyObject root, DependencyObject target)
-    {
-        if (ReferenceEquals(root, target)) return true;
-        if (root is Popup { Child: not null } popup && ContainsElement(popup.Child, target)) return true;
-
-        var count = VisualTreeHelper.GetChildrenCount(root);
-        for (var i = 0; i < count; i++)
-            if (ContainsElement(VisualTreeHelper.GetChild(root, i), target)) return true;
-        return false;
-    }
-
-    private static void BumpNoticeText(DependencyObject root)
-    {
-        if (root is TextBlock tb && tb.FontSize < 13) tb.FontSize = 13;
-
-        var count = VisualTreeHelper.GetChildrenCount(root);
-        for (var i = 0; i < count; i++)
-            BumpNoticeText(VisualTreeHelper.GetChild(root, i));
-    }
-
-    private void OnNoticeTipAction(TeachingTip sender, object args)
+    private void OnNoticeBarAction(object sender, RoutedEventArgs e)
     {
         var action = _noticeAction;
-        _noticeAction = null;
-        sender.IsOpen = false;
+        HideNotice();
         action?.Invoke();
     }
 
-    private void OnNoticeTipClosed(TeachingTip sender, TeachingTipClosedEventArgs args) => _noticeAction = null;
+    private void OnNoticeBarClose(object sender, RoutedEventArgs e) => HideNotice();
+
+    private void HideNotice()
+    {
+        _noticeAction = null;
+        NoticeBar.Visibility = Visibility.Collapsed;
+    }
 
     /// <summary>用资源管理器打开目录（通知条动作按钮用）。</summary>
     private static void OpenFolder(string path)

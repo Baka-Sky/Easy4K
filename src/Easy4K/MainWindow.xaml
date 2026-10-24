@@ -110,16 +110,34 @@
             </Grid>
         </NavigationView>
 
-        <!-- 非目标式通知条（TeachingTip 不设 Target → 显示在窗口底部居中，不遮挡内容）。
-             用于"点了有动作、但界面上看不到反馈"的按钮：提取音频 / 保存默认设置 / 复制日志 / 清除输入等。
-             标题、正文、动作按钮由 MainWindow.ShowNotice 动态指定，点击动作按钮回到触发页面继续操作。 -->
-        <TeachingTip x:Name="NoticeTip" Grid.Row="0" Grid.RowSpan="2"
-                     IsOpen="False"
-                     PreferredPlacement="Bottom"
-                     IsLightDismissEnabled="True"
-                     CloseButtonContent="知道了"
-                     ActionButtonClick="OnNoticeTipAction"
-                     Closed="OnNoticeTipClosed"/>
+        <!-- 非目标式通知条：自绘卡片，直接放在页面树里（不用 TeachingTip —— 它挂在弹出层，
+             文字只能走灰度抗锯齿，小字发毛）。底部居中，点"知道了"或动作按钮关闭。
+             标题、正文、动作按钮由 MainWindow.ShowNotice 动态指定。 -->
+        <Border x:Name="NoticeBar" Grid.Row="0" Grid.RowSpan="2"
+                Visibility="Collapsed"
+                HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                Margin="24,0,24,20" Padding="16,12" MaxWidth="760"
+                CornerRadius="8"
+                Background="{ThemeResource CardBgBrush}"
+                BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                    <TextBlock x:Name="NoticeTitle" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="NoticeMessage" FontSize="13" TextWrapping="Wrap"
+                               IsTextSelectionEnabled="True"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                </StackPanel>
+                <Button x:Name="NoticeActionButton" Grid.Column="1" Visibility="Collapsed"
+                        Style="{StaticResource GlassButton}" Click="OnNoticeBarAction"/>
+                <Button x:Name="NoticeCloseButton" Grid.Column="2" VerticalAlignment="Center"
+                        Style="{StaticResource GlassButton}" Content="知道了" Click="OnNoticeBarClose"/>
+            </Grid>
+        </Border>
 
         <!-- 远程控制模式：整窗盖住所有界面，只留中间的等待/已连接提示。
              由设置页「远程控制 → 启动」打开；结束远程控制后收起。 -->
