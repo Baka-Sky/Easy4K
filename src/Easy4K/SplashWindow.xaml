@@ -11,5 +11,17 @@
          窗口保留系统边框以获得 DWM 抗锯齿圆角与阴影，内容延伸进标题栏后视觉上无标题栏。 -->
     <Grid Background="#1A1A1A">
         <Image x:Name="SplashImage" Stretch="UniformToFill"/>
+
+        <!-- 右上角关闭：直接退出程序 -->
+        <Button HorizontalAlignment="Right" VerticalAlignment="Top"
+                Margin="0,8,8,0" Width="30" Height="30" Padding="0"
+                Content="✕" FontSize="14" Foreground="White"
+                Background="#66000000" BorderThickness="0" CornerRadius="15"
+                Click="OnCloseClick"/>
+
+        <!-- 右下角检查进度 -->
+        <ProgressRing IsActive="True" Width="22" Height="22" Foreground="White"
+                      HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                      Margin="0,0,16,12"/>
     </Grid>
 </Window>

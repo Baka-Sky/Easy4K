@@ -33,6 +33,13 @@ public sealed partial class SplashWindow : Window
         _ = LoadImageAsync();
     }
 
+    /// <summary>右上角关闭：直接退出程序（启动阶段还没进主界面）。</summary>
+    private void OnCloseClick(object sender, RoutedEventArgs e)
+    {
+        try { Application.Current.Exit(); }
+        catch { Close(); }
+    }
+
     /// <summary>窗口按屏幕工作区面积的约 10%（线性约 31.6%）居中显示，保持启动图 16:10 比例。
     /// 返回物理像素尺寸（供圆角区域裁切用）。</summary>
     private (int w, int h) CenterAt(int dpi)
