@@ -85,6 +85,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="最大化界面缩放" Style="{StaticResource FieldLabel}"/>
                             <ComboBox Grid.Column="1" MinWidth="130" VerticalAlignment="Center"
+                                      Style="{StaticResource GlassComboBox}"
                                       SelectedIndex="{x:Bind Vm.UiZoomIndex, Mode=TwoWay}">
                                 <ComboBoxItem Content="100%（标准）"/>
                                 <ComboBoxItem Content="110%"/>
