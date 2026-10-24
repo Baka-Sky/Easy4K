@@ -1155,7 +1155,7 @@ public sealed partial class MainWindow : Window
                         .Select(f => f.LastWriteTime)
                         .DefaultIfEmpty(DateTime.MinValue)
                         .Max();
-                    if (newest > DateTime.MinValue) uiTime = newest.ToString("yyyy MM dd HH mm");
+                    if (newest > DateTime.MinValue) uiTime = newest.ToString("yyyy:MM:dd:HH:mm:ss");
                     break;
                 }
             }
