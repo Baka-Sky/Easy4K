@@ -1063,7 +1063,8 @@ public sealed partial class MainWindow : Window
         var dlg = new ContentDialog
         {
             Title = title,
-            // 长文本（如环境/显卡检测结果）用可滚动区域展示，等宽字体便于对齐
+            // 长文本（如环境/显卡检测结果、帮助、关于）用可滚动区域展示；
+            // 字体走全局内嵌字体，与其它弹窗保持一致（原先是 Consolas 等宽，中文会回退成系统字体）
             Content = new ScrollViewer
             {
                 MaxHeight = 420,
@@ -1071,7 +1072,7 @@ public sealed partial class MainWindow : Window
                 {
                     Text = content,
                     TextWrapping = TextWrapping.Wrap,
-                    FontFamily = new FontFamily("Consolas"),
+                    IsTextSelectionEnabled = true,
                     FontSize = 13
                 }
             },
