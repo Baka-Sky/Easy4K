@@ -1140,7 +1140,7 @@ public sealed partial class MainWindow : Window
         }
         catch { }
 
-        // UI 更新时间：源码里最新改动的 .xaml（用来确认界面改动是否已经被本次构建包含）
+        // UI 更新时间：源码里最新改动的界面文件（.xaml + .xaml.cs），只要界面动过就算刷新
         var uiTime = buildTime;
         try
         {
@@ -1150,7 +1150,7 @@ public sealed partial class MainWindow : Window
                 if (File.Exists(Path.Combine(dir.FullName, "Easy4K.csproj")))
                 {
                     var sep = Path.DirectorySeparatorChar;
-                    var newest = dir.EnumerateFiles("*.xaml", SearchOption.AllDirectories)
+                    var newest = dir.EnumerateFiles("*.xaml*", SearchOption.AllDirectories)
                         .Where(f => !f.FullName.Contains($"{sep}obj{sep}") && !f.FullName.Contains($"{sep}bin{sep}"))
                         .Select(f => f.LastWriteTime)
                         .DefaultIfEmpty(DateTime.MinValue)
