@@ -60,6 +60,10 @@ public partial class MainViewModel : ObservableObject
     /// <summary>自测/自动化模式下抑制完成弹窗（true 时不弹）</summary>
     public bool SuppressCompletionDialog { get; set; }
 
+    /// <summary>API/无界面自动测试模式：超分 CPU 不兼容时不弹询问框（按历史无人值守行为自动升级 GPU），
+    /// 否则隐藏的窗口会一直等用户点按钮，整条流水线卡死。</summary>
+    public bool HeadlessAutoTest { get; set; }
+
     public MainViewModel(Logger logger, SettingsService settings, ToolPaths tools,
         EnvironmentDetector env, VideoInfoDetector videoDetector, ProcessingOrchestrator orchestrator,
         ProcessRunner runner, AppSettings app, ToolPathConfig toolCfg)
@@ -2130,8 +2134,9 @@ public partial class MainViewModel : ObservableObject
             Gpu = Gpu,
             Settings = _app,
             Tools = Tools,
-            // CPU 模式遇到不支持 CPU 的超分模型时，弹窗让用户选「改用 GPU」或「更换模型」
-            OnSrCpuIncompatibleAsync = AskSrCpuIncompatibleAsync
+            // CPU 模式遇到不支持 CPU 的超分模型时，弹窗让用户选「改用 GPU」或「更换模型」；
+            // 无人值守（API 自动测试）下不弹窗，传 null 让它按历史行为自动升级 GPU
+            OnSrCpuIncompatibleAsync = HeadlessAutoTest ? null : AskSrCpuIncompatibleAsync
         };
 
         _orchestratorAssigned.ProgressChanged += OnProgressChanged;

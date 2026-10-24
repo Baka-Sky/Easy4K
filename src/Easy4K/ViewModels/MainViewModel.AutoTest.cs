@@ -367,8 +367,166 @@ public partial class MainViewModel
             turbo: true, turboSegments: 2);
         Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
             "涡轮·5 段（最大分段压力测试）", threads: 1, turbo: true, turboSegments: 5);
+        Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
+            "涡轮·3 段 + 帧去重·完美模式", threads: 1, dedup: true, dedupMode: "uhd",
+            turbo: true, turboSegments: 3);
+        Add(true, false, false, true, true, false, null, 2, null, 2,
+            "帧去重·性能模式（仅去重+合并，不超分不补帧）", dedup: true, dedupMode: "performance");
+        Add(true, false, false, true, true, false, null, 2, null, 2,
+            "帧去重·完美模式（仅去重+合并，不超分不补帧）", dedup: true, dedupMode: "uhd");
 
         return cases;
+    }
+
+    /// <summary>把单条用例写进 ViewModel（等价于用户在界面上逐项勾选/选择），
+    /// 之后直接调 StartAsync() —— 与点「开始处理」、孤儿模式完全同一条入口。</summary>
+    private void ApplyCaseToViewModel(AutoCase c, string tempRoot, string outputRoot)
+    {
+        TempRoot = tempRoot.Replace('\\', '/');
+        OutputRoot = outputRoot.Replace('\\', '/');
+
+        SplitFrames = c.Options.SplitFrames;
+        SuperResolution = c.Options.SuperResolution;
+        Interpolation = c.Options.Interpolation;
+        MergeVideo = c.Options.MergeVideo;
+        MergeAudio = c.Options.MergeAudio;
+        SdrToHdr = c.Options.SdrToHdr;
+
+        SrModel = c.SrModel ?? "";
+        SrScale = c.SrScale;
+        IfModel = c.IfModel ?? "";
+        IfMultiplier = c.IfMultiplier;
+
+        UseSafeFrameRate = c.Safe;
+        LowerQualityForVram = c.LowerQuality;
+        UseGpuAcceleration = c.GpuAccel;
+        UseCpuProcessing = c.Cpu;
+        ThreadCount = c.Threads;
+
+        DedupEnabled = c.Dedup;
+        DedupMode = string.IsNullOrEmpty(c.DedupMode) ? "performance" : c.DedupMode;
+
+        TurboMode = c.Turbo;
+        TurboSegments = Math.Clamp(c.TurboSegments, 1, 5);
+
+        AudioSrEnabled = false;
+        KeepSubtitles = false;
+    }
+
+    /// <summary>API 模式全组合测试：不直接用 orchestrator，而是每例先把选项写进 ViewModel，
+    /// 再调 StartAsync()（与用户点「开始处理」、孤儿模式同一条入口），验证整条流水线是否真正联通。
+    /// 报告写桌面，进程由调用方退出。</summary>
+    public async Task RunAutoTestViaStartAsyncAsync(bool fullMatrix = false, bool desktopReport = true)
+    {
+        if (IsProcessing) { _logger.Warn("API 自动测试: 已有处理进行中，忽略本次请求"); return; }
+        if (!Tools.CoreToolsOk)
+        {
+            _logger.Error("API 自动测试: FFmpeg/RealESRGAN/RIFE 未就绪，无法开始");
+            return;
+        }
+
+        var startAll = DateTime.Now;
+        var results = new List<AutoResult>();
+        var root = Path.Combine(ResDir, "autotest_api");
+        HeadlessAutoTest = true;
+        SuppressCompletionDialog = true;
+        IsAutoTest = true;
+
+        // 测试会改一堆设置并落盘，跑完用备份把用户的 appsettings.json 原样还原
+        var configBackup = Path.Combine(Path.GetTempPath(), $"easy4k_autotest_cfg_{Guid.NewGuid():N}.json");
+        var configPath = Path.Combine(AppPaths.WritableRoot, "appsettings.json");
+        try { if (File.Exists(configPath)) File.Copy(configPath, configBackup, true); } catch { }
+        _settings.SuppressWrites = true;
+
+        try
+        {
+            if (!await EnsureStartupTestVideoAsync())
+            {
+                _logger.Error("API 自动测试: 测试视频不可用");
+                return;
+            }
+            var info = _videoDetector.Detect(StartupTestVideoPath);
+            if (info is null || !info.IsValid)
+            {
+                _logger.Error("API 自动测试: 测试视频检测失败");
+                return;
+            }
+
+            try { if (Directory.Exists(root)) Directory.Delete(root, true); } catch { }
+            Directory.CreateDirectory(root);
+
+            var cases = BuildAutoTestCases(info, fullMatrix);
+            _autoTestCount = cases.Count;
+            _autoTestIndex = 0;
+            _logger.Info($"==== API 自动测试开始（走用户「开始处理」同一入口），共 {cases.Count} 例 ====");
+
+            foreach (var c in cases)
+            {
+                _autoTestIndex++;
+                var temp = Path.Combine(root, $"run{_autoTestIndex:D3}_temp");
+                var outp = Path.Combine(root, $"run{_autoTestIndex:D3}_out");
+                try { if (Directory.Exists(temp)) Directory.Delete(temp, true); } catch { }
+                try { if (Directory.Exists(outp)) Directory.Delete(outp, true); } catch { }
+                Directory.CreateDirectory(temp);
+                Directory.CreateDirectory(outp);
+
+                _logger.Info($"---- [{_autoTestIndex}/{_autoTestCount}] {c.Name} ----");
+                ProgressDetail = $"API 自动测试 {_autoTestIndex}/{_autoTestCount}：{c.Name}";
+
+                ApplyCaseToViewModel(c, temp, outp);
+                await SetInputVideoAsync(StartupTestVideoPath);
+                await Task.Delay(400);   // 等视频检测完成
+
+                var sw = Stopwatch.StartNew();
+                var note = "";
+                try { await StartAsync(); }
+                catch (OperationCanceledException) { note = "已取消"; }
+                catch (Exception ex) { note = ex.Message; }
+                sw.Stop();
+
+                var produced = Path.Combine(outp, FinalOutputName);
+                var ok = Stage == ProcessStage.Done && File.Exists(produced);
+                if (Stage == ProcessStage.Done && !File.Exists(produced)) note = "产物不存在";
+                else if (Stage == ProcessStage.Failed && string.IsNullOrEmpty(note)) note = "处理失败";
+                // 涡轮要求固态临时目录：命中机械盘会被启动校验自动关掉，报告里注明（这一例实际测的是串行路径）
+                if (c.Turbo && !TurboMode && string.IsNullOrEmpty(note))
+                    note = "涡轮被自动关闭（临时目录在机械硬盘，按串行处理）";
+
+                results.Add(new AutoResult(c, ok, sw.Elapsed, ok ? produced : null, note));
+                _logger.Info($"---- [{_autoTestIndex}/{_autoTestCount}] {c.Name} → {(ok ? "通过" : "失败")}，耗时 {sw.Elapsed.TotalSeconds:F1}s{(string.IsNullOrEmpty(note) ? "" : $"（{note}）")} ----");
+
+                try
+                {
+                    if (ok) { Directory.Delete(temp, true); Directory.Delete(outp, true); }
+                }
+                catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"API 自动测试异常: {ex.Message}");
+        }
+        finally
+        {
+            _settings.SuppressWrites = false;
+            HeadlessAutoTest = false;
+            SuppressCompletionDialog = false;
+            IsAutoTest = false;
+
+            // 还原用户配置（测试期间改过的选项不落盘）
+            try
+            {
+                if (File.Exists(configBackup))
+                {
+                    File.Copy(configBackup, configPath, true);
+                    File.Delete(configBackup);
+                }
+            }
+            catch { }
+        }
+
+        WriteAutoTestSummary(root, results, DateTime.Now - startAll, false, desktopReport);
+        _logger.Info("==== API 自动测试结束 ====");
     }
 
     private static string Sanitize(string name)

@@ -241,9 +241,13 @@ public partial class App : Application
             await Task.Delay(1500);
             if (apiMode)
             {
-                try { MainWindow?.AppWindow.Hide(); } catch { }
+                // 每例都走 StartAsync()（用户点「开始处理」的同一入口）；窗口保留可见，方便观察进度
+                await Services.RunAutoTestViaStartAsyncAsync(fullMatrix, desktopReport: true);
             }
-            await Services.RunAutoTestAllAsync(fullMatrix, dedupOnly, apiMode);
+            else
+            {
+                await Services.RunAutoTestAllAsync(fullMatrix, dedupOnly, false);
+            }
         }
         catch (Exception ex)
         {
