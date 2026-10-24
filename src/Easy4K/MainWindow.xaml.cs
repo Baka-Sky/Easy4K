@@ -7,6 +7,7 @@ using Easy4K.Services.RemoteControl;
 using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Windowing;
@@ -906,6 +907,52 @@ public sealed partial class MainWindow : Window
 
         // 已显示时只替换内容（同一时刻只留最新一条），避免先关后开同帧内弹不出来
         if (!NoticeTip.IsOpen) NoticeTip.IsOpen = true;
+
+        // 通知条（TeachingTip）的内容在弹出层，页面本地化时遍历不到，字体/字号会停在模板默认值；
+        // 等模板实例化后补刷一次：换内嵌字体 + 把 12px 的副标题提到 13px
+        DispatcherQueue.TryEnqueue(RefreshNoticeFonts);
+    }
+
+    /// <summary>通知条弹出后补刷字体（模板默认是系统字族 + 12px 小字，中文看着发毛）。</summary>
+    private void RefreshNoticeFonts()
+    {
+        try
+        {
+            Loc.ApplyFonts(NoticeTip);
+            BumpNoticeText(NoticeTip);
+
+            // 模板内容实际挂在 XamlRoot 的弹出层，从 NoticeTip 自身不一定遍历得到
+            if (RootLayout.XamlRoot is not null)
+            {
+                foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(RootLayout.XamlRoot))
+                {
+                    if (popup.Child is null || !ContainsElement(popup.Child, NoticeTip)) continue;
+                    Loc.ApplyFonts(popup.Child);
+                    BumpNoticeText(popup.Child);
+                }
+            }
+        }
+        catch { /* 通知条未实例化时忽略 */ }
+    }
+
+    private static bool ContainsElement(DependencyObject root, DependencyObject target)
+    {
+        if (ReferenceEquals(root, target)) return true;
+        if (root is Popup { Child: not null } popup && ContainsElement(popup.Child, target)) return true;
+
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+            if (ContainsElement(VisualTreeHelper.GetChild(root, i), target)) return true;
+        return false;
+    }
+
+    private static void BumpNoticeText(DependencyObject root)
+    {
+        if (root is TextBlock tb && tb.FontSize < 13) tb.FontSize = 13;
+
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+            BumpNoticeText(VisualTreeHelper.GetChild(root, i));
     }
 
     private void OnNoticeTipAction(TeachingTip sender, object args)

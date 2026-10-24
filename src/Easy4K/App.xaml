@@ -90,6 +90,16 @@
             <Style TargetType="TextBlock">
                 <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
             </Style>
+
+            <!-- 弹出层控件：ToolTip / 通知条也是模板 + ContentPresenter 自绘文本，
+                 不指定字体就会用系统字族（中文回退后观感与界面其它文字不一致） -->
+            <Style TargetType="ToolTip">
+                <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
+                <Setter Property="FontSize" Value="13"/>
+            </Style>
+            <Style TargetType="TeachingTip">
+                <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>
