@@ -192,6 +192,7 @@ public static class Loc
             {
                 case TextBlock tb:
                     tb.FontFamily = PickFace(tb.FontFamily, tb.FontWeight);
+                    FoldOpacityIntoForeground(tb);
                     break;
                 case Control c:
                     c.FontFamily = PickFace(c.FontFamily, c.FontWeight);
@@ -199,6 +200,21 @@ public static class Loc
             }
         }
         catch { }
+    }
+
+    /// <summary>小字发毛的根因：给 TextBlock 设 Opacity &lt; 1（界面里大量 0.6 的说明文字）
+    /// 会把整段文字推进一个独立图层，ClearType 子像素渲染直接失效，只剩灰度抗锯齿，
+    /// 10~12px 的小字边缘就成锯齿状。把透明度折算进文字颜色的 alpha 里，观感完全一致，
+    /// 但文字仍与背景在同一层，ClearType 正常工作。</summary>
+    private static void FoldOpacityIntoForeground(TextBlock tb)
+    {
+        var opacity = tb.Opacity;
+        if (opacity >= 0.99 || opacity <= 0.05) return;
+        if (tb.Foreground is not SolidColorBrush src || src.Color.A == 0) return;
+
+        var alpha = (byte)Math.Round(src.Color.A * opacity);
+        tb.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(alpha, src.Color.R, src.Color.G, src.Color.B));
+        tb.Opacity = 1;
     }
 
     /// <summary>按字重挑真实字面：SemiBold 及以上用 Bold 文件，其余用 Regular。

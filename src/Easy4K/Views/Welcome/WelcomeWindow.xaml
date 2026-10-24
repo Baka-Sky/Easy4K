@@ -8,7 +8,7 @@
     mc:Ignorable="d"
     Title="Easy4K">
 
-    <Grid x:Name="RootLayout">
+    <Grid x:Name="RootLayout" UseLayoutRounding="True">
         <Grid.RowDefinitions>
             <RowDefinition Height="44"/>
             <RowDefinition Height="*"/>

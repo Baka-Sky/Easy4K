@@ -111,6 +111,10 @@ public sealed partial class WelcomeWindow : Window
         }
         catch { }
 
+        // 与主界面一致：刷内嵌字体、按字重换真实粗体字面，并把小字说明的 Opacity 折进文字颜色
+        // （元素级半透明会让 ClearType 失效，小字边缘发毛）。放在动态文案写入之后执行。
+        Loc.LocalizeTree(RootLayout);
+
         // 欢迎内容直接可见；配置页勾选与主界面一致（回填后再挂事件避免干扰恢复）
         HookStepLinkage();
         HookReportToggleSync();
