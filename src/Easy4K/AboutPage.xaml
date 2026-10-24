@@ -30,10 +30,22 @@
 
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel Spacing="10">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <TextBlock Text="Easy4K" FontSize="24" FontWeight="Bold"/>
-                            <TextBlock Text="{x:Bind Version}" FontSize="24" FontWeight="Bold" VerticalAlignment="Bottom"/>
-                        </StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <TextBlock Text="Easy4K" FontSize="24" FontWeight="Bold"/>
+                                <TextBlock Text="{x:Bind Version}" FontSize="24" FontWeight="Bold" VerticalAlignment="Bottom"/>
+                            </StackPanel>
+
+                            <!-- 右上角 logo：浅色主题用黑版、深色主题用白版（主题变化时换图） -->
+                            <Image x:Name="AboutLogo" Grid.Column="1"
+                                   Width="180" Stretch="Uniform"
+                                   HorizontalAlignment="Right" VerticalAlignment="Top"/>
+                        </Grid>
 
                         <!-- 版本、组件、附加能力、免责声明：与旧「关于」弹窗同一份文本 -->
                         <TextBlock x:Name="AboutTextBlock" FontSize="13" TextWrapping="Wrap"
@@ -44,10 +56,5 @@
 
             </StackPanel>
         </ScrollViewer>
-
-        <!-- 右上角 logo（固定不随内容滚动）：浅色主题用黑版、深色主题用白版，主题变化时换图 -->
-        <Image x:Name="AboutLogo" HorizontalAlignment="Right" VerticalAlignment="Top"
-               Width="180" Margin="0,4,0,0"
-               Stretch="Uniform" IsHitTestVisible="False"/>
     </Grid>
 </Page>
