@@ -82,7 +82,9 @@
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
                 <Setter Property="CornerRadius" Value="4"/>
-                <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
+                <!-- 下拉框里的中文（算法名/种类名）笔画比英文模型名密，Regular 小字看着发虚；
+                     Medium 笔画更实，与模型名（纯英文）观感一致 -->
+                <Setter Property="FontFamily" Value="{StaticResource AppFontMediumFamily}"/>
                 <Setter Property="PlaceholderForeground" Value="{ThemeResource InputPlaceholderBrush}"/>
             </Style>
             <Style x:Key="GlassNumberBox" TargetType="NumberBox">
@@ -100,7 +102,7 @@
             <!-- 所有下拉框（含没写 Style 的）统一玻璃样式 + 内嵌字体 + TextBlock 项模板 -->
             <Style TargetType="ComboBox" BasedOn="{StaticResource GlassComboBox}"/>
             <Style TargetType="ComboBoxItem" BasedOn="{StaticResource DefaultComboBoxItemStyle}">
-                <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
+                <Setter Property="FontFamily" Value="{StaticResource AppFontMediumFamily}"/>
             </Style>
 
             <!-- 弹出层控件：ToolTip 也是模板 + ContentPresenter 自绘文本，
