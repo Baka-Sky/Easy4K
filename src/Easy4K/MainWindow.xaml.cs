@@ -1130,13 +1130,13 @@ public sealed partial class MainWindow : Window
     {
 #if DEBUG
         DebugHoverText.Visibility = Visibility.Visible;
-        DebugInfoPanel.Visibility = Visibility.Visible;
+        DebugInfoText.Visibility = Visibility.Visible;
 
         var buildTime = "unknown";
         try
         {
             // 程序集写入时间 ≈ 本次构建时间
-            buildTime = File.GetLastWriteTime(typeof(App).Assembly.Location).ToString("yyyy-MM-dd-HH");
+            buildTime = File.GetLastWriteTime(typeof(App).Assembly.Location).ToString("yyyy:MM:dd:HH:mm:ss");
         }
         catch { }
 
