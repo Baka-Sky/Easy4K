@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using Easy4K.Models;
 using Easy4K.Services;
@@ -188,6 +189,13 @@ public partial class App : Application
             return;
         }
 
+        // 普通启动（非自测 / 自动测试 / 远程 / 孤儿）：先显示启动画面，检查必要组件后再进主界面
+        if (!selftestCli && !autoTestCli && !remoteCli && orphanTask is null)
+        {
+            StartWithSplash(tools);
+            return;
+        }
+
         OpenMainWindow();
 
         // 子进程：只跑一例（窗口照常显示，方便观察），跑完写结果并退出
@@ -243,6 +251,68 @@ public partial class App : Application
         _window = MainWindow;
         MainWindow.Activate();
     }
+
+    // ===================== 启动画面 =====================
+
+    /// <summary>显示启动画面并检查必要文件/模型：齐全 → 进主界面；缺失 → 主界面弹出警告。
+    /// 检测很快时也至少停留 2 秒，避免"闪一下"。</summary>
+    private async void StartWithSplash(ToolPaths tools)
+    {
+        SplashWindow? splash = null;
+        try
+        {
+            splash = new SplashWindow();
+            _window = splash;
+            splash.Activate();
+
+            var sw = Stopwatch.StartNew();
+            var problem = await Task.Run(() => CheckStartupAssets(tools));
+
+            var remain = TimeSpan.FromSeconds(2) - sw.Elapsed;
+            if (remain > TimeSpan.Zero) await Task.Delay(remain);
+
+            OpenMainWindow();
+            try { splash.Close(); } catch { }
+            splash = null;
+
+            if (problem is not null)
+            {
+                var main = MainWindow;
+                if (main is not null) await main.ShowStartupWarningAsync(problem);
+            }
+        }
+        catch (Exception ex)
+        {
+            File.AppendAllText(CrashLogPath, $"[Splash @ {DateTime.Now}]\n{ex}\n\n");
+            OpenMainWindow();
+            try { splash?.Close(); } catch { }
+        }
+    }
+
+    /// <summary>启动前检查必要组件与模型：齐全返回 null，否则返回缺失说明。</summary>
+    private static string? CheckStartupAssets(ToolPaths tools)
+    {
+        var missing = new List<string>();
+
+        if (!tools.FFmpegExists) missing.Add("FFmpeg（Tools 下的 ffmpeg.exe）");
+        if (!tools.FFprobeExists) missing.Add("FFprobe（Tools 下的 ffprobe.exe）");
+        if (!tools.RealEsrganExists) missing.Add("Real-ESRGAN 超分引擎");
+        if (!tools.RifeExists) missing.Add("RIFE 补帧引擎");
+        if (!HasModelFiles(tools.RealEsrganModelsRoot)) missing.Add("超分模型文件（realesrgan models 目录为空）");
+        if (!HasModelFiles(tools.RifeModelsRoot)) missing.Add("补帧模型文件（rife models 目录为空）");
+
+        if (missing.Count == 0) return null;
+
+        return "检测到以下必要文件/模型缺失，部分功能将无法使用：\n\n"
+             + string.Join("\n", missing.Select(m => "· " + m))
+             + "\n\n请确认 Tools 目录完整后重新启动 Easy4K。";
+    }
+
+    /// <summary>模型目录里是否至少有一个 .param（ncnn 模型描述文件）</summary>
+    private static bool HasModelFiles(string dir) =>
+        !string.IsNullOrWhiteSpace(dir)
+        && Directory.Exists(dir)
+        && Directory.EnumerateFiles(dir, "*.param", SearchOption.AllDirectories).Any();
 
     /// <summary>API 自动测试父进程：逐例拉起 --api-case 子进程（跑完关闭再启动下一例），最后写桌面报告并退出。</summary>
     private static async Task RunApiOrchestratorDelayedAsync(bool fullMatrix)
