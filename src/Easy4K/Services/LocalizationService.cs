@@ -131,6 +131,25 @@ public static class Loc
         }
     }
 
+    /// <summary>只做字体处理（按字重换真实粗体字面、小字透明度折算），不碰任何文案。
+    /// 用于运行期才实例化模板的元素——比如 ContentDialog：标题在弹窗模板里写死 SemiBold，
+    /// 不刷一遍就会由 Regular 合成假粗体，边缘发毛。</summary>
+    public static void ApplyFonts(DependencyObject? root)
+    {
+        if (root is null) return;
+        try
+        {
+            ApplyAppFont(root);
+            var count = VisualTreeHelper.GetChildrenCount(root);
+            for (var i = 0; i < count; i++)
+                ApplyFonts(VisualTreeHelper.GetChild(root, i));
+        }
+        catch
+        {
+            // 树结构异常时跳过，不影响弹窗显示
+        }
+    }
+
     // ===================== 内嵌字体兜底 =====================
 
     private static FontFamily? _appFont;
@@ -418,6 +437,18 @@ internal static class ContentDialogLocalizationExtensions
     public static async System.Threading.Tasks.Task<ContentDialogResult> ShowLocalizedAsync(this ContentDialog dialog)
     {
         Loc.LocalizeDialog(dialog);
-        return await dialog.ShowAsync();
+
+        // 弹窗的模板（含标题 TextBlock）是 ShowAsync 之后才实例化的，
+        // 不在可视树上，页面那套字体刷不到，标题就会是合成假粗体。Opened 时补刷一次字体。
+        void OnOpened(ContentDialog sender, ContentDialogOpenedEventArgs args) => Loc.ApplyFonts(sender);
+        dialog.Opened += OnOpened;
+        try
+        {
+            return await dialog.ShowAsync();
+        }
+        finally
+        {
+            dialog.Opened -= OnOpened;
+        }
     }
 }
