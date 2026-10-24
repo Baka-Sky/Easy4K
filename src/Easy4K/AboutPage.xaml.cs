@@ -30,6 +30,38 @@ public sealed partial class AboutPage : Page
         ApplyLogo();
         ActualThemeChanged += (_, _) => ApplyLogo();
         Loaded += (_, _) => ApplyLogo();
+
+        // 赞助二维码（固定图片，进页面就解码好）
+        _ = LoadSponsorQrAsync();
+    }
+
+    private async Task LoadSponsorQrAsync()
+    {
+        SponsorQr1.Source = await LoadImageAsync("SponsorQr1.png", 440);
+        SponsorQr2.Source = await LoadImageAsync("SponsorQr2.jpg", 440);
+    }
+
+    /// <summary>从 Assets 读图并按显示尺寸解码（4K / 大图直接缩，避免整张解码）。</summary>
+    private static async Task<BitmapImage?> LoadImageAsync(string file, int decodeWidth)
+    {
+        try
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "Assets", file);
+            if (!File.Exists(path)) return null;
+
+            var bmp = new BitmapImage
+            {
+                DecodePixelWidth = decodeWidth,
+                DecodePixelType = DecodePixelType.Logical
+            };
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            await bmp.SetSourceAsync(fs.AsRandomAccessStream());
+            return bmp;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private void OnBack(object sender, RoutedEventArgs e) => App.MainWindow?.NavigateToSettings();

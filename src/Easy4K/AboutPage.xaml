@@ -56,6 +56,19 @@
                     </StackPanel>
                 </Border>
 
+                <!-- 赞助 -->
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="赞助" FontSize="14" FontWeight="SemiBold"/>
+                        <TextBlock FontSize="13" TextWrapping="Wrap"
+                                   Text="如果您觉得项目不错，您可以考虑赞助我；我会将资金投入服务器费用及宣发费用中。"/>
+                        <StackPanel Orientation="Horizontal" Spacing="16" HorizontalAlignment="Left">
+                            <Image x:Name="SponsorQr1" Height="200" Stretch="Uniform"/>
+                            <Image x:Name="SponsorQr2" Height="200" Stretch="Uniform"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
             </StackPanel>
         </ScrollViewer>
     </Grid>
