@@ -1175,13 +1175,9 @@ public sealed partial class MainWindow : Window
         "   均由使用者自行承担，开发者概不负责。\n\n" +
         "3. 软件运行时会调用系统全部 CPU/GPU 资源，可能导致设备高负载、发热、降频甚至崩溃，请自行评估风险。\n\n" +
         "4. 输出的视频/音频内容之版权、合法性与用途由使用者自行负责，请勿用于任何非法用途或侵犯他人权益的场景。\n\n" +
-        "5. 第三方组件受其各自许可证约束：FFmpeg 为 GPL v3（构建含 --enable-gpl --enable-version3）；\n" +
-        "   ncnn 为 BSD-3-Clause；NVEncC / Real-ESRGAN / Real-CUGAN / RealSR / SRMD / waifu2x / RIFE /\n" +
-        "   Practical-RIFE / DRBA / AudioSR / onnxruntime 为 MIT；PyTorch 为 BSD-3-Clause；Python 为 PSF；\n" +
-        "   OpenCV 为 Apache-2.0；timm 为 Apache-2.0；GIMM-VFI 为 S-Lab License 1.0（仅限非商业用途）；\n" +
-        "   DRBA / GMFSS / GIMM-VFI 内含的 softmax-splatting 算子仅限学术用途；CUDA / cuDNN 为 NVIDIA\n" +
-        "   专有许可。本软件免费分发，满足上述非商业/学术用途条款。完整清单与版权见程序目录\n" +
-        "   《Easy4K 软件安装声明》。使用前请自行查阅并遵守。\n\n" +
+        "5. 所调用的第三方组件受其各自许可证约束，完整清单、许可与版权见下方「使用的开源项目」\n" +
+        "   及程序目录《Easy4K 软件安装声明》。本软件免费分发，满足其中非商业/学术用途条款，\n" +
+        "   使用前请自行查阅并遵守。\n\n" +
         "6. 开发者不承诺修复任何缺陷，不提供任何形式的售后服务与技术支持。\n\n" +
         "7. 使用本软件即表示已阅读并同意以上全部条款；不同意请立即停止使用并删除本软件。\n\n" +
         "========== 使用的开源项目 ==========\n\n" +
