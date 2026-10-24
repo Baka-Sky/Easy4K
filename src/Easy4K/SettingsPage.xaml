@@ -76,14 +76,14 @@
                         <TextBlock x:Name="BgImageHint" FontSize="12" Opacity="0.6" TextWrapping="Wrap" Margin="28,0,0,0" Visibility="Collapsed"
                                    Text="整窗铺满该图片，上面覆盖一层亚克力（模糊 + 深色着色），界面固定用深色主题保证卡片与文字可读；浓度越高越糊越暗、文字越清晰。换图/拖动立即生效，随配置一起保存。"/>
 
-                        <!-- 界面整体缩放：窗口最大化后觉得界面太稀疏就调大 -->
+                        <!-- 最大化界面缩放：窗口最大化后觉得界面太稀疏就调大 -->
                         <Grid ColumnSpacing="8" Margin="0,6,0,0">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="80"/>
+                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="界面缩放" Style="{StaticResource FieldLabel}"/>
+                            <TextBlock Grid.Column="0" Text="最大化界面缩放" Style="{StaticResource FieldLabel}"/>
                             <ComboBox Grid.Column="1" MinWidth="130" VerticalAlignment="Center"
                                       SelectedIndex="{x:Bind Vm.UiZoomIndex, Mode=TwoWay}">
                                 <ComboBoxItem Content="100%（标准）"/>
