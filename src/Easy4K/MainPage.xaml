@@ -41,7 +41,12 @@
         <ScrollViewer Padding="0,8,0,0" VerticalScrollBarVisibility="Auto">
             <StackPanel Spacing="10">
 
-                <TextBlock Text="主页 标准模式" FontSize="20" FontWeight="Bold" Margin="0,2,0,4"/>
+                <!-- 顶部问候（按当前时段变化）+ 页面/模式标识 -->
+                <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,2,0,4">
+                    <TextBlock x:Name="GreetingText" FontSize="20" FontWeight="Bold"/>
+                    <TextBlock Text="主页 标准模式" FontSize="13" Opacity="0.6"
+                               VerticalAlignment="Bottom" Margin="0,0,0,3"/>
+                </StackPanel>
 
                 <!-- 路径 -->
                 <Border Style="{StaticResource CardBorder}">

@@ -24,9 +24,30 @@ public sealed partial class MainPage : Page
     /// <summary>帧文件夹参数弹窗是否已打开（防止重复弹出）</summary>
     private bool _frameParamsDialogOpen;
 
+    /// <summary>按当前时段生成问候语：早上好 / 中午好 / 傍晚好 / 晚上好 + 当前 Windows 用户名。</summary>
+    private static string BuildGreeting()
+    {
+        var period = DateTime.Now.Hour switch
+        {
+            >= 5 and < 11 => "早上好",
+            >= 11 and < 13 => "中午好",
+            >= 13 and < 18 => "傍晚好",
+            _ => "晚上好"
+        };
+
+        var user = "";
+        try { user = Environment.UserName?.Trim() ?? ""; } catch { }
+
+        return string.IsNullOrEmpty(user)
+            ? $"{period}，您今天想做些什么？"
+            : $"{period}，{user}。您今天想做些什么？";
+    }
+
     public MainPage()
     {
         InitializeComponent();
+
+        GreetingText.Text = BuildGreeting();
 
         // 单文件「视频 HDR」只在 HDR 可用时出现：AMD 显卡、核显、非 RTX 的 N 卡一律不显示这一项
         // （NVEncC 的 NGX TrueHDR 需要 NVIDIA RTX 20/30/40/50 系列，摆出来也点不了）
