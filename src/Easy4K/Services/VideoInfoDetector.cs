@@ -18,9 +18,11 @@ public sealed class VideoInfoDetector
         if (!_tools.FFprobeExists) return null;
 
         // 注意：r_frame_rate 是分数字符串如 "24/1"；duration 在 format 下，单位秒（小数）
+        // 详细字段：编码/档次/像素格式/色彩（位深、HDR 判断都从这几项推）
         var args = "-v error -select_streams v:0 -count_packets " +
-                   "-show_entries stream=width,height,r_frame_rate,nb_read_packets,bit_rate " +
-                   "-show_entries format=duration,bit_rate -of json " +
+                   "-show_entries stream=width,height,r_frame_rate,nb_read_packets,bit_rate," +
+                   "codec_name,profile,pix_fmt,color_space,color_transfer " +
+                   "-show_entries format=duration,bit_rate,format_name,size -of json " +
                    $"\"{videoPath}\"";
 
         var (stdout, _, exit) = RunCaptured(_tools.FFprobeExe, args);
@@ -38,12 +40,21 @@ public sealed class VideoInfoDetector
         info.FrameRate = ParseFps(info.FrameRateRaw);
         if (stream.TryGetProperty("bit_rate", out var sb) && long.TryParse(sb.GetString(), out var sbr)) info.BitRate = sbr;
 
+        if (stream.TryGetProperty("codec_name", out var cn)) info.VideoCodec = cn.GetString() ?? "";
+        if (stream.TryGetProperty("profile", out var pf)) info.Profile = pf.GetString() ?? "";
+        if (stream.TryGetProperty("pix_fmt", out var pxf)) info.PixelFormat = pxf.GetString() ?? "";
+        if (stream.TryGetProperty("color_space", out var cs)) info.ColorSpace = cs.GetString() ?? "";
+        if (stream.TryGetProperty("color_transfer", out var ct)) info.ColorTransfer = ct.GetString() ?? "";
+        info.VideoBitRate = info.BitRate;
+
         if (root.TryGetProperty("format", out var fmt))
         {
             if (fmt.TryGetProperty("duration", out var d) && double.TryParse(d.GetString(), out var dur))
                 info.Duration = TimeSpan.FromSeconds(dur);
             if (info.BitRate == 0 && fmt.TryGetProperty("bit_rate", out var fb) && long.TryParse(fb.GetString(), out var fbr))
                 info.BitRate = fbr;
+            if (fmt.TryGetProperty("format_name", out var fn)) info.FormatName = fn.GetString() ?? "";
+            if (fmt.TryGetProperty("size", out var sz) && long.TryParse(sz.GetString(), out var size)) info.FileSize = size;
         }
 
         // 总帧数：优先用 nb_read_packets，否则用 duration*fps
@@ -54,37 +65,47 @@ public sealed class VideoInfoDetector
             frames = (long)Math.Round(info.Duration.TotalSeconds * info.FrameRate);
         info.TotalFrames = frames;
 
-        // 音频：编解码器 + 采样率（采样率供音频链路判断"这次有没有重采样"）
-        var (audioCodec, audioRate) = DetectAudio(videoPath);
-        info.AudioCodec = audioCodec;
-        info.AudioSampleRate = audioRate;
+        // 音频：编解码器 + 采样率 + 声道 + 码率（采样率供音频链路判断"这次有没有重采样"）
+        var audio = DetectAudio(videoPath);
+        info.AudioCodec = audio.codec;
+        info.AudioSampleRate = audio.sampleRate;
+        info.AudioChannels = audio.channels;
+        info.AudioBitRate = audio.bitRate;
 
         // 字幕：有字幕流才允许勾「保留原视频内嵌字幕」，否则该项在界面上保持禁用
-        info.HasSubtitles = DetectSubtitles(videoPath);
+        info.SubtitleCount = DetectSubtitles(videoPath);
+        info.HasSubtitles = info.SubtitleCount > 0;
 
         return info.IsValid ? info : null;
     }
 
-    /// <summary>是否存在字幕流（内嵌或外挂软字幕都算，不看具体格式）。ffprobe 无字幕流时返回空。</summary>
-    private bool DetectSubtitles(string videoPath)
+    /// <summary>字幕流数量（内嵌或外挂软字幕都算，不看具体格式）。</summary>
+    private int DetectSubtitles(string videoPath)
     {
         var args = $"-v error -select_streams s -show_entries stream=index -of csv=p=0 \"{videoPath}\"";
         var (stdout, _, exit) = RunCaptured(_tools.FFprobeExe, args);
-        return exit == 0 && !string.IsNullOrWhiteSpace(stdout);
+        if (exit != 0 || string.IsNullOrWhiteSpace(stdout)) return 0;
+        return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
     }
 
-    /// <summary>取音轨的编解码器与采样率（无音轨时返回 "" / 0）。</summary>
-    private (string codec, int sampleRate) DetectAudio(string videoPath)
+    /// <summary>取音轨信息（无音轨时返回空）。用 JSON 解析，字段缺失时不会像 csv 那样错位。</summary>
+    private (string codec, int sampleRate, int channels, long bitRate) DetectAudio(string videoPath)
     {
-        var args = $"-v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 \"{videoPath}\"";
+        var args = $"-v error -select_streams a:0 -show_entries stream=codec_name,sample_rate,channels,bit_rate -of json \"{videoPath}\"";
         var (stdout, _, exit) = RunCaptured(_tools.FFprobeExe, args);
-        if (exit != 0) return ("", 0);
-        // csv 输出形如 "aac,48000"；sample_rate 缺失时只有 codec_name
-        var line = stdout.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim() ?? "";
-        var parts = line.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var codec = parts.Length > 0 ? parts[0] : "";
-        var rate = parts.Length > 1 && int.TryParse(parts[1], out var r) ? r : 0;
-        return (string.IsNullOrWhiteSpace(codec) ? "" : codec, rate);
+        if (exit != 0 || string.IsNullOrWhiteSpace(stdout)) return ("", 0, 0, 0);
+
+        using var doc = JsonDocument.Parse(stdout);
+        if (!doc.RootElement.TryGetProperty("streams", out var streams)) return ("", 0, 0, 0);
+        var stream = streams.EnumerateArray().FirstOrDefault();
+        if (stream.ValueKind != JsonValueKind.Object) return ("", 0, 0, 0);
+
+        var codec = stream.TryGetProperty("codec_name", out var c) ? c.GetString() ?? "" : "";
+        var rate = stream.TryGetProperty("sample_rate", out var r) && int.TryParse(r.GetString(), out var rr) ? rr : 0;
+        var channels = stream.TryGetProperty("channels", out var ch) && ch.TryGetInt32(out var chn) ? chn : 0;
+        var bitRate = stream.TryGetProperty("bit_rate", out var b) && long.TryParse(b.GetString(), out var br) ? br : 0;
+
+        return (string.IsNullOrWhiteSpace(codec) ? "" : codec, rate, channels, bitRate);
     }
 
     private static double ParseFps(string raw)

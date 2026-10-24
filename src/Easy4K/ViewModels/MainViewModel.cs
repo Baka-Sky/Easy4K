@@ -927,9 +927,25 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _warnings = "";
 
     // ===================== 派生属性 =====================
-    public string VideoInfoText => Video is null || !Video.IsValid
-        ? "未检测"
-        : $"分辨率 {Video.ResolutionText}    帧率 {Video.FpsText}    时长 {Video.DurationText}    码率 {Video.BitRateText}";
+    /// <summary>主页「输入视频信息」：分多行展示编码/画面/时长/色彩/音频/容器等详细参数。</summary>
+    public string VideoInfoText
+    {
+        get
+        {
+            if (Video is null || !Video.IsValid) return "未检测";
+            var v = Video;
+            var videoBitRate = v.VideoBitRate > 0 ? v.VideoBitRate : v.BitRate;
+            var subs = v.HasSubtitles ? $"{v.SubtitleCount} 条" : "无";
+
+            return
+                $"编码：{v.CodecText}\n" +
+                $"画面：{v.ResolutionText} · {v.FpsText} · 总帧数 {v.TotalFrames}\n" +
+                $"时长：{v.DurationText} · 大小 {v.FileSizeText} · 码率 {videoBitRate / 1000} kbps\n" +
+                $"色彩：{v.ColorText}\n" +
+                $"音频：{v.AudioText}\n" +
+                $"容器：{v.ContainerText} · 字幕 {subs}";
+        }
+    }
 
     public string OutputResolutionText
     {

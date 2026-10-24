@@ -105,11 +105,12 @@
                     <Border Grid.Column="0" Style="{StaticResource CardBorder}">
                         <StackPanel Spacing="4">
                             <TextBlock Text="输入视频信息 (自动检测)" Style="{StaticResource SectionTitle}"/>
-                            <TextBlock Text="{x:Bind Vm.VideoInfoText, Mode=OneWay}" TextWrapping="Wrap" FontSize="12"/>
-                            <TextBlock Text="输出分辨率" FontWeight="SemiBold" FontSize="12" Margin="0,4,0,0"/>
-                            <TextBlock Text="{x:Bind Vm.OutputResolutionText, Mode=OneWay}" FontSize="12"/>
-                            <TextBlock Text="目标帧率" FontWeight="SemiBold" FontSize="12" Margin="0,4,0,0"/>
-                            <TextBlock Text="{x:Bind Vm.TargetFpsText, Mode=OneWay}" FontSize="12"/>
+                            <TextBlock Text="{x:Bind Vm.VideoInfoText, Mode=OneWay}" TextWrapping="Wrap"
+                                       FontSize="13" LineHeight="19"/>
+                            <TextBlock Text="输出分辨率" FontWeight="SemiBold" FontSize="13" Margin="0,6,0,0"/>
+                            <TextBlock Text="{x:Bind Vm.OutputResolutionText, Mode=OneWay}" FontSize="13"/>
+                            <TextBlock Text="目标帧率" FontWeight="SemiBold" FontSize="13" Margin="0,4,0,0"/>
+                            <TextBlock Text="{x:Bind Vm.TargetFpsText, Mode=OneWay}" FontSize="13"/>
                         </StackPanel>
                     </Border>
 
