@@ -938,12 +938,6 @@ public sealed partial class MainWindow : Window
         return Task.CompletedTask;
     }
 
-    public Task ShowShortcutsAsync()
-    {
-        ShowDialog("快捷键", ShortcutsText);
-        return Task.CompletedTask;
-    }
-
     public Task ShowAboutAsync()
     {
         ShowDialog($"关于 Easy4K v{Vm.Version}", AboutText);
@@ -1011,11 +1005,6 @@ public sealed partial class MainWindow : Window
         "· 帧去重：超分/补帧前剔除与上一帧重复的画面，处理完按索引表回填，成品时长、帧率与音频不变；\n" +
         "· 音频超分：AudioSR 把音轨升到 48kHz 高带宽，勾选「将原音频合并进新视频」时替换视频音轨，\n" +
         "  未勾选则单独输出一份 48kHz WAV。";
-
-    /// <summary>快捷键正文（Ctrl+O 已移除：主页有「浏览」按钮，该快捷键会被误触弹出文件选择框）</summary>
-    private static string ShortcutsText =>
-        "Ctrl+S        开始处理\nCtrl+Shift+S  停止处理\n" +
-        "Ctrl+L        清空日志\nF1            帮助\nAlt+F4        退出";
 
     /// <summary>关于正文（含免责声明）</summary>
     private string AboutText =>

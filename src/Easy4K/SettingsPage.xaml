@@ -129,10 +129,9 @@
                         <TextBlock Text="其它" Style="{StaticResource SectionTitle}"/>
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <Button Content="保存当前设置为默认" Click="OnSaveDefaults" Style="{StaticResource GlassButton}"/>
-                            <Button Content="使用说明 (F1)" Click="OnHelp" Style="{StaticResource GlassButton}"/>
-                            <Button Content="快捷键" Click="OnShortcuts" Style="{StaticResource GlassButton}"/>
+                            <Button Content="使用说明" Click="OnHelp" Style="{StaticResource GlassButton}"/>
                             <Button Content="关于 Easy4K" Click="OnAbout" Style="{StaticResource GlassButton}"/>
-                            <Button Content="退出 (Alt+F4)" Click="OnExit" Style="{StaticResource GlassButton}"/>
+                            <Button Content="退出" Click="OnExit" Style="{StaticResource GlassButton}"/>
                         </StackPanel>
                     </StackPanel>
                 </Border>

@@ -121,8 +121,6 @@ public sealed partial class SettingsPage : Page
 
     private async void OnHelp(object sender, RoutedEventArgs e) => await App.MainWindow.ShowHelpAsync();
 
-    private async void OnShortcuts(object sender, RoutedEventArgs e) => await App.MainWindow.ShowShortcutsAsync();
-
     private async void OnAbout(object sender, RoutedEventArgs e) => await App.MainWindow.ShowAboutAsync();
 
     private void OnExit(object sender, RoutedEventArgs e) => Application.Current.Exit();
