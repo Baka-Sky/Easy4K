@@ -30,10 +30,6 @@ public sealed partial class MainWindow : Window
     private bool _telemetryAsked;
     /// <summary>远程控制服务端实例（仅远程模式期间非空）</summary>
     private RemoteControlServer? _remote;
-#if DEBUG
-    /// <summary>开发信息面板的刷新计时器（实时更新 UI Update 时间）</summary>
-    private DispatcherTimer? _debugTimer;
-#endif
 
     public MainWindow()
     {
@@ -312,6 +308,10 @@ public sealed partial class MainWindow : Window
         {
             if (e.Content is FrameworkElement page) HookPageLocalization(page);
             DispatcherQueue.TryEnqueue(ApplyLocalization);
+#if DEBUG
+            // 切页 = 界面重建，刷新左下角的 UI 时间
+            DispatcherQueue.TryEnqueue(MarkUiUpdated);
+#endif
         };
         // 首页在构造函数前段就 Navigate 完了，那时还没订阅 Navigated，不补这一次的话
         // 首屏的字重/小字修正要等切一次页面才生效（表现为"刚开启有锯齿，切页就好了"）。
@@ -1136,35 +1136,9 @@ public sealed partial class MainWindow : Window
         DebugHoverText.Visibility = Visibility.Visible;
         DebugInfoText.Visibility = Visibility.Visible;
 
-        var buildTime = "unknown";
-        try
-        {
-            // 程序集写入时间 ≈ 本次构建时间
-            buildTime = File.GetLastWriteTime(typeof(App).Assembly.Location).ToString("yyyy:MM:dd:HH:mm:ss");
-        }
-        catch { }
-
-        // UI 更新时间：源码里最新改动的界面文件（.xaml + .xaml.cs），只要界面动过就算刷新
-        var buildTimeText = buildTime;
-        var uiTime = NewestUiWriteTime();
-        var uiTimeText = uiTime?.ToString("yyyy:MM:dd:HH:mm:ss") ?? buildTime;
-
-        void Refresh()
-        {
-            var newest = NewestUiWriteTime();
-            if (newest is not null) uiTimeText = newest.Value.ToString("yyyy:MM:dd:HH:mm:ss");
-            var text =
-                $"Run -> Easy4K Devcode:Hikari Future -> Easy4K Devcode:Imagination    UI Update on {uiTimeText}\n" +
-                $"BuildTime {buildTimeText} Do not distribute";
-            if (DebugInfoText.Text != text) DebugInfoText.Text = text;
-        }
-
-        Refresh();
-
-        // 运行期间也要刷新：改完界面文件不用重启就能看到 UI Update 变化
-        _debugTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
-        _debugTimer.Tick += (_, _) => Refresh();
-        _debugTimer.Start();
+        // UI 刷新时间：界面（运行中的这棵树）最后一次重建/刷新的时刻，
+        // 启动、切页、切主题、窗口重新激活都会刷新，用来确认当前界面是不是最新的
+        RefreshDebugInfo();
 
         RootLayout.PointerMoved += OnDebugPointerMoved;
         RootLayout.PointerExited += (_, _) => DebugHoverText.Text = "";
@@ -1172,28 +1146,26 @@ public sealed partial class MainWindow : Window
     }
 
 #if DEBUG
-    /// <summary>源码目录里最新改动的界面文件时间（.xaml / .xaml.cs，忽略 bin、obj）。</summary>
-    private static DateTime? NewestUiWriteTime()
+    /// <summary>界面最后一次刷新的时刻（运行期，不是源文件时间）</summary>
+    private DateTime _uiUpdateAt = DateTime.Now;
+
+    /// <summary>界面发生刷新（切页/切主题/窗口激活等）时调用，更新左下角时间。</summary>
+    private void MarkUiUpdated()
     {
-        try
-        {
-            var dir = new DirectoryInfo(AppContext.BaseDirectory);
-            for (var i = 0; i < 8 && dir is not null; i++, dir = dir.Parent)
-            {
-                if (File.Exists(Path.Combine(dir.FullName, "Easy4K.csproj")))
-                {
-                    var sep = Path.DirectorySeparatorChar;
-                    var newest = dir.EnumerateFiles("*.xaml*", SearchOption.AllDirectories)
-                        .Where(f => !f.FullName.Contains($"{sep}obj{sep}") && !f.FullName.Contains($"{sep}bin{sep}"))
-                        .Select(f => f.LastWriteTime)
-                        .DefaultIfEmpty(DateTime.MinValue)
-                        .Max();
-                    return newest > DateTime.MinValue ? newest : null;
-                }
-            }
-        }
+        _uiUpdateAt = DateTime.Now;
+        RefreshDebugInfo();
+    }
+
+    private void RefreshDebugInfo()
+    {
+        var buildTime = "unknown";
+        try { buildTime = File.GetLastWriteTime(typeof(App).Assembly.Location).ToString("yyyy:MM:dd:HH:mm:ss"); }
         catch { }
-        return null;
+
+        DebugInfoText.Text =
+            "Run -> Easy4K Devcode:Hikari Future -> Easy4K Devcode:Imagination" +
+            $"    UI Update on {_uiUpdateAt:yyyy:MM:dd:HH:mm:ss}\n" +
+            $"BuildTime {buildTime} Do not distribute";
     }
 #endif
 
@@ -1267,6 +1239,9 @@ public sealed partial class MainWindow : Window
             _ => "system"
         });
         Vm.Logger.Info($"主题切换为: {theme}");
+#if DEBUG
+        MarkUiUpdated();   // 切主题 = 界面重绘，刷新左下角 UI 时间
+#endif
     }
 
     /// <summary>亚克力主题：半透明毛玻璃背景，颜色/透明度跟随系统主题，并持久化主题选择。</summary>
