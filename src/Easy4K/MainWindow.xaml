@@ -46,6 +46,10 @@
                 <Image x:Name="TitleBarIcon" Source="Assets/TitleBarIcon.png" Width="24" Height="24"/>
                 <TextBlock x:Name="TitleTextBlock" Text="Easy4K" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="SemiBold" VerticalAlignment="Center"/>
             </StackPanel>
+            <!-- 仅 Debug：鼠标当前指向的控件名（给系统按钮留出 160 宽的避让区） -->
+            <TextBlock x:Name="DebugHoverText" HorizontalAlignment="Right" VerticalAlignment="Center"
+                       Margin="0,0,160,0" FontSize="12" Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                       IsHitTestVisible="False" Visibility="Collapsed"/>
         </Grid>
 
         <!-- 自适应导航：宽窗口用顶栏（Top），窄窗口收成左侧最小化（LeftMinimal）。
@@ -98,6 +102,14 @@
                 </Border>
 
                 <Frame x:Name="RootFrame" Grid.Row="2"/>
+
+                <!-- 仅 Debug：开发信息（左下角常驻，不参与命中测试，不挡操作） -->
+                <Border x:Name="DebugInfoPanel" Grid.Row="2" HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                        Margin="10" Padding="8,4" CornerRadius="4" IsHitTestVisible="False"
+                        Background="{ThemeResource CardBgBrush}" BorderBrush="{ThemeResource CardBorderBrush}"
+                        BorderThickness="1" Visibility="Collapsed">
+                    <TextBlock x:Name="DebugInfoText" FontSize="11" IsTextSelectionEnabled="False"/>
+                </Border>
             </Grid>
         </NavigationView>
 

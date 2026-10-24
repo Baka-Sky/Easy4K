@@ -55,8 +55,13 @@ public sealed partial class MainWindow : Window
 
         // 标题追加版本号（版本号来自 config 文件 appsettings.json 的 Version）
         var title = $"Easy4K v{Vm.Version}";
+#if DEBUG
+        title += " (Developer)";
+#endif
         Title = title;
         TitleTextBlock.Text = title;
+
+        InitDebugOverlay();
 
         // 窗口按 16:9 比例设置初始尺寸（1280x720，按 DPI 缩放），并在当前显示器正中间显示
         var hwnd = WindowNative.GetWindowHandle(this);
@@ -1116,6 +1121,70 @@ public sealed partial class MainWindow : Window
         }
         catch { /* 取不到标题栏高度时保持 XAML 里的默认值 */ }
     }
+
+    // ===================== 开发叠层（仅 Debug 构建） =====================
+
+    /// <summary>Debug 构建专用：标题栏右侧实时显示指针指向的控件名，左下角常驻开发信息。
+    /// Release 下两个控件保持 Collapsed，不参与布局也不做任何计算。</summary>
+    private void InitDebugOverlay()
+    {
+#if DEBUG
+        DebugHoverText.Visibility = Visibility.Visible;
+        DebugInfoPanel.Visibility = Visibility.Visible;
+
+        var buildTime = "unknown";
+        try
+        {
+            // 程序集写入时间 ≈ 本次构建时间
+            buildTime = File.GetLastWriteTime(typeof(App).Assembly.Location).ToString("yyyy-MM-dd-HH");
+        }
+        catch { }
+
+        DebugInfoText.Text =
+            "Run -> Easy4K Devcode:Hikari Future -> Easy4K Devcode:Imagination\n" +
+            $"BuildTime {buildTime} Do not distribute";
+
+        RootLayout.PointerMoved += OnDebugPointerMoved;
+        RootLayout.PointerExited += (_, _) => DebugHoverText.Text = "";
+#endif
+    }
+
+#if DEBUG
+    /// <summary>把指针下最上层的元素往上找一层带 x:Name 的控件，显示「类型 · 名称」。</summary>
+    private void OnDebugPointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        try
+        {
+            var p = e.GetCurrentPoint(RootLayout).Position;
+            var hit = VisualTreeHelper
+                .FindElementsInHostCoordinates(new Windows.Foundation.Point(p.X, p.Y), RootLayout)
+                .FirstOrDefault();
+            if (hit is null) return;
+
+            var text = DescribeElement(hit);
+            if (DebugHoverText.Text != text) DebugHoverText.Text = text;
+        }
+        catch { /* 指针位置异常时忽略 */ }
+    }
+
+    private static string DescribeElement(DependencyObject element)
+    {
+        var typeName = element.GetType().Name;
+
+        // 自身有名字就用它，否则向上找最近一个有名字的祖先（更贴近"我指的是哪个控件"）
+        DependencyObject? node = element;
+        for (var depth = 0; depth < 12 && node is not null; depth++)
+        {
+            if (node is FrameworkElement { Name.Length: > 0 } named)
+                return $"{typeName} · {named.Name}";
+            node = VisualTreeHelper.GetParent(node);
+        }
+
+        return element is FrameworkElement fe
+            ? $"{typeName} · (未命名) {fe.ActualWidth:0}×{fe.ActualHeight:0}"
+            : typeName;
+    }
+#endif
 
     /// <summary>普通主题显示窗口底色层，亚克力/图片主题隐藏（露出背景材质）。
     /// 底色本身是 XAML 里的 {ThemeResource ApplicationPageBackgroundThemeBrush}：
