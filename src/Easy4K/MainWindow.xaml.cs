@@ -30,6 +30,10 @@ public sealed partial class MainWindow : Window
     private bool _telemetryAsked;
     /// <summary>远程控制服务端实例（仅远程模式期间非空）</summary>
     private RemoteControlServer? _remote;
+#if DEBUG
+    /// <summary>开发信息面板的刷新计时器（实时更新 UI Update 时间）</summary>
+    private DispatcherTimer? _debugTimer;
+#endif
 
     public MainWindow()
     {
@@ -1141,7 +1145,36 @@ public sealed partial class MainWindow : Window
         catch { }
 
         // UI 更新时间：源码里最新改动的界面文件（.xaml + .xaml.cs），只要界面动过就算刷新
-        var uiTime = buildTime;
+        var buildTimeText = buildTime;
+        var uiTime = NewestUiWriteTime();
+        var uiTimeText = uiTime?.ToString("yyyy:MM:dd:HH:mm:ss") ?? buildTime;
+
+        void Refresh()
+        {
+            var newest = NewestUiWriteTime();
+            if (newest is not null) uiTimeText = newest.Value.ToString("yyyy:MM:dd:HH:mm:ss");
+            var text =
+                $"Run -> Easy4K Devcode:Hikari Future -> Easy4K Devcode:Imagination    UI Update on {uiTimeText}\n" +
+                $"BuildTime {buildTimeText} Do not distribute";
+            if (DebugInfoText.Text != text) DebugInfoText.Text = text;
+        }
+
+        Refresh();
+
+        // 运行期间也要刷新：改完界面文件不用重启就能看到 UI Update 变化
+        _debugTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
+        _debugTimer.Tick += (_, _) => Refresh();
+        _debugTimer.Start();
+
+        RootLayout.PointerMoved += OnDebugPointerMoved;
+        RootLayout.PointerExited += (_, _) => DebugHoverText.Text = "";
+#endif
+    }
+
+#if DEBUG
+    /// <summary>源码目录里最新改动的界面文件时间（.xaml / .xaml.cs，忽略 bin、obj）。</summary>
+    private static DateTime? NewestUiWriteTime()
+    {
         try
         {
             var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -1155,21 +1188,14 @@ public sealed partial class MainWindow : Window
                         .Select(f => f.LastWriteTime)
                         .DefaultIfEmpty(DateTime.MinValue)
                         .Max();
-                    if (newest > DateTime.MinValue) uiTime = newest.ToString("yyyy:MM:dd:HH:mm:ss");
-                    break;
+                    return newest > DateTime.MinValue ? newest : null;
                 }
             }
         }
         catch { }
-
-        DebugInfoText.Text =
-            $"Run -> Easy4K Devcode:Hikari Future -> Easy4K Devcode:Imagination    UI Update on {uiTime}\n" +
-            $"BuildTime {buildTime} Do not distribute";
-
-        RootLayout.PointerMoved += OnDebugPointerMoved;
-        RootLayout.PointerExited += (_, _) => DebugHoverText.Text = "";
-#endif
+        return null;
     }
+#endif
 
 #if DEBUG
     /// <summary>把指针下最上层的元素往上找一层带 x:Name 的控件，显示「类型 · 名称」。</summary>
