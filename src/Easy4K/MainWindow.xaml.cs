@@ -1188,7 +1188,9 @@ public sealed partial class MainWindow : Window
         $"Copyright © 2025-{DateTime.Now.Year} Baka-Sky. All rights reserved.\n" +
         "本项目以 GPL-3.0 许可开源：https://github.com/Baka-Sky/Easy4K\n" +
         "Easy4K 名称、图标与自研的帧去重（SFDP）算法版权归作者所有；\n" +
-        "内置字体：HarmonyOS Sans SC（© Huawei Device Co., Ltd.，依 HarmonyOS Sans 字体许可随包分发）；\n" +
+        "内置字体：HarmonyOS Sans SC（Regular / Medium / Bold 三个字面，© Huawei Device Co., Ltd.，\n" +
+        "依 HarmonyOS Sans 字体许可随包分发）；界面另使用系统自带的 Segoe UI / Segoe Fluent Icons / Consolas，\n" +
+        "这些系统字体不随包分发；\n" +
         "所调用第三方组件（FFmpeg / ncnn / RIFE / AudioSR / NVEncC / PyTorch 等）版权归各自作者所有。";
 
     private async void ShowDialog(string title, string content)
