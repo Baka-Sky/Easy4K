@@ -1161,9 +1161,9 @@ public sealed partial class MainWindow : Window
     public string AboutText =>
         $"Easy4K v{Vm.Version} - 一键视频超分补帧工具\n\n基于 WinUI 3 / Windows App SDK\n\n" +
         "本软件免费分发；唯一收费内容为自研的帧去重（SFDP）算法及其相关服务。\n\n" +
-        "附加能力（「高级」页，默认关闭）：帧去重（自研 SFDP 孪生网络 ONNX 模型：整帧 128×128 分块算相似度，\n" +
-        "FP16 性能模式与 FP32 完美模式，DirectML / CPU 自动降级）/ 音频超分（AudioSR，48kHz 高带宽重建，FP16 性能模式与 FP32 完美模式）\n\n" +
-        "所用到的全部超分 / 补帧 / 音频引擎与依赖库见下方「使用的开源项目」。\n\n" +
+        "附加能力（「高级」页，默认关闭，均提供 FP16 性能模式与 FP32 完美模式）：\n" +
+        "· 帧去重：自研 SFDP 孪生网络 ONNX 模型，整帧 128×128 分块算相似度，DirectML / CPU 自动降级；\n" +
+        "· 音频超分：AudioSR，48kHz 高带宽重建。\n\n" +
         "========== 免责声明 ==========\n\n" +
         "1. 本软件以\"现状\"（AS-IS）提供，开发者不对其正确性、可靠性、完整性及适用性作任何明示或暗示保证。\n\n" +
         "2. 使用本软件及所调用第三方组件（FFmpeg / ncnn / PyTorch / AudioSR / NVEncC 等）产生的一切后果，包括但不限于：\n" +
@@ -1171,8 +1171,8 @@ public sealed partial class MainWindow : Window
         "   均由使用者自行承担，开发者概不负责。\n\n" +
         "3. 软件运行时会调用系统全部 CPU/GPU 资源，可能导致设备高负载、发热、降频甚至崩溃，请自行评估风险。\n\n" +
         "4. 输出的视频/音频内容之版权、合法性与用途由使用者自行负责，请勿用于任何非法用途或侵犯他人权益的场景。\n\n" +
-        "5. 所调用的第三方组件受其各自许可证约束，许可与版权见下方「使用的开源项目」。\n" +
-        "   本软件免费分发，满足其中非商业/学术用途条款，使用前请自行查阅并遵守。\n\n" +
+        "5. 所调用的第三方组件受其各自许可证约束，许可与版权见下方「使用的开源项目」，\n" +
+        "   使用前请自行查阅并遵守。\n\n" +
         "6. 开发者不承诺修复任何缺陷，不提供任何形式的售后服务与技术支持。\n\n" +
         "7. 使用本软件即表示已阅读并同意以上全部条款；不同意请立即停止使用并删除本软件。\n\n" +
         "========== 使用的开源项目 ==========\n\n" +
@@ -1191,7 +1191,7 @@ public sealed partial class MainWindow : Window
         "多媒体：FFmpeg（GPL v3，含 libx264 / libx265 / libvpx / libaom）、NVEncC（MIT）\n" +
         "界面字体：HarmonyOS Sans SC（Regular / Medium / Bold 三个字面，Huawei Device Co., Ltd.，\n" +
         "HarmonyOS Sans 字体许可）；Segoe UI、Segoe Fluent Icons / Segoe MDL2 Assets、Consolas（微软，随 Windows 提供，不随包分发）\n\n" +
-        "完整清单、版本与许可原文见程序目录《Easy4K 软件安装声明》与各组件随附的 LICENSE 文件。\n\n" +
+        "以上为摘要，完整清单、版本与许可原文见程序目录《Easy4K 软件安装声明》与各组件随附的 LICENSE 文件。\n\n" +
         "========== 自主研发项目 ==========\n\n" +
         "Easy4K 客户端与界面、超分 / 补帧 / 音频各阶段调度流水线\n" +
         "SFDP 帧去重算法（像素差与分块局部检查 / dHash / QR 分解 / Farnebäck 稠密光流四阶级联判决）\n" +
@@ -1199,7 +1199,7 @@ public sealed partial class MainWindow : Window
         "========== 版权信息 ==========\n\n" +
         $"Copyright © 2025-{DateTime.Now.Year} Baka-Sky. All rights reserved.\n" +
         "本项目以 GPL-3.0 许可开源：https://github.com/Baka-Sky/Easy4K\n" +
-        "Easy4K 名称、图标、自研的帧去重（SFDP）算法与 Siamese NET AI 模型版权归作者所有。";
+        "Easy4K 名称、图标、SFDP 帧去重算法与 Siamese NET AI 模型的版权归作者所有。";
 
     private async void ShowDialog(string title, string content)
     {
