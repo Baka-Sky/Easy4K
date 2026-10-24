@@ -41,7 +41,7 @@
         <Grid x:Name="AppTitleBar" Grid.Row="0" Height="48" Padding="16,0">
             <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                 <Image Source="Assets/AppIcon.ico" Width="24" Height="24"/>
-                <TextBlock x:Name="TitleTextBlock" Text="Easy4K" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"/>
+                <TextBlock x:Name="TitleTextBlock" Text="Easy4K" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="SemiBold" VerticalAlignment="Center"/>
             </StackPanel>
         </Grid>
 
