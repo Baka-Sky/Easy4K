@@ -1199,7 +1199,7 @@ public sealed partial class MainWindow : Window
         "========== 版权信息 ==========\n\n" +
         $"Copyright © 2025-{DateTime.Now.Year} Baka-Sky. All rights reserved.\n" +
         "本项目以 GPL-3.0 许可开源：https://github.com/Baka-Sky/Easy4K\n" +
-        "Easy4K 名称、图标与自研的帧去重（SFDP）算法版权归作者所有。" +
+        "Easy4K 名称、图标与自研的帧去重（SFDP）算法版权归作者所有。\n" +
         "内置字体、系统字体与第三方组件的版权与许可见上方「使用的开源项目」及程序目录" +
         "《Easy4K 软件安装声明》。";
 

@@ -18,12 +18,17 @@
                 <ResourceDictionary x:Key="Light">
                     <CornerRadius x:Key="OverlayCornerRadius">8,8,8,8</CornerRadius>
                     <CornerRadius x:Key="ControlCornerRadius">4,4,4,4</CornerRadius>
-                    <SolidColorBrush x:Key="CardBgBrush" Color="#66F5F5F5"/>
+                    <!-- 卡片底色必须不透明：半透明底色会让卡片内的文字整层走灰度抗锯齿，
+                         细笔画的英文模型名看着发虚（ClearType 要求不透明底色）。 -->
+                    <SolidColorBrush x:Key="CardBgBrush" Color="#FFFFFFFF"/>
                     <SolidColorBrush x:Key="ButtonBgBrush" Color="#8CF5F5F5"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FFC8C8C8"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="#20FFB300"/>
                     <!-- 占位文字用不透明灰：系统默认的半透明占位色会让文字走灰度抗锯齿，看起来发虚 -->
                     <SolidColorBrush x:Key="InputPlaceholderBrush" Color="#FF6E6E6E"/>
+                    <!-- 下拉框正文用不透明色：WinUI 默认的 TextFillColorPrimaryBrush 带 89% alpha，
+                         半透明文字同样拿不到 ClearType，细笔画的英文模型名会发虚 -->
+                    <SolidColorBrush x:Key="ComboTextBrush" Color="#FF1B1B1B"/>
                     <!-- 字族必须写进主题字典：WinUI 的内置样式用 {ThemeResource ContentControlThemeFontFamily} 取，
                          而 ThemeResource 优先查主题字典，只在普通资源里覆盖对控件不生效。 -->
                     <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
@@ -31,11 +36,12 @@
                 <ResourceDictionary x:Key="Dark">
                     <CornerRadius x:Key="OverlayCornerRadius">8,8,8,8</CornerRadius>
                     <CornerRadius x:Key="ControlCornerRadius">4,4,4,4</CornerRadius>
-                    <SolidColorBrush x:Key="CardBgBrush" Color="#662A2A2A"/>
+                    <SolidColorBrush x:Key="CardBgBrush" Color="#FF2B2B2B"/>
                     <SolidColorBrush x:Key="ButtonBgBrush" Color="#8C2A2A2A"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FF444444"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="#30FFB300"/>
                     <SolidColorBrush x:Key="InputPlaceholderBrush" Color="#FFA8A8A8"/>
+                    <SolidColorBrush x:Key="ComboTextBrush" Color="#FFF2F2F2"/>
                     <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="HighContrast">
@@ -46,6 +52,7 @@
                     <SolidColorBrush x:Key="CardBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
                     <SolidColorBrush x:Key="InputPlaceholderBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
+                    <SolidColorBrush x:Key="ComboTextBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
                     <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
@@ -86,6 +93,7 @@
                      Medium 笔画更实，与模型名（纯英文）观感一致 -->
                 <Setter Property="FontFamily" Value="{StaticResource AppFontMediumFamily}"/>
                 <Setter Property="PlaceholderForeground" Value="{ThemeResource InputPlaceholderBrush}"/>
+                <Setter Property="Foreground" Value="{ThemeResource ComboTextBrush}"/>
             </Style>
             <Style x:Key="GlassNumberBox" TargetType="NumberBox">
                 <Setter Property="Background" Value="Transparent"/>
@@ -103,6 +111,7 @@
             <Style TargetType="ComboBox" BasedOn="{StaticResource GlassComboBox}"/>
             <Style TargetType="ComboBoxItem" BasedOn="{StaticResource DefaultComboBoxItemStyle}">
                 <Setter Property="FontFamily" Value="{StaticResource AppFontMediumFamily}"/>
+                <Setter Property="Foreground" Value="{ThemeResource ComboTextBrush}"/>
             </Style>
 
             <!-- 弹出层控件：ToolTip 也是模板 + ContentPresenter 自绘文本，
