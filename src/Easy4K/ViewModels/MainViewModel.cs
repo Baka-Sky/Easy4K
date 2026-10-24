@@ -1954,16 +1954,23 @@ public partial class MainViewModel : ObservableObject
             HdrContrast = Math.Clamp(HdrContrast, 0, 200),
             Gpu = Gpu,
             Settings = _app,
-            Tools = Tools
+            Tools = Tools,
+            // CPU 模式遇到不支持 CPU 的超分模型时，弹窗让用户选「改用 GPU」或「更换模型」
+            OnSrCpuIncompatibleAsync = AskSrCpuIncompatibleAsync
         };
 
         _orchestratorAssigned.ProgressChanged += OnProgressChanged;
+        _runner.ClearLastOutput();
 
         string? result = null;
+        Exception? failure = null;
         try
         {
             result = await _orchestratorAssigned.RunAsync(ctx, _cts.Token);
-            Stage = result is null ? ProcessStage.Failed : ProcessStage.Done;
+            // 用户主动中止（如选择「更换超分模型」）按「已停止」处理，不显示失败、不写报告
+            Stage = result is null
+                ? (_orchestratorAssigned.SuppressFailureReport ? ProcessStage.Stopped : ProcessStage.Failed)
+                : ProcessStage.Done;
         }
         catch (OperationCanceledException)
         {
@@ -1972,6 +1979,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            failure = ex;
             _logger.Error($"处理异常: {ex.Message}");
             Stage = ProcessStage.Failed;
         }
@@ -1982,6 +1990,11 @@ public partial class MainViewModel : ObservableObject
             IsProcessing = false;
             IsPaused = false;
         }
+
+        // 流水线失败 → 把完整现场写到桌面（全量 stdout/stderr + 完整日志 + 异常堆栈），
+        // 再用底部通知条告诉用户报告在哪。任何阶段失败都生成，只有用户主动中止不写。
+        if (Stage == ProcessStage.Failed && !_orchestratorAssigned.SuppressFailureReport)
+            WriteFailureReport(failure, ctx);
 
         // 成功完成 → 弹完成窗体（自测模式抑制）
         // 注意：未勾选「合并视频」时流水线只做完中间帧就返回（返回的是临时目录里的中间文件路径），
@@ -2008,6 +2021,56 @@ public partial class MainViewModel : ObservableObject
                 Elapsed = DateTime.Now - _startTime
             });
         }
+    }
+
+    /// <summary>把本次失败的完整现场写到桌面，并用底部通知条给出入口。
+    /// 报告内容不做精简：外部进程全量 stdout/stderr、完整日志、异常堆栈、处理参数全部落盘。</summary>
+    private void WriteFailureReport(Exception? ex, ProcessingContext ctx)
+    {
+        var path = CrashReportService.Write(
+            Version, ctx, _orchestratorAssigned.LastStageText, _runner.LastExitCode,
+            ex, _runner.LastStdout, _runner.LastStderr, _logger.Snapshot(), _runner.History);
+
+        if (string.IsNullOrEmpty(path))
+        {
+            _dispatcherQueue.TryEnqueue(() =>
+                App.MainWindow?.ShowNotice("处理失败", "完整报错写到桌面失败，请查看「进行中」页日志。"));
+            return;
+        }
+
+        var name = Path.GetFileName(path);
+        _logger.Warn($"完整失败报告已保存到桌面：{path}");
+        _dispatcherQueue.TryEnqueue(() =>
+            App.MainWindow?.ShowNotice("处理失败", $"完整报错已保存到桌面：{name}", "打开报告",
+                () => CrashReportService.Open(path)));
+    }
+
+    /// <summary>CPU 处理模式下，超分模型不支持 CPU 推理时询问用户。
+    /// true = 改用 GPU 继续；false = 结束任务，让用户回首页更换模型。</summary>
+    private Task<bool> AskSrCpuIncompatibleAsync(string model)
+    {
+        var window = App.MainWindow;
+        if (window is null) return Task.FromResult(true);
+        var tcs = new TaskCompletionSource<bool>();
+        _dispatcherQueue.TryEnqueue(async () =>
+        {
+            try
+            {
+                var useGpu = await window.ShowChoiceDialogAsync(
+                    "超分模型不支持 CPU",
+                    $"当前超分模型「{model}」没有 CPU 推理后端，无法在 CPU 处理模式下运行。\n\n"
+                    + "· 改用 GPU：继续用显卡完成本次超分\n"
+                    + "· 更换模型：结束本次任务，回到首页重新选择支持 CPU 的超分模型",
+                    "改用 GPU", "更换模型");
+                tcs.TrySetResult(useGpu);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn($"询问超分模型 CPU 兼容性失败，自动改用 GPU：{ex.Message}");
+                tcs.TrySetResult(true);
+            }
+        });
+        return tcs.Task;
     }
 
     /// <summary>根据勾选项生成步骤描述文本（顺序与流水线一致：拆帧 → 帧去重 → 超分 → 补帧 → 合并 → HDR → 音频超分 → 音频）</summary>
@@ -2047,13 +2110,13 @@ public partial class MainViewModel : ObservableObject
             }
 
             ProgressPercent = p.Percent;
-            // 处理前测试时无论什么阶段（拆帧/超分/补帧/合并）一律显示"测试中"，避免泄露具体内部阶段
+            // 处理前测试时无论什么阶段（拆帧/超分/补帧/合并）一律显示同一句，避免泄露具体内部阶段
             if (IsStartupSelfTest)
             {
                 var suffix = p.Total > 0
                     ? (p.PercentDisplay ? $" {p.Current}%" : $" 第{p.Current}帧/共{p.Total}帧")
                     : "";
-                ProgressDetail = $"测试中{suffix}";
+                ProgressDetail = $"正在等待测试完成{suffix}";
             }
             else if (IsAutoTest)
             {
@@ -2073,8 +2136,9 @@ public partial class MainViewModel : ObservableObject
                 _etaStageStarted = DateTime.Now;
             }
             EtaText = BuildEtaText(p.Percent, p.Stage);
-            // 合并/HDR/音频阶段不产生新帧：自动关闭预览并禁用预览开关，避免预览停在旧画面
-            var blockPreview = p.Stage is ProcessStage.Merging or ProcessStage.HdrConverting or ProcessStage.AudioSr or ProcessStage.AddingAudio;
+            // 合并/HDR/音频/审查阶段不产生新帧：自动关闭预览并禁用预览开关，避免预览停在旧画面
+            var blockPreview = p.Stage is ProcessStage.Merging or ProcessStage.HdrConverting
+                or ProcessStage.AudioSr or ProcessStage.AddingAudio or ProcessStage.Auditing;
             PreviewBlocked = blockPreview;
             if (blockPreview && ShowPreview) ShowPreview = false;
             if (!string.IsNullOrEmpty(p.LatestFramePath))

@@ -8,6 +8,42 @@ namespace Easy4K.Services;
 /// 所有外部工具（FFmpeg/RealESRGAN/RIFE/NVEncC）都通过它调用。</summary>
 public sealed class ProcessRunner
 {
+    /// <summary>最近一次外部进程的完整 stdout（未截断）。失败报告直接取用，保证"原始输出"完整。</summary>
+    public string LastStdout { get; private set; } = "";
+    /// <summary>最近一次外部进程的完整 stderr（未截断）。</summary>
+    public string LastStderr { get; private set; } = "";
+    /// <summary>最近一次外部进程的退出码。</summary>
+    public int LastExitCode { get; private set; }
+
+    /// <summary>一条外部进程执行记录：命令行 + 退出码 + 全量 stdout/stderr（失败报告用，不裁剪）。</summary>
+    public sealed record ProcessRecord(DateTime Time, string Exe, string Args, int ExitCode, string Stdout, string Stderr);
+
+    private readonly List<ProcessRecord> _history = new();
+
+    /// <summary>本轮处理中所有外部进程的完整执行记录（按时间顺序，未裁剪）。</summary>
+    public IReadOnlyList<ProcessRecord> History
+    {
+        get { lock (_history) return _history.ToArray(); }
+    }
+
+    private void Record(string exe, string args, int exit, string stdout, string stderr)
+    {
+        lock (_history)
+        {
+            if (_history.Count >= 2000) return; // 防御性上限：避免异常循环调用把内存吃光
+            _history.Add(new ProcessRecord(DateTime.Now, exe, args, exit, stdout, stderr));
+        }
+    }
+
+    /// <summary>开始新一轮处理前清空，避免失败报告里混入上一轮残留的输出。</summary>
+    public void ClearLastOutput()
+    {
+        LastStdout = "";
+        LastStderr = "";
+        LastExitCode = 0;
+        lock (_history) _history.Clear();
+    }
+
     private readonly Logger _logger;
     private readonly object _procLock = new();
     private Process? _current; // 当前正在运行的进程（单例 runner，同一时刻只有一个）
@@ -63,6 +99,10 @@ public sealed class ProcessRunner
         if (!File.Exists(exe))
         {
             _logger.Error($"找不到可执行文件: {exe}");
+            LastStdout = "";
+            LastStderr = $"找不到可执行文件: {exe}";
+            LastExitCode = -1;
+            Record(exe, args, -1, LastStdout, LastStderr);
             return -1;
         }
 
@@ -98,12 +138,20 @@ public sealed class ProcessRunner
         catch (Exception ex)
         {
             _logger.Error($"启动进程失败: {Path.GetFileName(exeAbsolute)} — {ex.Message}");
+            LastStdout = "";
+            LastStderr = $"启动进程失败: {ex}";
+            LastExitCode = -1;
+            Record(exeAbsolute, args, -1, LastStdout, LastStderr);
             return -1;
         }
 
         if (!started)
         {
             _logger.Error($"启动进程返回 false: {Path.GetFileName(exeAbsolute)}");
+            LastStdout = "";
+            LastStderr = $"启动进程返回 false: {exeAbsolute}";
+            LastExitCode = -1;
+            Record(exeAbsolute, args, -1, LastStdout, LastStderr);
             return -1;
         }
 
@@ -161,6 +209,10 @@ public sealed class ProcessRunner
         lock (_procLock) _current = null;
         var stderrText = stderrBuf.ToString().Trim();
         var stdoutText = stdoutBuf.ToString().Trim();
+        LastStdout = stdoutText;
+        LastStderr = stderrText;
+        LastExitCode = exit;
+        Record(exeAbsolute, args, exit, stdoutText, stderrText);
         if (exit != 0)
         {
             if (!string.IsNullOrEmpty(stderrText))

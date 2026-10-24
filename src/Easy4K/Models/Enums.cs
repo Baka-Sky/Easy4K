@@ -12,6 +12,8 @@ public enum ProcessStage
     /// <summary>音频超分（AudioSR）</summary>
     AudioSr,
     AddingAudio,
+    /// <summary>成品视频审查（产出帧数 vs 帧目录帧数）</summary>
+    Auditing,
     Done,
     Failed,
     Stopped

@@ -873,6 +873,21 @@ public sealed partial class MainWindow : Window
         return Task.CompletedTask;
     }
 
+    /// <summary>通用二选一对话框：返回 true = 主按钮，false = 关闭按钮（取消）。</summary>
+    public async Task<bool> ShowChoiceDialogAsync(string title, string content, string primaryText, string closeText)
+    {
+        var dlg = new ContentDialog
+        {
+            Title = title,
+            Content = new TextBlock { Text = content, TextWrapping = TextWrapping.Wrap },
+            PrimaryButtonText = primaryText,
+            CloseButtonText = closeText,
+            XamlRoot = RootFrame.XamlRoot,
+            DefaultButton = ContentDialogButton.Primary
+        };
+        return await dlg.ShowLocalizedAsync() == ContentDialogResult.Primary;
+    }
+
     public Task ShowHelpAsync()
     {
         ShowDialog("使用说明", HelpText);
