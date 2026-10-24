@@ -1184,6 +1184,22 @@ public sealed partial class MainWindow : Window
         "   《Easy4K 软件安装声明》。使用前请自行查阅并遵守。\n\n" +
         "6. 开发者不承诺修复任何缺陷，不提供任何形式的售后服务与技术支持。\n\n" +
         "7. 使用本软件即表示已阅读并同意以上全部条款；不同意请立即停止使用并删除本软件。\n\n" +
+        "========== 使用的开源项目 ==========\n\n" +
+        "界面框架：WinUI 3 / Windows App SDK（MIT）、.NET 运行时（MIT）、CommunityToolkit.Mvvm（MIT）\n" +
+        "系统信息：System.Management（MIT）、System.Diagnostics.PerformanceCounter（MIT）\n" +
+        "数据连接：MySqlConnector（MIT，仅可选的匿名统计上报）\n" +
+        "超分引擎：Real-ESRGAN（MIT）、Real-CUGAN（MIT）、RealSR（MIT）、SRMD（MIT）、waifu2x（MIT），\n" +
+        "均基于 ncnn（BSD-3-Clause）+ Vulkan 推理\n" +
+        "补帧引擎：RIFE / rife-ncnn-vulkan（MIT）、Practical-RIFE（MIT）、DRBA（MIT）、GMFSS（上游未附许可文件）、\n" +
+        "GIMM-VFI（S-Lab License 1.0，仅限非商业用途）、softmax-splatting 算子（仅限学术用途）\n" +
+        "音频超分：AudioSR（MIT）、AudioSR ONNX 权重（MIT）、ONNX Runtime + DirectML（MIT）、\n" +
+        "CUDA / cuDNN（NVIDIA 专有许可）\n" +
+        "运行环境：Python（PSF）、PyTorch（BSD-3-Clause）、CuPy（MIT）、NumPy / SciPy（BSD-3-Clause）、\n" +
+        "OpenCV（Apache-2.0）、timm（Apache-2.0）、WAFT（BSD-3-Clause，随包附带源码）、\n" +
+        "omegaconf / einops / loguru / yacs / easydict / tqdm / tensorboard / sympy / mpmath（MIT / Apache-2.0 / BSD-3-Clause）\n" +
+        "多媒体：FFmpeg（GPL v3，含 libx264 / libx265 / libvpx / libaom）、NVEncC（MIT）\n" +
+        "界面字体：HarmonyOS Sans SC（Huawei Device Co., Ltd.，HarmonyOS Sans 字体许可）\n\n" +
+        "完整清单、版本与许可原文见程序目录《Easy4K 软件安装声明》与各组件随附的 LICENSE 文件。\n\n" +
         "========== 版权信息 ==========\n\n" +
         $"Copyright © 2025-{DateTime.Now.Year} Baka-Sky. All rights reserved.\n" +
         "本项目以 GPL-3.0 许可开源：https://github.com/Baka-Sky/Easy4K\n" +
