@@ -1183,7 +1183,12 @@ public sealed partial class MainWindow : Window
         "   专有许可。本软件免费分发，满足上述非商业/学术用途条款。完整清单与版权见程序目录\n" +
         "   《Easy4K 软件安装声明》。使用前请自行查阅并遵守。\n\n" +
         "6. 开发者不承诺修复任何缺陷，不提供任何形式的售后服务与技术支持。\n\n" +
-        "7. 使用本软件即表示已阅读并同意以上全部条款；不同意请立即停止使用并删除本软件。";
+        "7. 使用本软件即表示已阅读并同意以上全部条款；不同意请立即停止使用并删除本软件。\n\n" +
+        "========== 版权信息 ==========\n\n" +
+        $"Copyright © 2025-{DateTime.Now.Year} Baka-Sky. All rights reserved.\n" +
+        "本项目以 GPL-3.0 许可开源：https://github.com/Baka-Sky/Easy4K\n" +
+        "Easy4K 名称、图标与自研的帧去重（SFDP）算法版权归作者所有；\n" +
+        "所调用第三方组件（FFmpeg / ncnn / RIFE / AudioSR / NVEncC / PyTorch 等）版权归各自作者所有。";
 
     private async void ShowDialog(string title, string content)
     {
