@@ -7,6 +7,7 @@ using Easy4K.Services.RemoteControl;
 using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Windowing;
 using Windows.Storage;
@@ -1136,28 +1137,58 @@ public sealed partial class MainWindow : Window
         DebugHoverText.Visibility = Visibility.Visible;
         DebugInfoText.Visibility = Visibility.Visible;
 
-        // UI 刷新时间：界面（运行中的这棵树）最后一次重建/刷新的时刻，
-        // 启动、切页、切主题、窗口重新激活都会刷新，用来确认当前界面是不是最新的
+        // UI 刷新时间：界面（运行中的这棵树）最后一次动的时刻，
+        // 任何操作（点击/滚轮/按键/拖动）、切页、切主题、重绘都会刷新
         RefreshDebugInfo();
 
         RootLayout.PointerMoved += OnDebugPointerMoved;
         RootLayout.PointerExited += (_, _) => DebugHoverText.Text = "";
+
+        // 「任何操作都算」：输入事件直接打点（handledEventsToo=true，被内层控件吃掉的也算）
+        RootLayout.AddHandler(UIElement.PointerPressedEvent,
+            new PointerEventHandler((_, _) => MarkUiUpdated()), true);
+        RootLayout.AddHandler(UIElement.PointerReleasedEvent,
+            new PointerEventHandler((_, _) => MarkUiUpdated()), true);
+        RootLayout.AddHandler(UIElement.PointerWheelChangedEvent,
+            new PointerEventHandler((_, _) => MarkUiUpdated()), true);
+        RootLayout.AddHandler(UIElement.KeyDownEvent,
+            new KeyEventHandler((_, _) => MarkUiUpdated()), true);
+
+        // 界面自己在动（进度条、动画、页面切换）也由渲染帧兜底
+        CompositionTarget.Rendering += OnDebugRendering;
+
+        Activated += (_, _) => MarkUiUpdated();
 #endif
     }
 
 #if DEBUG
-    /// <summary>界面最后一次刷新的时刻（运行期，不是源文件时间）</summary>
+    /// <summary>界面最后一次动的时刻（运行期，不是源文件时间）</summary>
     private DateTime _uiUpdateAt = DateTime.Now;
 
-    /// <summary>界面发生刷新（切页/切主题/窗口激活等）时调用，更新左下角时间。</summary>
+    /// <summary>上一次真正写过左下角文本的时刻（用于节流与自激抑制）</summary>
+    private DateTime _lastDebugTextAt = DateTime.MinValue;
+
+    /// <summary>界面有任何动作/刷新时调用，更新左下角时间。</summary>
     private void MarkUiUpdated()
     {
         _uiUpdateAt = DateTime.Now;
         RefreshDebugInfo();
     }
 
+    /// <summary>渲染帧回调：界面真有变化才打点；写文本自身产生的帧要忽略，否则会自己刷自己。</summary>
+    private void OnDebugRendering(object? sender, object e)
+    {
+        // 刚写过文本 → 紧随其后的几帧是这次写入引起的，跳过
+        if ((DateTime.Now - _lastDebugTextAt).TotalMilliseconds < 400) return;
+        MarkUiUpdated();
+    }
+
     private void RefreshDebugInfo()
     {
+        // 节流：400ms 内不重复改文本，否则渲染帧回调会把自己卷成每帧重绘
+        if ((DateTime.Now - _lastDebugTextAt).TotalMilliseconds < 400) return;
+        _lastDebugTextAt = DateTime.Now;
+
         var buildTime = "unknown";
         try { buildTime = File.GetLastWriteTime(typeof(App).Assembly.Location).ToString("yyyy:MM:dd:HH:mm:ss"); }
         catch { }
