@@ -434,6 +434,22 @@ public sealed partial class MainWindow : Window
         NavigateToHome();
     }
 
+    /// <summary>进入设置页（齿轮项不在 MenuItems 里，导航走这里统一处理）。</summary>
+    public void NavigateToSettings()
+    {
+        if (RootFrame.CurrentSourcePageType != typeof(SettingsPage))
+            RootFrame.Navigate(typeof(SettingsPage));
+        ThinProgressBar.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>进入关于页面（由设置页进入，页面内可返回设置）。</summary>
+    public void NavigateToAbout()
+    {
+        if (RootFrame.CurrentSourcePageType != typeof(AboutPage))
+            RootFrame.Navigate(typeof(AboutPage));
+        ThinProgressBar.Visibility = Visibility.Collapsed;
+    }
+
     /// <summary>主窗口内容根（供弹窗指定 XamlRoot，避免页面卸载后引用失效）。</summary>
     public Microsoft.UI.Xaml.XamlRoot WindowContentRoot => RootFrame.XamlRoot;
 
@@ -472,9 +488,7 @@ public sealed partial class MainWindow : Window
     private void OnRootNavItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
     {
         if (!args.IsSettingsInvoked) return;
-        if (RootFrame.CurrentSourcePageType != typeof(SettingsPage))
-            RootFrame.Navigate(typeof(SettingsPage));
-        ThinProgressBar.Visibility = Visibility.Collapsed;
+        NavigateToSettings();
     }
 
     /// <summary>把导航选中项同步到指定项（返回主页等场景调用）。</summary>
@@ -1099,8 +1113,8 @@ public sealed partial class MainWindow : Window
         "· 音频超分：AudioSR 把音轨升到 48kHz 高带宽，勾选「将原音频合并进新视频」时替换视频音轨，\n" +
         "  未勾选则单独输出一份 48kHz WAV。";
 
-    /// <summary>关于正文（含免责声明）</summary>
-    private string AboutText =>
+    /// <summary>关于正文（含免责声明）：关于页面与弹窗共用同一份文本。</summary>
+    public string AboutText =>
         $"Easy4K v{Vm.Version} - 一键视频超分补帧工具\n\n基于 WinUI 3 / Windows App SDK\n\n" +
         "超分引擎：Real-ESRGAN / Real-CUGAN / waifu2x / SRMD / RealSR（ncnn + Vulkan，共 25 个模型，\n" +
         "NVIDIA / AMD / Intel 显卡通用）\n" +

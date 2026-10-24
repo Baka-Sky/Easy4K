@@ -123,7 +123,7 @@
                     </StackPanel>
                 </Border>
 
-                <!-- 默认值 / 帮助 / 退出 -->
+                <!-- 默认值 / 帮助 / 关于 / 退出 -->
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel Spacing="6">
                         <TextBlock Text="其它" Style="{StaticResource SectionTitle}"/>

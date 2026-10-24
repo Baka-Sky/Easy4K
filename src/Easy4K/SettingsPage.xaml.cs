@@ -121,7 +121,8 @@ public sealed partial class SettingsPage : Page
 
     private async void OnHelp(object sender, RoutedEventArgs e) => await App.MainWindow.ShowHelpAsync();
 
-    private async void OnAbout(object sender, RoutedEventArgs e) => await App.MainWindow.ShowAboutAsync();
+    /// <summary>关于：进入独立的关于页面（不再弹窗）。</summary>
+    private void OnAbout(object sender, RoutedEventArgs e) => App.MainWindow?.NavigateToAbout();
 
     private void OnExit(object sender, RoutedEventArgs e) => Application.Current.Exit();
 }
