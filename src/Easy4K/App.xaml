@@ -18,8 +18,8 @@
                 <ResourceDictionary x:Key="Light">
                     <CornerRadius x:Key="OverlayCornerRadius">8,8,8,8</CornerRadius>
                     <CornerRadius x:Key="ControlCornerRadius">4,4,4,4</CornerRadius>
-                    <SolidColorBrush x:Key="CardBgBrush" Color="#66F5F5F5"/>
-                    <SolidColorBrush x:Key="ButtonBgBrush" Color="#8CF5F5F5"/>
+                    <SolidColorBrush x:Key="CardBgBrush" Color="#CCFFFFFF"/>
+                    <SolidColorBrush x:Key="ButtonBgBrush" Color="#E6FFFFFF"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FFC8C8C8"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="#20FFB300"/>
                 </ResourceDictionary>

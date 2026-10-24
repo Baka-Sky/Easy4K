@@ -825,7 +825,7 @@ public partial class MainViewModel : ObservableObject
         {
             var gpu = Gpu;
             var (name, detail) = gpu.IsAmd
-                ? ("AMD VAF", "合并帧优先使用 AMF 硬件编码")
+                ? ("AMD AMF", "合并帧优先使用 AMF 硬件编码")
                 : gpu.IsNvidia
                     ? ("NVEncC", "合并帧优先使用 NVENC 硬件编码")
                     : IsIntel(gpu.Name)

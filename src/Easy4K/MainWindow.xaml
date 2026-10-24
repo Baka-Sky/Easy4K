@@ -9,7 +9,8 @@
     Title="Easy4K"
     mc:Ignorable="d">
 
-    <Grid>
+    <!-- 根布局：普通主题下由代码填主题底色（见 SetRootBackground），亚克力/图片主题保持透明露出背景 -->
+    <Grid x:Name="RootLayout">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>

@@ -45,11 +45,18 @@ public sealed partial class MainWindow : Window
         Title = title;
         TitleTextBlock.Text = title;
 
-        // 窗口按 16:9 比例设置初始尺寸（1280x720，按 DPI 缩放）
+        // 窗口按 16:9 比例设置初始尺寸（1280x720，按 DPI 缩放），并在当前显示器正中间显示
         var hwnd = WindowNative.GetWindowHandle(this);
         var dpi = NativeMethods.GetDpiForWindow(hwnd);
         var scale = dpi / 96.0;
-        AppWindow.Resize(new() { Width = (int)(1280 * scale), Height = (int)(720 * scale) });
+        var winW = (int)(1280 * scale);
+        var winH = (int)(720 * scale);
+        var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary);
+        var work = area.WorkArea;   // 工作区（已排除任务栏），按它居中才不会压到任务栏
+        AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(
+            work.X + (work.Width - winW) / 2,
+            work.Y + (work.Height - winH) / 2,
+            winW, winH));
 
         // 处理中关闭窗口 → 警告并确认，确认后强杀工具进程
         AppWindow.Closing += OnAppWindowClosing;
@@ -244,6 +251,12 @@ public sealed partial class MainWindow : Window
             case "dark": SetTheme(ElementTheme.Dark); break;
             case "acrylic": SetAcrylicTheme(); break;
             case "image": SetImageBackdropTheme(); break;
+            // 跟随系统（含首次启动的默认值）：也要上根布局底色，否则系统是浅色时窗口底是黑的
+            default:
+                RootLayout.RequestedTheme = ElementTheme.Default;
+                RootFrame.RequestedTheme = ElementTheme.Default;
+                SetRootBackground(ElementTheme.Default);
+                break;
         }
 
         // 导航：默认选中第 1 项（主页）；随窗口宽度在顶栏/左侧最小化之间自适应
@@ -1024,13 +1037,31 @@ public sealed partial class MainWindow : Window
         await dlg.ShowLocalizedAsync();
     }
 
+    /// <summary>根布局底色：WinUI 3 的 Window 没有默认背景，不自己上色就是系统黑底——
+    /// 浅色主题会变成"白色卡片浮在黑色窗口上"的严重错色。亚克力/图片主题必须保持透明才能露出背景。</summary>
+    private void SetRootBackground(ElementTheme theme)
+    {
+        var light = theme == ElementTheme.Light ||
+                    (theme == ElementTheme.Default && Application.Current.RequestedTheme == ApplicationTheme.Light);
+        RootLayout.Background = new SolidColorBrush(light
+            ? Windows.UI.Color.FromArgb(255, 243, 243, 243)
+            : Windows.UI.Color.FromArgb(255, 32, 32, 32));
+    }
+
+    private void ClearRootBackground() =>
+        RootLayout.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+
     /// <summary>普通主题：移除亚克力材质，恢复纯色主题背景，并持久化主题选择。</summary>
     private void SetTheme(ElementTheme theme)
     {
         SystemBackdrop = null; // 亚克力是独立主题选项，切回普通主题时移除
         HideBackdropLayers();  // 图片背景层只在图片主题显示
         SetNavPaneTransparent(false);
+        // 主题必须同时落在根布局上：RootFrame 只管页面内容，NavigationView / 标题栏在它外面，
+        // 只设 RootFrame 会出现"浅色内容 + 深色导航栏/黑底"的严重错色。
+        RootLayout.RequestedTheme = theme;
         RootFrame.RequestedTheme = theme;
+        SetRootBackground(theme);
         Vm.SetThemeMode(theme switch
         {
             ElementTheme.Light => "light",
@@ -1048,7 +1079,9 @@ public sealed partial class MainWindow : Window
         HideBackdropLayers();
         SetNavPaneTransparent(false);
         // 亚克力颜色跟随系统主题，内容也切回跟随系统保持一致
+        RootLayout.RequestedTheme = ElementTheme.Default;
         RootFrame.RequestedTheme = ElementTheme.Default;
+        ClearRootBackground();   // 透明才能露出亚克力
         Vm.SetThemeMode("acrylic");
         // 系统关闭"透明度效果"时所有亚克力/云母材质都会回退为纯色背景
         if (!new Windows.UI.ViewManagement.UISettings().AdvancedEffectsEnabled)
@@ -1063,7 +1096,9 @@ public sealed partial class MainWindow : Window
         // 未选图时整窗只剩这层系统亚克力，不会出现"空背景"
         _acrylic ??= new DesktopAcrylicBackdrop();
         SystemBackdrop = _acrylic;
+        RootLayout.RequestedTheme = ElementTheme.Dark;
         RootFrame.RequestedTheme = ElementTheme.Dark;
+        ClearRootBackground();   // 图片/亚克力层要在根布局之下才看得见
         SetNavPaneTransparent(true); // 去掉 NavigationView 自带的内容层灰色底，否则导航栏下方会多出一块灰面板
         Vm.SetThemeMode("image");
         ApplyBackdropOpacity();
