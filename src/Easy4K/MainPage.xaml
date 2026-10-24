@@ -268,7 +268,7 @@
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="类型" Style="{StaticResource FieldLabel}"/>
-                            <ComboBox Grid.Column="1" SelectedIndex="{x:Bind Vm.SfKindIndex, Mode=TwoWay}" MinWidth="110" Style="{StaticResource GlassComboBox}">
+                            <ComboBox x:Name="SfKindCombo" Grid.Column="1" SelectedIndex="{x:Bind Vm.SfKindIndex, Mode=TwoWay}" MinWidth="110" Style="{StaticResource GlassComboBox}">
                                 <x:String>图片</x:String>
                                 <x:String>音频</x:String>
                                 <x:String>视频 HDR</x:String>

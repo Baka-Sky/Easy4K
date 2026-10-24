@@ -4,11 +4,8 @@ using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
-using Microsoft.UI.Composition;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Animation;
-using Microsoft.UI.Xaml.Hosting;
 using Windows.UI.Text;
 
 namespace Easy4K.Services;
@@ -371,83 +368,12 @@ public static class Loc
 }
 
 /// <summary>ContentDialog 显示前自动本地化的入口：把调用点的 <c>.ShowAsync()</c> 换成
-/// <c>.ShowLocalizedAsync()</c> 即可，弹窗的标题/内容/按钮都会按当前语言翻译。
-/// 同时补一个入场动画：WinUI 3 的 ContentDialog 自带关闭动画却没有出现动画，
-/// 弹窗会"啪"地一下跳出来，和退场不对称。</summary>
+/// <c>.ShowLocalizedAsync()</c> 即可，弹窗的标题/内容/按钮都会按当前语言翻译。</summary>
 internal static class ContentDialogLocalizationExtensions
 {
     public static async System.Threading.Tasks.Task<ContentDialogResult> ShowLocalizedAsync(this ContentDialog dialog)
     {
         Loc.LocalizeDialog(dialog);
-        // Loading 早于模板实例化：在这里把初始透明度压成 0，避免"先完整闪一下再淡入"
-        dialog.Loading += OnLoading;
-        dialog.Opened += OnOpened;
-        try
-        {
-            return await dialog.ShowAsync();
-        }
-        finally
-        {
-            dialog.Loading -= OnLoading;
-            dialog.Opened -= OnOpened;
-        }
-    }
-
-    private static void OnLoading(FrameworkElement sender, object args)
-    {
-        try
-        {
-            sender.Opacity = 0;
-        }
-        catch { }
-    }
-
-    private static void OnOpened(ContentDialog sender, ContentDialogOpenedEventArgs args)
-    {
-        try
-        {
-            var duration = new Duration(TimeSpan.FromMilliseconds(250));
-            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-
-            // 透明度用 XAML Storyboard 改 XAML 属性本身：ContentDialog 的模板与视觉状态也会动
-            // Opacity，若只改合成层 visual.Opacity，会在下一帧被 XAML 值覆盖回去，看起来"没有动画"。
-            var fade = new DoubleAnimation
-            {
-                From = 0,
-                To = 1,
-                Duration = duration,
-                EasingFunction = ease,
-                EnableDependentAnimation = true
-            };
-            Storyboard.SetTarget(fade, sender);
-            Storyboard.SetTargetProperty(fade, "Opacity");
-
-            var sb = new Storyboard();
-            sb.Children.Add(fade);
-
-            // 位移走合成层：与退场的「推出」方向相反 —— 从下方向上滑入（48px），不触发重新布局。
-            try
-            {
-                ElementCompositionPreview.SetIsTranslationEnabled(sender, true);
-                sender.Translation = new System.Numerics.Vector3(0, 48, 0);
-
-                var visual = ElementCompositionPreview.GetElementVisual(sender);
-                var compositor = visual.Compositor;
-                var slideEase = compositor.CreateCubicBezierEasingFunction(
-                    new System.Numerics.Vector2(0.1f, 0.9f), new System.Numerics.Vector2(0.2f, 1f));
-                var slide = compositor.CreateVector3KeyFrameAnimation();
-                slide.InsertKeyFrame(1f, System.Numerics.Vector3.Zero, slideEase);
-                slide.Duration = TimeSpan.FromMilliseconds(250);
-                slide.StopBehavior = AnimationStopBehavior.SetToFinalValue;
-                visual.StartAnimation("Translation", slide);
-            }
-            catch { }
-
-            sb.Begin();
-        }
-        catch
-        {
-            // 动画失败不影响弹窗本身
-        }
+        return await dialog.ShowAsync();
     }
 }

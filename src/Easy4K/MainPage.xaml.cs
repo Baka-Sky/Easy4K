@@ -28,6 +28,14 @@ public sealed partial class MainPage : Page
     {
         InitializeComponent();
 
+        // 单文件「视频 HDR」只在 HDR 可用时出现：AMD 显卡、核显、非 RTX 的 N 卡一律不显示这一项
+        // （NVEncC 的 NGX TrueHDR 需要 NVIDIA RTX 20/30/40/50 系列，摆出来也点不了）
+        if (!Vm.IsHdrEnabled && SfKindCombo.Items.Count > 2)
+        {
+            SfKindCombo.Items.RemoveAt(2);
+            if (Vm.SfKindIndex > 1) Vm.SfKindIndex = 0;
+        }
+
         // 模型属性变化兜底：即使下拉框 SelectionChanged 未触发，也刷新倍率锁定
         Loaded += (_, _) =>
         {
