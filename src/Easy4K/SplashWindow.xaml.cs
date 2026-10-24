@@ -125,11 +125,12 @@ public sealed partial class SplashWindow : Window
             var path = Path.Combine(AppContext.BaseDirectory, "Assets", "Splash.png");
             if (!File.Exists(path)) return;
 
-            // 按物理像素解码（逻辑宽 × DPI 缩放）：解码尺寸 ≈ 实际显示像素，
-            // 避免"先解码成小图再被系统放大"造成的二次模糊
+            // 按物理像素的 2 倍超采样解码（逻辑宽 × DPI × 2）：
+            // 解码器缩图 + 系统再缩放都会损失锐度，先用更高分辨率解码、交给 GPU 下采样，边缘更干净
+            var decodeWidth = (int)Math.Round(_logicalWidth * _dpiScale * 2);
             var bmp = new BitmapImage
             {
-                DecodePixelWidth = Math.Max(1, (int)Math.Round(_logicalWidth * _dpiScale)),
+                DecodePixelWidth = Math.Max(1, decodeWidth),
                 DecodePixelType = DecodePixelType.Physical
             };
             using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
