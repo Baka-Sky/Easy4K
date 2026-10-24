@@ -22,6 +22,9 @@
                     <SolidColorBrush x:Key="ButtonBgBrush" Color="#8CF5F5F5"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FFC8C8C8"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="#20FFB300"/>
+                    <!-- 字族必须写进主题字典：WinUI 的内置样式用 {ThemeResource ContentControlThemeFontFamily} 取，
+                         而 ThemeResource 优先查主题字典，只在普通资源里覆盖对控件不生效。 -->
+                    <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Dark">
                     <CornerRadius x:Key="OverlayCornerRadius">8,8,8,8</CornerRadius>
@@ -30,6 +33,7 @@
                     <SolidColorBrush x:Key="ButtonBgBrush" Color="#8C2A2A2A"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FF444444"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="#30FFB300"/>
+                    <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="HighContrast">
                     <CornerRadius x:Key="OverlayCornerRadius">8,8,8,8</CornerRadius>
@@ -38,6 +42,7 @@
                     <SolidColorBrush x:Key="ButtonBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
+                    <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
 
@@ -60,21 +65,30 @@
                 <Setter Property="Background" Value="{ThemeResource ButtonBgBrush}"/>
                 <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
                 <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
             </Style>
             <Style x:Key="GlassTextBox" TargetType="TextBox">
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
                 <Setter Property="CornerRadius" Value="4"/>
+                <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
             </Style>
             <Style x:Key="GlassComboBox" TargetType="ComboBox" BasedOn="{StaticResource DefaultComboBoxStyle}">
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
                 <Setter Property="CornerRadius" Value="4"/>
+                <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
             </Style>
             <Style x:Key="GlassNumberBox" TargetType="NumberBox">
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
                 <Setter Property="CornerRadius" Value="4"/>
+                <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
+            </Style>
+
+            <!-- 兜底：没有显式 Style 的普通 TextBlock 也走内嵌字体（有显式 Style 的由样式/主题字典负责） -->
+            <Style TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
             </Style>
         </ResourceDictionary>
     </Application.Resources>
