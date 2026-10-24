@@ -1169,20 +1169,19 @@ public sealed partial class MainWindow : Window
 
     private static string DescribeElement(DependencyObject element)
     {
-        var typeName = element.GetType().Name;
-
-        // 自身有名字就用它，否则向上找最近一个有名字的祖先（更贴近"我指的是哪个控件"）
+        // 只要控件名（x:Name）：自身有名字就直接显示，否则向上找最近一个有名字的祖先，
+        // 用 ↑ 标明"这是祖先的名字"；实在没有名字才退化成类型名。
         DependencyObject? node = element;
         for (var depth = 0; depth < 12 && node is not null; depth++)
         {
-            if (node is FrameworkElement { Name.Length: > 0 } named)
-                return $"{typeName} · {named.Name}";
+            if (node is FrameworkElement fe && !string.IsNullOrEmpty(fe.Name))
+                return depth == 0 ? fe.Name : $"↑ {fe.Name}";
             node = VisualTreeHelper.GetParent(node);
         }
 
-        return element is FrameworkElement fe
-            ? $"{typeName} · (未命名) {fe.ActualWidth:0}×{fe.ActualHeight:0}"
-            : typeName;
+        return element is FrameworkElement self
+            ? $"（未命名 {self.GetType().Name}）"
+            : "（未命名）";
     }
 #endif
 
