@@ -167,6 +167,9 @@ public static class Loc
     /// 笔画发虚、边缘发毛，小字号下尤其明显。</summary>
     private static FontFamily AppBoldFont => _appBoldFont ??= ResolveFont("AppFontBoldFamily", "Segoe UI Semibold");
 
+    /// <summary>供运行期自建文本（如 ContentDialog 标题）使用：真实粗体字面。</summary>
+    public static FontFamily BoldFontFamily => AppBoldFont;
+
     private static FontFamily ResolveFont(string key, string fallback)
     {
         try
@@ -443,9 +446,23 @@ internal static class ContentDialogLocalizationExtensions
     {
         Loc.LocalizeDialog(dialog);
 
-        // 弹窗的模板（含标题 TextBlock）是 ShowAsync 之后才实例化的，
-        // 不在可视树上，页面那套字体刷不到，标题就会是合成假粗体。Opened 时补刷一次字体。
-        void OnOpened(ContentDialog sender, ContentDialogOpenedEventArgs args) => Loc.ApplyFonts(sender);
+        // 弹窗模板里的标题是「FontWeight=SemiBold + Regular 字族」的 ContentControl，第一帧一定用
+        // 合成假粗体画出来（Loading/Opened 再刷已经晚了），所以直接把字符串标题换成自带真实粗体
+        // 字面的 TextBlock：字号/字重/颜色仍继承模板里的 ContentControl，只改字族，视觉不变但首帧就清晰。
+        if (dialog.Title is string titleText && titleText.Length > 0)
+        {
+            dialog.Title = new TextBlock
+            {
+                Text = titleText,
+                FontFamily = Loc.BoldFontFamily
+            };
+        }
+
+        void ApplyFonts(DependencyObject sender) => Loc.ApplyFonts(sender);
+        void OnLoading(FrameworkElement sender, object args) => ApplyFonts(sender);
+        void OnOpened(ContentDialog sender, ContentDialogOpenedEventArgs args) => ApplyFonts(sender);
+
+        dialog.Loading += OnLoading;
         dialog.Opened += OnOpened;
         try
         {
@@ -453,6 +470,7 @@ internal static class ContentDialogLocalizationExtensions
         }
         finally
         {
+            dialog.Loading -= OnLoading;
             dialog.Opened -= OnOpened;
         }
     }
