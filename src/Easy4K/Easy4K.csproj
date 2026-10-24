@@ -31,6 +31,8 @@
     <PackageReference Include="MySqlConnector" Version="2.6.2" />
     <PackageReference Include="System.Management" Version="9.0.0" />
     <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="9.0.0" />
+    <!-- SFDP 帧去重 AI 判决：直接跑 ONNX 孪生网络，优先 DirectML，显卡不支持时自动回退 CPU -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" />
   </ItemGroup>
 
   <ItemGroup>

@@ -77,6 +77,8 @@ public static class FrameDedupService
         Flow = 4,
         /// <summary>四阶全过 → 判为重复</summary>
         Duplicate = 5,
+        /// <summary>AI（ONNX 孪生网络）判否</summary>
+        Ai = 6,
     }
 
     /// <summary>阶段短名（进度文本 / 日志用）</summary>
@@ -87,6 +89,7 @@ public static class FrameDedupService
         Stage.Hash => "dHash",
         Stage.Qr => "QR分解",
         Stage.Flow => "光流",
+        Stage.Ai => "AI",
         _ => "判重",
     };
 
@@ -489,8 +492,9 @@ public static class FrameDedupService
         }
     }
 
-    /// <summary>读取 PNG 为 BGRA8 像素（用系统自带的 WIC 解码，不引入第三方依赖）。</summary>
-    private static async Task<(byte[] Pixels, int Width, int Height)> LoadBgraAsync(string path)
+    /// <summary>读取 PNG 为 BGRA8 像素（用系统自带的 WIC 解码，不引入第三方依赖）。
+    /// public：ONNX 孪生网络判决器复用同一套解码路径，保证两边看到的像素完全一致。</summary>
+    public static async Task<(byte[] Pixels, int Width, int Height)> LoadBgraAsync(string path)
     {
         using var stream = File.OpenRead(path);
         var decoder = await BitmapDecoder.CreateAsync(stream.AsRandomAccessStream());

@@ -1583,6 +1583,45 @@ public sealed class ProcessingOrchestrator
         }
     }
 
+    /// <summary>预热 SFDP 孪生网络（ONNX）。返回 null 表示本次不能用 AI 判决（模型缺失/加载失败），
+    /// 调用方自动回退四阶判决器，不中断处理。
+    ///
+    /// 为什么必须预热：首个会话要把 ~10MB 模型读进内存、建 DirectML 会话、上传算子与常量缓冲区，
+    /// 首帧判决能卡好几秒，进度条看着像死了。预热时先把这些做一遍（含一次哑推理），
+    /// 正式判决从第一帧起就是全速。</summary>
+    private async Task<SiameseDedupService?> WarmupDedupAiAsync(ProcessingContext ctx, CancellationToken ct)
+    {
+        var modelPath = SiameseDedupService.ModelPathFor(
+            ToolPathResolver.ResolveToolsRoot(ctx.Settings.ToolsRoot), ctx.Settings.DedupMode);
+
+        ProgressChanged?.Invoke(new ProcessProgress
+        {
+            Stage = ProcessStage.Splitting,
+            StageText = "正在预热AI模型",
+            Current = 0,
+            Total = 0,
+            PercentDisplay = false
+        });
+
+        try
+        {
+            var svc = await SiameseDedupService.WarmupAsync(modelPath, ct);
+            if (svc is null)
+            {
+                _logger.Warn($"帧去重：未找到 AI 模型 {modelPath}，本次回退四阶判决");
+                return null;
+            }
+            _logger.Info($"帧去重：AI 模型预热完成（{svc.Provider} — {Path.GetFileName(svc.ModelPath)}）");
+            return svc;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warn($"帧去重：AI 模型预热失败（{ex.Message}），本次回退四阶判决");
+            return null;
+        }
+    }
+
     /// <summary>阶段1.5：相邻帧去重。判为重复的帧移到 input_frames_dedup_removed（不真删），
     /// 写 dedup_map.json（keptCount + 回填位置表）。返回保留帧数；未生效返回 0。</summary>
     private async Task<int> RunDedupAsync(ProcessingContext ctx, string tempRoot, string inputFrames, long totalFrames, CancellationToken ct)
@@ -1622,7 +1661,12 @@ public sealed class ProcessingOrchestrator
             // （"已判重"=累计判为重复的帧数；"第 N 帧/共 M 帧"=判决进度；百分比单独显示在右侧）
             string DedupText(string phase, int dup) => $"帧去重({modeShort}) {phase} 已判重{dup}帧";
 
-            var result = await FrameDedupService.AnalyzeAsync(inputFrames, opt, pr =>
+            // AI 判决：进入 AI 阶段先预热模型（读盘 + 建 DirectML 会话 + 哑推理），
+            // 否则第一帧判决会愣在那儿，用户看到的是"进度条不动"。
+            // 模型缺失/加载失败时返回 null，本次回退四阶判决器，不影响正常出片。
+            var ai = await WarmupDedupAiAsync(ctx, ct);
+
+            void ReportDedup(FrameDedupService.AnalysisProgress pr) =>
                 ProgressChanged?.Invoke(new ProcessProgress
                 {
                     Stage = ProcessStage.Splitting,
@@ -1638,7 +1682,11 @@ public sealed class ProcessingOrchestrator
                     CompareFrameIndex = pr.CompareIndex,
                     VerdictFramePath = pr.VerdictFramePath,
                     VerdictFrameIndex = pr.VerdictIndex
-                }), ct);
+                });
+
+            var result = ai is not null
+                ? await ai.AnalyzeAsync(inputFrames, opt, ReportDedup, ct)
+                : await FrameDedupService.AnalyzeAsync(inputFrames, opt, ReportDedup, ct);
 
             var decisions = result.Decisions.ToList();
             var moveFailed = 0;
@@ -2080,6 +2128,9 @@ public sealed class ProcessingOrchestrator
             _logger.Warn($"[涡轮] 拆帧结果不完整（{files.Length}/{totalFrames} 帧），本次不做去重判决");
         var dedupOpt = streamDedup ? FrameDedupService.Options.FromMode(ctx.Settings.DedupMode) : null;
         var dedupModeShort = ctx.Settings.DedupMode == "uhd" ? "完美" : "性能";
+        // AI 判决：进入 AI 阶段先预热 ONNX 模型（理由见 WarmupDedupAiAsync）。
+        // 放在进度中枢建立之前，进度文字就停在「正在预热AI模型」，模型就绪后才开始块级流水。
+        var dedupAi = streamDedup ? await WarmupDedupAiAsync(ctx, ct) : null;
         // 全局原始判决（未做时序平滑）：下标 = 原始帧号 - 1
         var raw = streamDedup ? new List<FrameDedupService.FrameDecision>(files.Length) : null;
         // 定稿判决（下标 = 原始帧号 - 1）：发布一块时写入，之后不再改动。
@@ -2231,14 +2282,18 @@ public sealed class ProcessingOrchestrator
             if (carry) batch.Add(files[s - 1]);
             for (var i = s; i < e; i++) batch.Add(files[i]);
 
-            var result = await FrameDedupService.AnalyzeAsync(batch, dedupOpt!, pr =>
+            void ReportDedup(FrameDedupService.AnalysisProgress pr)
             {
                 // 进度中枢按"块内已完成帧数"累加，所以这里传本块内的判决数（含对比帧的要扣掉）；
                 // 预览标签用全局帧号，单独算。涡轮下一格一条流水，不给三联（FrameCompareMode=false）。
                 var off = carry ? 1 : 0;
                 var local = Math.Max(0, pr.Done - off);
                 hub.Advance("dedup", local, pr.CurrentFramePath, s + local);
-            }, ct, applySmoothing: false);
+            }
+
+            var result = dedupAi is not null
+                ? await dedupAi.AnalyzeAsync(batch, dedupOpt!, ReportDedup, ct, applySmoothing: false)
+                : await FrameDedupService.AnalyzeAsync(batch, dedupOpt!, ReportDedup, ct, applySmoothing: false);
 
             // 丢掉对比帧那一条（它属于上一块），其余按全局帧号补上索引
             var skip = carry ? 1 : 0;
