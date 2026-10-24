@@ -1169,11 +1169,28 @@ public sealed partial class MainWindow : Window
 
     private static string DescribeElement(DependencyObject element)
     {
-        // 格式「类别: 控件自己的名字」，例如 Button: OnBrowseInput；
-        // 没写 x:Name 的控件直接标（未命名），不拿祖先的名字冒充。
+        // 格式「类别: 名字」：有 x:Name 就用 x:Name；XAML 里没写名字的按钮/文本
+        // 用它们自己的可见文字（Content / Text）代替，实在没有就只显示类别。
         var typeName = element.GetType().Name;
-        var name = (element as FrameworkElement)?.Name;
-        return string.IsNullOrEmpty(name) ? $"{typeName}: （未命名）" : $"{typeName}: {name}";
+
+        if (element is FrameworkElement { Name.Length: > 0 } named)
+            return $"{typeName}: {named.Name}";
+
+        var label = element switch
+        {
+            ContentControl { Content: string content } when content.Length > 0 => $"\"{content}\"",
+            TextBlock { Text.Length: > 0 } text => $"\"{text.Text}\"",
+            ContentControl { Content: UIElement child } => child.GetType().Name,
+            _ => null
+        };
+
+        if (label is null && element is FrameworkElement fe)
+        {
+            var tip = ToolTipService.GetToolTip(fe) as string;
+            if (!string.IsNullOrEmpty(tip)) label = $"(提示) \"{tip}\"";
+        }
+
+        return label is null ? typeName : $"{typeName}: {label}";
     }
 #endif
 
