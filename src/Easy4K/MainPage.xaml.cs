@@ -24,14 +24,17 @@ public sealed partial class MainPage : Page
     /// <summary>帧文件夹参数弹窗是否已打开（防止重复弹出）</summary>
     private bool _frameParamsDialogOpen;
 
-    /// <summary>按当前时段生成问候语：早上好 / 中午好 / 傍晚好 / 晚上好 + 当前 Windows 用户名。</summary>
+    /// <summary>按当前时段生成问候语：凌晨 / 早上 / 上午 / 中午 / 下午 / 傍晚 / 晚上好 + 当前 Windows 用户名。</summary>
     private static string BuildGreeting()
     {
         var period = DateTime.Now.Hour switch
         {
-            >= 5 and < 11 => "早上好",
+            >= 0 and < 5 => "凌晨好",
+            >= 5 and < 9 => "早上好",
+            >= 9 and < 11 => "上午好",
             >= 11 and < 13 => "中午好",
-            >= 13 and < 18 => "傍晚好",
+            >= 13 and < 17 => "下午好",
+            >= 17 and < 19 => "傍晚好",
             _ => "晚上好"
         };
 
