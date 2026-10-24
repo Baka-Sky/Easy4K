@@ -17,18 +17,18 @@ public sealed partial class SplashWindow : Window
         InitializeComponent();
         Title = "Easy4K";   // 任务栏/Alt+Tab 显示用（窗口本身无标题栏）
 
-        // 无边框窗口：隐藏标题栏与系统边框，固定大小
+        // 保留系统边框（DWM 圆角/阴影依赖它），但把内容延伸进标题栏 → 视觉上无标题栏、四角抗锯齿圆角
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
-            presenter.SetBorderAndTitleBar(false, false);
+            presenter.SetBorderAndTitleBar(true, true);
             presenter.IsResizable = false;
             presenter.IsMaximizable = false;
             presenter.IsMinimizable = false;
         }
+        try { ExtendsContentIntoTitleBar = true; } catch { /* 旧 SDK 忽略 */ }
 
         var hwnd = WindowNative.GetWindowHandle(this);
-        var (w, h) = CenterAt(NativeMethods.GetDpiForWindow(hwnd));
-        ApplyRoundRegion(hwnd, w, h);
+        _ = CenterAt(NativeMethods.GetDpiForWindow(hwnd));
 
         // 4K 原图按显示尺寸解码，避免启动时整张解码拖慢
         _ = LoadImageAsync();
@@ -76,28 +76,6 @@ public sealed partial class SplashWindow : Window
 
     /// <summary>窗口逻辑宽度（供图片按显示尺寸解码）</summary>
     private int _logicalWidth = 800;
-
-    /// <summary>把窗口区域裁成圆角（真正裁掉四角，任何系统都生效）。
-    /// 半径按窗口大小缩放，约 12 逻辑像素。</summary>
-    private void ApplyRoundRegion(IntPtr hwnd, int w, int h)
-    {
-        try
-        {
-            if (w <= 0 || h <= 0) return;
-            // 圆角直径 = 2 × 12 逻辑像素，按 DPI 换算成物理像素（与 XAML 里的 CornerRadius=12 对齐）
-            var scale = _logicalWidth > 0 ? w / (double)_logicalWidth : 1.0;
-            var diameter = Math.Max(8, (int)Math.Round(24 * scale));
-            var rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, diameter, diameter);
-            if (rgn != IntPtr.Zero) _ = SetWindowRgn(hwnd, rgn, true);
-        }
-        catch { }
-    }
-
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int width, int height);
-
-    [DllImport("user32.dll")]
-    private static extern int SetWindowRgn(IntPtr hwnd, IntPtr hRgn, bool redraw);
 
     private async Task LoadImageAsync()
     {

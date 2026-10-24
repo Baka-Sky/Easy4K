@@ -8,11 +8,8 @@
     mc:Ignorable="d">
 
     <!-- 启动画面：整窗铺启动图（100% 比例）。
-         窗口本身透明，图片放在圆角 Border 里 —— 这样四角能被真正裁圆，
-         不依赖 DWM（无边框窗口上 DWM 圆角经常不生效）。 -->
-    <Grid Background="Transparent">
-        <Border x:Name="Root" CornerRadius="12" Background="#1A1A1A">
-            <Image x:Name="SplashImage" Stretch="UniformToFill"/>
-        </Border>
+         窗口保留系统边框以获得 DWM 抗锯齿圆角与阴影，内容延伸进标题栏后视觉上无标题栏。 -->
+    <Grid Background="#1A1A1A">
+        <Image x:Name="SplashImage" Stretch="UniformToFill"/>
     </Grid>
 </Window>
