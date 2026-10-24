@@ -42,10 +42,10 @@
                             </StackPanel>
 
                             <!-- 右上角 logo：浅色主题用黑版、深色主题用白版（主题变化时换图）。
-                                 负右边距把图片再往卡片右缘推一点（抵消卡片内边距） -->
+                                 右边距用来微调它离卡片右缘的距离 -->
                             <Image x:Name="AboutLogo" Grid.Column="1"
                                    Width="180" Stretch="Uniform"
-                                   Margin="0,0,-8,0"
+                                   Margin="0,0,7,0"
                                    HorizontalAlignment="Right" VerticalAlignment="Top"/>
                         </Grid>
 
