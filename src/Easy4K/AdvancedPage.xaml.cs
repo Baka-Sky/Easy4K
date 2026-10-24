@@ -46,6 +46,8 @@ public sealed partial class AdvancedPage : Page
         // 构造期就发起解码（与页面构建/布局重叠，不等 Loaded），否则图片会在页面已经显示出来之后才"跳"出来。
         ApplyCardArt();
         ActualThemeChanged += (_, _) => ApplyCardArt();
+        // 元素挂进可视树后 ActualTheme 才真正解析出来，Loaded 时再确认一次（有解码缓存，代价很小）
+        Loaded += (_, _) => ApplyCardArt();
 
         // 涡轮模式的磁盘检查：手动切换时触发；另外每次启动也检查一遍已开启的涡轮
         Loaded += (_, _) => DispatcherQueue.TryEnqueue(() => _turboUiReady = true);
@@ -82,9 +84,32 @@ public sealed partial class AdvancedPage : Page
     /// <summary>两张卡片右下角插图（帧去重 / 音频超分）统一按主题换图：浅色用黑版、深色用白版。
     /// 两张并行加载，谁先解完谁先显示（原来串行 await，第二张要等第一张解完才开始）。</summary>
     private void ApplyCardArt()
-        => _ = Task.WhenAll(
-            LoadThemeArtAsync(DedupArt, "DedupArt"),
-            LoadThemeArtAsync(AudioSrArt, "AudioSrArt"));
+    {
+        var dark = CurrentThemeIsDark();
+        _ = Task.WhenAll(
+            LoadThemeArtAsync(DedupArt, "DedupArt", dark),
+            LoadThemeArtAsync(AudioSrArt, "AudioSrArt", dark));
+    }
+
+    /// <summary>当前是否深色主题（深色用白版插图，浅色用黑版）。
+    /// 首次进入页面时 ActualTheme 往往仍是 Default（元素还没挂进可视树），
+    /// 直接按 Default 判断会错拿白版 —— 表现就是"第一次点开高级，两张图的颜色是反的"。
+    /// 所以逐级回退：页面 → 窗口根元素 → 系统主题。</summary>
+    private bool CurrentThemeIsDark()
+    {
+        var theme = ActualTheme;
+        if (theme == ElementTheme.Default && App.MainWindow?.Content is FrameworkElement root)
+            theme = root.ActualTheme;
+        if (theme == ElementTheme.Default)
+            theme = Application.Current.RequestedTheme == ApplicationTheme.Dark
+                ? ElementTheme.Dark : ElementTheme.Light;
+        return theme == ElementTheme.Dark;
+    }
+
+    /// <summary>每个 Image 最近一次请求的序号：解码是异步的，先发起的（错误主题的）请求
+    /// 可能最后才完成并覆盖掉正确结果，所以过期结果直接丢弃。</summary>
+    private readonly Dictionary<Image, int> _artRequest = new();
+    private int _artSequence;
 
     /// <summary>已解码的主题插图缓存（键 = 文件绝对路径）：同一张只解一次，
     /// 反复进页面、切主题都不用再解码。null 表示文件缺失。</summary>
@@ -97,10 +122,12 @@ public sealed partial class AdvancedPage : Page
     /// ② 必须 await 解码完成再释放文件流——fire-and-forget + using 会让流在解码中途被关掉，
     ///    表现为"第一次打开有概率不显示"。
     /// ③ 解码结果按路径缓存，避免每次进页面都重来一遍。</summary>
-    private async Task LoadThemeArtAsync(Image target, string baseName)
+    private async Task LoadThemeArtAsync(Image target, string baseName, bool dark)
     {
-        var file = $"{baseName}_{(ActualTheme == ElementTheme.Light ? "black" : "white")}.png";
+        var file = $"{baseName}_{(dark ? "white" : "black")}.png";
         var path = Path.Combine(AppContext.BaseDirectory, "Assets", file);
+        var seq = ++_artSequence;
+        _artRequest[target] = seq;
 
         if (!ArtCache.TryGetValue(path, out var bmp))
         {
@@ -130,6 +157,9 @@ public sealed partial class AdvancedPage : Page
                 bmp = null;
             }
         }
+
+        // 期间可能又发起了新的请求（主题刚解析出来），过期的结果不要写回，否则会被旧图覆盖
+        if (_artRequest.TryGetValue(target, out var latest) && latest != seq) return;
 
         if (bmp is null)
         {
