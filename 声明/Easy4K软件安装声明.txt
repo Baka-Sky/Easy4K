@@ -140,6 +140,15 @@ LICENSE 文件逐项核对：
      tensorboard / sympy / mpmath 等，许可分别为 MIT、Apache-2.0 或
      BSD-3-Clause，详见各包随附的 LICENSE 文件。
 
+【界面字体与品牌素材】
+ (31) HarmonyOS Sans SC 字体（Regular / Medium / Bold）
+     版权：Huawei Device Co., Ltd.
+     许可：HarmonyOS Sans 字体许可（可随软件免费分发与内嵌，不得
+     单独售卖字体本身）
+     用途：界面内嵌中文字体，保证各语言环境下文字显示一致
+ (32) Easy4K 启动画面 / 关于页 Logo / 应用图标
+     版权：Easy4K 项目组（甲方）所有，随本软件一并分发
+
 ── 说明 ──
 1. "帧去重"（SFDP：四阶级联判决 —— 像素差与分块局部检查 / dHash /
    QR 分解 / Farnebäck 稠密光流）为本软件自行实现，不依赖 OpenCV
