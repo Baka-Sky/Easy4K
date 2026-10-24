@@ -45,11 +45,11 @@
                 <!-- 用 256px PNG 而不是 .ico：Image 控件按 .ico 渲染时会挑到小尺寸帧再放大，24px 下就是马赛克 -->
                 <Image x:Name="TitleBarIcon" Source="Assets/TitleBarIcon.png" Width="24" Height="24"/>
                 <TextBlock x:Name="TitleTextBlock" Text="Easy4K" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <!-- 仅 Debug：指针下的控件名，与标题同一行、同一垂直中线 -->
+                <TextBlock x:Name="DebugHoverText" FontSize="13" Margin="12,0,0,0" VerticalAlignment="Center"
+                           Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                           IsHitTestVisible="False" Visibility="Collapsed"/>
             </StackPanel>
-            <!-- 仅 Debug：鼠标当前指向的控件名（给系统按钮留出 160 宽的避让区） -->
-            <TextBlock x:Name="DebugHoverText" HorizontalAlignment="Right" VerticalAlignment="Center"
-                       Margin="0,0,160,0" FontSize="13" Foreground="{ThemeResource SystemFillColorCautionBrush}"
-                       IsHitTestVisible="False" Visibility="Collapsed"/>
         </Grid>
 
         <!-- 自适应导航：宽窗口用顶栏（Top），窄窗口收成左侧最小化（LeftMinimal）。

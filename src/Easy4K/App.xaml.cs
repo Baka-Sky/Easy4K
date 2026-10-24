@@ -103,6 +103,7 @@ public partial class App : Application
         var selftestCli = false;
         var autoTestCli = false;
         var autoTestFull = false;
+        var autoTestApi = false;
         var dedupOnly = false;
         var remoteCli = false;
         for (int i = 0; i < cmdLine.Length; i++)
@@ -146,6 +147,20 @@ public partial class App : Application
                 break;
             }
 
+            // API 模式全组合自动测试（同孤儿模式：隐藏窗口后台跑，跑完把报告写桌面并退出进程）
+            // Easy4K.exe --autotest-api [full]
+            if (cmdLine[i].Equals("--autotest-api", StringComparison.OrdinalIgnoreCase)
+                || cmdLine[i].Equals("--autotest-headless", StringComparison.OrdinalIgnoreCase))
+            {
+                autoTestCli = true;
+                autoTestApi = true;
+                if (i + 1 < cmdLine.Length
+                    && (cmdLine[i + 1].Equals("full", StringComparison.OrdinalIgnoreCase)
+                        || cmdLine[i + 1].Equals("matrix", StringComparison.OrdinalIgnoreCase)))
+                    autoTestFull = true;
+                break;
+            }
+
             // 帧去重专项测试: Easy4K.exe --dedup-test（不加载超分模型，补帧只用最轻 lite，几十秒跑完）
             if (cmdLine[i].Equals("--dedup-test", StringComparison.OrdinalIgnoreCase))
             {
@@ -174,7 +189,7 @@ public partial class App : Application
         if (orphanTask is not null)
             _ = RunOrphanTaskDelayedAsync(orphanTask);
         if (autoTestCli)
-            _ = RunAutoTestDelayedAsync(autoTestFull, dedupOnly);
+            _ = RunAutoTestDelayedAsync(autoTestFull, dedupOnly, autoTestApi);
         // 远程连接模式：--remote 命令行直启，或用户开了「每次启动自动进入远程连接模式」
         if (remoteCli || Services.AutoRemoteOnStartup)
             _ = MainWindow.StartRemoteControlAsync();
@@ -217,17 +232,29 @@ public partial class App : Application
         MainWindow.Activate();
     }
 
-    /// <summary>延迟到主窗口/页面加载完成后再跑 GUI 自动测试（--autotest-all / --dedup-test 专用）。</summary>
-    private static async Task RunAutoTestDelayedAsync(bool fullMatrix, bool dedupOnly = false)
+    /// <summary>延迟到主窗口/页面加载完成后再跑 GUI 自动测试（--autotest-all / --dedup-test / --autotest-api 专用）。
+    /// apiMode = 同孤儿模式：隐藏窗口后台跑，报告写桌面，跑完自动退出进程。</summary>
+    private static async Task RunAutoTestDelayedAsync(bool fullMatrix, bool dedupOnly = false, bool apiMode = false)
     {
         try
         {
             await Task.Delay(1500);
-            await Services.RunAutoTestAllAsync(fullMatrix, dedupOnly);
+            if (apiMode)
+            {
+                try { MainWindow?.AppWindow.Hide(); } catch { }
+            }
+            await Services.RunAutoTestAllAsync(fullMatrix, dedupOnly, apiMode);
         }
         catch (Exception ex)
         {
             File.AppendAllText(CrashLogPath, $"[AutoTest @ {DateTime.Now}]\n{ex}\n\n");
+        }
+        finally
+        {
+            if (apiMode)
+            {
+                try { Application.Current.Exit(); } catch { }
+            }
         }
     }
 

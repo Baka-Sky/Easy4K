@@ -45,7 +45,9 @@ public partial class MainViewModel
         bool Cpu,
         int Threads,
         bool Dedup,
-        string DedupMode);
+        string DedupMode,
+        bool Turbo = false,
+        int TurboSegments = 2);
 
     private sealed record AutoResult(AutoCase Case, bool Ok, TimeSpan Elapsed, string? Output, string? Note);
 
@@ -54,7 +56,7 @@ public partial class MainViewModel
     /// fullMatrix=true：每个 v4 模型跑 ×2~×5 全矩阵（用例数最多、最慢）。
     /// 不模拟鼠标；每例输出独立临时目录，成功即清理，失败保留目录便于排查。
     /// </summary>
-    public async Task RunAutoTestAllAsync(bool fullMatrix = false, bool dedupOnly = false)
+    public async Task RunAutoTestAllAsync(bool fullMatrix = false, bool dedupOnly = false, bool desktopReport = false)
     {
         if (IsProcessing) { _logger.Warn("自动测试: 已有处理进行中，忽略本次请求"); return; }
         if (!Tools.CoreToolsOk)
@@ -156,7 +158,9 @@ public partial class MainViewModel
                             ThreadCount = Math.Clamp(c.Threads, 1, 32),
                             EncodePreset = _app.EncodePreset,
                             DedupEnabled = c.Dedup,
-                            DedupMode = string.IsNullOrEmpty(c.DedupMode) ? "performance" : c.DedupMode
+                            DedupMode = string.IsNullOrEmpty(c.DedupMode) ? "performance" : c.DedupMode,
+                            TurboMode = c.Turbo,
+                            TurboSegments = Math.Clamp(c.TurboSegments, 1, 5)
                         },
                         Tools = Tools
                     };
@@ -210,7 +214,7 @@ public partial class MainViewModel
             }
 
             var elapsedAll = DateTime.Now - startAll;
-            WriteAutoTestSummary(root, results, elapsedAll, cancelled);
+            WriteAutoTestSummary(root, results, elapsedAll, cancelled, desktopReport);
             _logger.Info("==== 自动测试结束 ====");
             AutoTestFinished?.Invoke(!cancelled && results.Count > 0 && results.All(r => r.Ok));
         }
@@ -271,7 +275,8 @@ public partial class MainViewModel
         void Add(bool split, bool sr, bool if_, bool merge, bool audio, bool hdr,
             string? srModel, int srScale, string? ifModel, int ifMult,
             string name, bool safe = false, bool lower = false, bool gpuAccel = false, bool cpu = false,
-            int threads = 4, bool dedup = false, string dedupMode = "performance")
+            int threads = 4, bool dedup = false, string dedupMode = "performance",
+            bool turbo = false, int turboSegments = 2)
         {
             cases.Add(new AutoCase(
                 name,
@@ -284,7 +289,8 @@ public partial class MainViewModel
                     MergeAudio = audio,
                     SdrToHdr = hdr
                 },
-                srModel, srScale, ifModel, ifMult, safe, lower, gpuAccel, cpu, threads, dedup, dedupMode));
+                srModel, srScale, ifModel, ifMult, safe, lower, gpuAccel, cpu, threads, dedup, dedupMode,
+                turbo, turboSegments));
         }
 
         // ---------- 超分：全部算法 × 全部模型（x2/x3/x4），只跑本机已部署的引擎 ----------
@@ -344,6 +350,24 @@ public partial class MainViewModel
         Add(true, true, false, true, true, false, dftSr, 2, null, 2,
             "组合 CPU处理模式（超分代表性模型，最慢）", safe: true, cpu: true, threads: 8);
 
+        // ---------- 涡轮分段（新方案）：按帧号切 N 段，多段流水线并行 ----------
+        Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
+            "涡轮·2 段（超分+补帧+合并+音频）", threads: 1, turbo: true, turboSegments: 2);
+        Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
+            "涡轮·3 段（超分+补帧+合并+音频）", threads: 1, turbo: true, turboSegments: 3);
+        Add(true, true, false, true, true, false, dftSr, 2, null, 2,
+            "涡轮·2 段（仅超分）", threads: 1, turbo: true, turboSegments: 2);
+        Add(true, false, true, true, true, false, null, 2, ncnnDefault, 2,
+            "涡轮·2 段（仅补帧）", threads: 1, turbo: true, turboSegments: 2);
+        Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
+            "涡轮·2 段 + 帧去重·性能模式", threads: 1, dedup: true, dedupMode: "performance",
+            turbo: true, turboSegments: 2);
+        Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
+            "涡轮·2 段 + 帧去重·完美模式", threads: 1, dedup: true, dedupMode: "uhd",
+            turbo: true, turboSegments: 2);
+        Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
+            "涡轮·5 段（最大分段压力测试）", threads: 1, turbo: true, turboSegments: 5);
+
         return cases;
     }
 
@@ -356,7 +380,8 @@ public partial class MainViewModel
         return sb.ToString();
     }
 
-    private void WriteAutoTestSummary(string root, List<AutoResult> results, TimeSpan elapsed, bool cancelled)
+    private void WriteAutoTestSummary(string root, List<AutoResult> results, TimeSpan elapsed, bool cancelled,
+        bool desktopReport = false)
     {
         try
         {
@@ -372,6 +397,24 @@ public partial class MainViewModel
             var file = Path.Combine(root, "AutoTestSummary.txt");
             File.WriteAllText(file, sb.ToString(), Encoding.UTF8);
             _logger.Success($"自动测试总结已写入: {file}");
+
+            // API/无界面模式：把同一份报告再写到桌面，用户不需要进 Res 目录翻
+            if (desktopReport)
+            {
+                var desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                var reportPath = Path.Combine(desktop, $"Easy4K流水线全组合自动测试_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
+                var header = new StringBuilder();
+                header.AppendLine("Easy4K 流水线全组合自动测试（API 模式）");
+                header.AppendLine($"生成时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                header.AppendLine($"显卡: {_env.Gpu.Name} / 显存 {_env.Gpu.VramText}");
+                header.AppendLine($"测试素材: {StartupTestVideoPath}");
+                header.AppendLine("覆盖: 全部超分模型(×2/×3/×4) + 全部 NCNN 补帧模型(×2，full 模式 ×2~×5) + " +
+                                  "完整流程/GPU加速/安全帧率+降画质/HDR/帧去重(性能·完美)/CPU模式 + 涡轮分段(2/3/5 段)");
+                header.AppendLine(new string('=', 72));
+                header.AppendLine(sb.ToString());
+                File.WriteAllText(reportPath, header.ToString(), Encoding.UTF8);
+                _logger.Success($"桌面报告已写入: {reportPath}");
+            }
         }
         catch (Exception ex)
         {
