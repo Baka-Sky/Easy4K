@@ -140,6 +140,11 @@ public static class Loc
         try
         {
             ApplyAppFont(root);
+
+            // Popup（下拉列表、ToolTip、教学提示、弹窗）的内容不在常规可视树里，
+            // VisualTreeHelper 取不到，必须显式进去刷一遍
+            if (root is Popup { Child: not null } popup) ApplyFonts(popup.Child);
+
             var count = VisualTreeHelper.GetChildrenCount(root);
             for (var i = 0; i < count; i++)
                 ApplyFonts(VisualTreeHelper.GetChild(root, i));

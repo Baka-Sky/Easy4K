@@ -73,7 +73,7 @@
                                        MinWidth="40" TextAlignment="Right" VerticalAlignment="Center" FontSize="12"/>
                         </Grid>
 
-                        <TextBlock x:Name="BgImageHint" FontSize="10" Opacity="0.6" TextWrapping="Wrap" Margin="28,0,0,0" Visibility="Collapsed"
+                        <TextBlock x:Name="BgImageHint" FontSize="11" Opacity="0.6" TextWrapping="Wrap" Margin="28,0,0,0" Visibility="Collapsed"
                                    Text="整窗铺满该图片，上面覆盖一层亚克力（模糊 + 深色着色），界面固定用深色主题保证卡片与文字可读；浓度越高越糊越暗、文字越清晰。换图/拖动立即生效，随配置一起保存。"/>
                     </StackPanel>
                 </Border>

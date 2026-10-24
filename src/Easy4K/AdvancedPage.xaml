@@ -63,14 +63,14 @@
                         <ToggleSwitch x:Name="DedupSwitch" OnContent="已开启" OffContent="已关闭"
                                       IsOn="{x:Bind Vm.DedupEnabled, Mode=TwoWay}" FontSize="12"/>
 
-                        <TextBlock TextWrapping="Wrap" FontSize="10" Opacity="0.6"
+                        <TextBlock TextWrapping="Wrap" FontSize="11" Opacity="0.6"
                                    Text="用 AI 孪生网络判断相邻两帧是不是同一画面：重复帧不进超分/补帧，处理完按索引表原样补回，成品时长、帧率与音频都不变。重复帧越多省得越多（动画「一拍二/三」通常可省 30%~50% 的超分/补帧耗时）。"/>
 
                         <RadioButton x:Name="DedupPerfRb" Content="Performance Mode 性能模式" GroupName="DedupMode"
                                      Checked="OnDedupModeChecked" FontSize="12"/>
                         <RadioButton x:Name="DedupUhdRb" Content="UHD Mode 完美模式" GroupName="DedupMode"
                                      Checked="OnDedupModeChecked" FontSize="12"/>
-                        <TextBlock x:Name="DedupHint" FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="DedupHint" FontSize="11" Opacity="0.6" TextWrapping="Wrap"/>
                         </StackPanel>
 
                         <!-- 卡片右下角插图（随主题切换：浅色用黑版、深色用白版；源码见 AdvancedPage.xaml.cs）。
@@ -108,14 +108,14 @@
                             <ToggleSwitch x:Name="AudioSrSwitch" OnContent="已开启" OffContent="已关闭"
                                           IsOn="{x:Bind Vm.AudioSrEnabled, Mode=TwoWay}" FontSize="12"/>
 
-                            <TextBlock TextWrapping="Wrap" FontSize="10" Opacity="0.6"
+                            <TextBlock TextWrapping="Wrap" FontSize="11" Opacity="0.6"
                                        Text="开启后音频不再由 ffmpeg 重采样，改由 AudioSR 升采样到 48kHz 高带宽。勾选主页「将原音频合并进新视频」时替换视频音轨（时长与帧率不变）；未勾选则不动视频，单独输出一份 48kHz WAV。输入视频必须有音频流才生效。"/>
 
                             <RadioButton x:Name="AudioSrFp16Rb" Content="FP16 低精度性能模式" GroupName="AudioSrPrecision"
                                          Checked="OnAudioSrPrecisionChecked" FontSize="12"/>
                             <RadioButton x:Name="AudioSrFp32Rb" Content="FP32 高精度完美模式" GroupName="AudioSrPrecision"
                                          Checked="OnAudioSrPrecisionChecked" FontSize="12"/>
-                            <TextBlock x:Name="AudioSrHint" FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="AudioSrHint" FontSize="11" Opacity="0.6" TextWrapping="Wrap"/>
                         </StackPanel>
 
                         <!-- 卡片右下角插图（随主题切换：浅色用黑版、深色用白版；源码见 AdvancedPage.xaml.cs）。
@@ -148,7 +148,7 @@
                         <ToggleSwitch x:Name="TurboSwitch" OnContent="已开启" OffContent="已关闭"
                                       IsOn="{x:Bind Vm.TurboMode, Mode=TwoWay}" Toggled="OnTurboToggled" FontSize="12"/>
 
-                        <TextBlock TextWrapping="Wrap" FontSize="10" Opacity="0.6"
+                        <TextBlock TextWrapping="Wrap" FontSize="11" Opacity="0.6"
                                    Text="将勾选的所有操作同时进行。由于数据吞吐巨大，本功能要求临时目录必须为固态存储介质。"/>
 
                         <!-- 每块帧数：只在涡轮模式开启时出现；越界由弹窗提醒（见 AdvancedPage.xaml.cs） -->
@@ -167,10 +167,10 @@
                                            VerticalAlignment="Center" FontSize="12" MinWidth="70" TextAlignment="Right"/>
                             </Grid>
                             <TextBlock Text="每块帧数（默认 240，建议 64 ~ 600）：块越小 CPU 与 GPU 重叠越充分，但超分 / 补帧模型会被反复加载"
-                                       FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                                       FontSize="11" Opacity="0.6" TextWrapping="Wrap"/>
                         </StackPanel>
 
-                        <TextBlock x:Name="TurboHint" FontSize="10" Opacity="0.6" TextWrapping="Wrap"
+                        <TextBlock x:Name="TurboHint" FontSize="11" Opacity="0.6" TextWrapping="Wrap"
                                    Text="单卡建议 64~256 帧：块越小 CPU 与 GPU 重叠越充分，但外部工具重复加载模型、按块复制帧的开销也越多；改完立即写入配置。"/>
                     </StackPanel>
                 </Border>
@@ -189,7 +189,7 @@
                             <TextBox  Grid.Column="1" Text="{x:Bind Vm.ReportDir, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="HTML 报告文件保存目录" Style="{StaticResource GlassTextBox}"/>
                             <Button   Grid.Column="2" Content="浏览" Click="OnBrowseReportDir" Style="{StaticResource GlassButton}"/>
                         </Grid>
-                        <TextBlock Text="处理完成后生成的 HTML 报告（选项/命令/抽帧）保存在这里；可填绝对路径，留空按 Reports。" FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                        <TextBlock Text="处理完成后生成的 HTML 报告（选项/命令/抽帧）保存在这里；可填绝对路径，留空按 Reports。" FontSize="11" Opacity="0.6" TextWrapping="Wrap"/>
                     </StackPanel>
                 </Border>
 
@@ -210,7 +210,7 @@
                                        VerticalAlignment="Center" FontSize="12" MinWidth="70" TextAlignment="Right"/>
                         </Grid>
                         <TextBlock Text="处理线程（NCNN: -j 1:x:x），范围 1 ~ 32，默认 2"
-                                   FontSize="10" Opacity="0.6"/>
+                                   FontSize="11" Opacity="0.6"/>
                         <TextBlock Text="{x:Bind Vm.ThreadWarnText, Mode=OneWay}" Foreground="Orange"
                                    FontSize="11" TextWrapping="Wrap" Visibility="{x:Bind Vm.ThreadWarnVis, Mode=OneWay}"/>
 
@@ -225,7 +225,7 @@
                             <NumberBox Grid.Column="1" Value="{x:Bind Vm.Crf, Mode=TwoWay}" Minimum="0" Maximum="51" SmallChange="1"
                                        SpinButtonPlacementMode="Compact" Width="120"/>
                             <TextBlock Grid.Column="2" Text="数值越小越不压缩：画质更好，但成片体积更大（0~51，默认 18）"
-                                       VerticalAlignment="Center" FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                                       VerticalAlignment="Center" FontSize="11" Opacity="0.6" TextWrapping="Wrap"/>
                         </Grid>
                         <CheckBox x:Name="HwCqCb" FontSize="12"
                                   Content="硬件编码 CQ（恒定质量模式：硬件按画面复杂度动态调整量化参数，画质更稳定）"
@@ -243,7 +243,7 @@
                             <NumberBox x:Name="HwQualityBox" Grid.Column="1" Value="{x:Bind Vm.HwQuality, Mode=TwoWay}" Minimum="0" Maximum="51" SmallChange="1"
                                        SpinButtonPlacementMode="Compact" Width="120"/>
                             <TextBlock x:Name="HwQualityHint" Grid.Column="2" Text="取值范围 0~51，数值越小画质越好、码率越高；未勾选 CQ/QP 时用默认档。两者互斥：开一个另一个自动关闭。仅硬件编码生效（编码器由显卡自动选择：N 卡 NVENC / A 卡 AMF），CPU 处理模式下不可用。"
-                                       VerticalAlignment="Center" FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                                       VerticalAlignment="Center" FontSize="11" Opacity="0.6" TextWrapping="Wrap"/>
                         </Grid>
                         <CheckBox x:Name="SkipStartupSelfTestCb" Content="跳过测试（每次点开始处理不再先用 1 秒测试视频验证勾选流程，直接处理）"
                                   IsChecked="{x:Bind Vm.SkipStartupSelfTest, Mode=TwoWay}" FontSize="12"/>

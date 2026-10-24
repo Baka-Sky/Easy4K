@@ -71,7 +71,7 @@
                             <Button   Grid.Column="2" Content="导入" Click="OnImportFrameFolder" IsEnabled="{x:Bind Vm.ImportFramesEnabled, Mode=OneWay}" Margin="0,0,8,0" Style="{StaticResource GlassButton}"/>
                             <Button   Grid.Column="3" Content="清除" Click="OnClearFrameFolder" IsEnabled="{x:Bind Vm.HasExternalFrames, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                         </Grid>
-                        <TextBlock Text="可选：导入已有 PNG 帧文件夹可跳过拆帧（与输入视频二选一）" FontSize="10" Opacity="0.6"/>
+                        <TextBlock Text="可选：导入已有 PNG 帧文件夹可跳过拆帧（与输入视频二选一）" FontSize="11" Opacity="0.6"/>
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="80"/>
@@ -125,7 +125,7 @@
                             <CheckBox Content="保留原视频内嵌字幕" IsChecked="{x:Bind Vm.KeepSubtitles, Mode=TwoWay}"
                                       IsEnabled="{x:Bind Vm.KeepSubtitlesEnabled, Mode=OneWay}" FontSize="12"/>
                             <TextBlock Text="仅在原视频确实带字幕流时可勾；成片是从帧序列重建的，字幕会从原文件复制过来。"
-                                       FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                                       FontSize="11" Opacity="0.6" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -359,7 +359,7 @@
                                        Minimum="0" Maximum="200" SpinButtonPlacementMode="Compact"
                                        SmallChange="1" LargeChange="10" FontSize="12" Style="{StaticResource GlassNumberBox}"/>
                         </Grid>
-                        <TextBlock Text="范围 0 ~ 200（NVEncC 最高 200，默认 200）" FontSize="10" Opacity="0.6"/>
+                        <TextBlock Text="范围 0 ~ 200（NVEncC 最高 200，默认 200）" FontSize="11" Opacity="0.6"/>
                     </StackPanel>
                 </Border>
 
@@ -377,7 +377,7 @@
                         </Border>
                         <TextBlock Text="{x:Bind Vm.Warnings, Mode=OneWay}" TextWrapping="Wrap" FontSize="11"/>
                         <CheckBox Content="以后不再爆红" IsChecked="{x:Bind Vm.SuppressRedWarning, Mode=TwoWay}" FontSize="12"/>
-                        <TextBlock Text="免责声明：本软件按现状提供，处理结果与设备风险（高负载/发热/崩溃等）由使用者自行承担，开发者不承担任何责任。详见菜单栏「帮助 → 关于」。" TextWrapping="Wrap" FontSize="10" Opacity="0.6" Margin="0,4,0,0"/>
+                        <TextBlock Text="免责声明：本软件按现状提供，处理结果与设备风险（高负载/发热/崩溃等）由使用者自行承担，开发者不承担任何责任。详见菜单栏「帮助 → 关于」。" TextWrapping="Wrap" FontSize="11" Opacity="0.6" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Border>
 
@@ -412,7 +412,7 @@
                             <!-- 孤儿模式说明与上一行「输出文件名」同一排，靠窗口最右侧 -->
                             <TextBlock Grid.Column="1"
                                        Text="孤儿模式：到点自动启动 Easy4K，按上面的选项处理这支视频，跑完自动关闭；可依次排队多个任务。"
-                                       FontSize="10" Opacity="0.6" TextWrapping="Wrap"
+                                       FontSize="11" Opacity="0.6" TextWrapping="Wrap"
                                        HorizontalAlignment="Right" VerticalAlignment="Center"/>
                         </Grid>
                         <StackPanel Spacing="3" Visibility="{x:Bind Vm.OrphanListVis, Mode=OneWay}">
