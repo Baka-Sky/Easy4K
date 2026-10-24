@@ -41,19 +41,19 @@
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
 
-            <!-- ===== 内嵌字体 HarmonyOS Sans =====
+            <!-- ===== 内嵌字体 HarmonyOS Sans SC（简体中文全字库）=====
                  字体文件随包放在 Assets\Fonts，XAML 用 ms-appx + "#家族名" 直接引用，
                  不需要用户在系统里安装；家族名必须与 TTF 内的实际家族名一致（Regular/Bold 同为
-                 "HarmonyOS Sans"，Medium 是独立家族 "HarmonyOS Sans Medium"）。
+                 "HarmonyOS Sans SC"，Medium 是独立家族 "HarmonyOS Sans SC Medium"）。
                  注意：这些直接在资源字典里的项必须写在 ThemeDictionaries 之后，
                  写在它之前会把字典当成隐式 _Items 赋值，XAML 编译器直接报 WMC0035。 -->
-            <FontFamily x:Key="AppFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_Regular.ttf#HarmonyOS Sans</FontFamily>
-            <FontFamily x:Key="AppFontMediumFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_Medium.ttf#HarmonyOS Sans Medium</FontFamily>
-            <FontFamily x:Key="AppFontBoldFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_Bold.ttf#HarmonyOS Sans</FontFamily>
+            <FontFamily x:Key="AppFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
+            <FontFamily x:Key="AppFontMediumFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Medium.ttf#HarmonyOS Sans SC Medium</FontFamily>
+            <FontFamily x:Key="AppFontBoldFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Bold.ttf#HarmonyOS Sans SC</FontFamily>
 
             <!-- 覆盖 WinUI 的默认字族：Button / TextBox / ComboBox 等所有控件，
                  以及 TitleTextBlockStyle、CaptionTextBlockStyle 这类内置文本样式都从这里取字族 -->
-            <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_Regular.ttf#HarmonyOS Sans</FontFamily>
+            <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
 
             <!-- 全局控件亚克力样式：ALL IN，按钮/输入框全部玻璃化 -->
             <Style x:Key="GlassButton" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">

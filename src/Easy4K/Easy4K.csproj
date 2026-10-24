@@ -78,8 +78,8 @@
     </None>
   </ItemGroup>
 
-  <!-- 内嵌字体：HarmonyOS Sans（Regular / Medium / Bold）。随包分发，不依赖系统安装，
-       XAML 里用 ms-appx:///Assets/Fonts/HarmonyOS_Sans_Regular.ttf#HarmonyOS Sans 直接引用。 -->
+  <!-- 内嵌字体：HarmonyOS Sans SC（Regular / Medium / Bold，简体中文全字库）。随包分发，不依赖系统安装，
+       XAML 里用 ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC 直接引用。 -->
   <ItemGroup>
     <Content Include="Assets\Fonts\*.ttf">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
