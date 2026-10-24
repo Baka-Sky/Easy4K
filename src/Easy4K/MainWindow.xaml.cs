@@ -1190,8 +1190,8 @@ public sealed partial class MainWindow : Window
         "omegaconf / einops / loguru / yacs / easydict / tqdm / tensorboard / sympy / mpmath（MIT / Apache-2.0 / BSD-3-Clause）\n" +
         "模型分发：Hugging Face Hub / huggingface_hub（Apache-2.0，部分模型权重的下载与缓存）\n" +
         "多媒体：FFmpeg（GPL v3，含 libx264 / libx265 / libvpx / libaom）、NVEncC（MIT）\n" +
-        "界面字体：HarmonyOS Sans SC（Regular / Medium / Bold 三个字面，Huawei Device Co., Ltd.，\n" +
-        "HarmonyOS Sans 字体许可）；Segoe UI、Segoe Fluent Icons / Segoe MDL2 Assets、Consolas（微软，随 Windows 提供，不随包分发）\n\n" +
+        "界面字体：HarmonyOS Sans SC（Regular / Medium / Bold 三个字面，Huawei Device Co., Ltd.，HarmonyOS Sans 字体许可）；\n" +
+        "Segoe UI、Segoe Fluent Icons / Segoe MDL2 Assets、Consolas（微软，随 Windows 提供，不随包分发）\n\n" +
         "以上为摘要，完整清单、版本与许可原文见程序目录《Easy4K 软件安装声明》与各组件随附的 LICENSE 文件。\n\n" +
         "========== 自主研发项目 ==========\n\n" +
         "Easy4K 客户端与界面、超分 / 补帧 / 音频各阶段调度流水线\n" +
