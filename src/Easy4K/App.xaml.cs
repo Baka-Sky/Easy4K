@@ -2,7 +2,6 @@ using System.IO;
 using Easy4K.Models;
 using Easy4K.Services;
 using Easy4K.ViewModels;
-using Easy4K.Views.Welcome;
 using Microsoft.UI.Xaml;
 
 namespace Easy4K;
@@ -179,20 +178,6 @@ public partial class App : Application
                 dedupOnly = true;
                 break;
             }
-        }
-
-        // 首次运行：先展示 OOBE 设置向导（完成后保存配置并衔接正式主界面）
-        // 孤儿执行也算命令行直启，不能被向导拦下（快照里已把 SetupCompleted 置真，这里再兜一层）
-        if (!selftestCli && !autoTestCli && !remoteCli && orphanTask is null && !app.SetupCompleted)
-        {
-            var wizard = new WelcomeWindow(Services, settingsSvc, app, toolCfg);
-            wizard.Completed += () =>
-            {
-                OpenMainWindow();
-            };
-            _window = wizard;
-            wizard.Activate();
-            return;
         }
 
         // ---- API 自动测试（孤儿模式那套：单独进程、单独目录、跑完关闭再起下一例）----

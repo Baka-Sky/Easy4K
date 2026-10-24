@@ -12,8 +12,8 @@ using Easy4K.Services.CommandBuilders;
 namespace Easy4K.ViewModels;
 
 /// <summary>
-/// OOBE 欢迎向导 / 处理前测试 / HTML 报告的辅助实现（partial 扩展）。
-/// 向导只在首次运行显示；正式处理开始前，软件会先用 Res 的 1 秒测试视频按当前勾选的流程跑一遍
+/// 处理前测试 / HTML 报告的辅助实现（partial 扩展）。
+/// 正式处理开始前，软件会先用 Res 的 1 秒测试视频按当前勾选的流程跑一遍
 /// （进度文案统一显示"测试中"），验证能正常启动后再继续处理用户视频，测试残留每次自动清理；
 /// 正式处理完成自动生成 HTML 报告并打开。
 /// </summary>
@@ -42,8 +42,8 @@ public partial class MainViewModel
         Stop();
     }
 
-    // ===================== 首次向导状态 =====================
-    /// <summary>向导是否已完成（由配置 SetupCompleted 驱动）</summary>
+    // ===================== 首次运行状态 =====================
+    /// <summary>旧配置里的完成标记（OOBE 已移除，仅保留以兼容历史配置文件）</summary>
     public bool SetupCompleted => _app.SetupCompleted;
 
     /// <summary>是否正处于处理前测试（UI 据此把阶段文字显示为"测试中"并显示"跳过测试"按钮）</summary>
@@ -56,30 +56,7 @@ public partial class MainViewModel
     /// <summary>1 秒处理前测试视频路径</summary>
     public static string StartupTestVideoPath => Path.Combine(ResDir, "Easy4K_test_1s.mp4");
 
-    // ===================== 向导结果持久化 =====================
-    /// <summary>应用向导收集到的默认配置并标记向导完成。</summary>
-    public void ApplyWelcomeConfig(
-        bool split, bool sr, bool interpolation, bool merge, bool mergeAudio, bool hdr,
-        bool startupSelfTest, string reportDir, bool reportEnabled, bool reportAutoOpen,
-        string theme)
-    {
-        _app.DefaultSplitFrames = split;
-        _app.DefaultSuperResolution = sr;
-        _app.DefaultInterpolation = interpolation;
-        _app.DefaultMergeVideo = merge;
-        _app.DefaultMergeAudio = mergeAudio;
-        _app.DefaultSdrToHdr = hdr;
-        _app.StartupSelfTest = startupSelfTest;
-        _app.ReportDir = reportDir;
-        _app.ReportEnabled = reportEnabled;
-        NoReport = !reportEnabled;   // 高级页的开关与向导同源，否则两处显示不一致
-        _app.ReportAutoOpen = reportAutoOpen;
-        ReportAutoOpen = reportAutoOpen;   // 高级页开关同源
-        _app.Theme = theme;
-        _app.SetupCompleted = true;
-        _settings.Save(_app, _pathConfig);
-    }
-
+    // ===================== 报告目录 =====================
     /// <summary>读取报告输出目录的绝对路径（相对路径基于可写根目录，同 Output/Temp 的解析方式）</summary>
     public string ResolveReportDir()
     {
