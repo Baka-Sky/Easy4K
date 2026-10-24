@@ -25,7 +25,7 @@
             <Style x:Key="FieldLabel" TargetType="TextBlock">
                 <Setter Property="VerticalAlignment" Value="Center"/>
                 <Setter Property="MinWidth" Value="80"/>
-                <Setter Property="FontFamily" Value="Segoe UI Medium"/>
+                <Setter Property="FontFamily" Value="{StaticResource AppFontMediumFamily}"/>
                 <Setter Property="Margin" Value="0,0,8,0"/>
             </Style>
         </ResourceDictionary>
@@ -221,7 +221,7 @@
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="CPU CRF" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                            <TextBlock Grid.Column="0" Text="CPU CRF" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
                             <NumberBox Grid.Column="1" Value="{x:Bind Vm.Crf, Mode=TwoWay}" Minimum="0" Maximum="51" SmallChange="1"
                                        SpinButtonPlacementMode="Compact" Width="120"/>
                             <TextBlock Grid.Column="2" Text="数值越小越不压缩：画质更好，但成片体积更大（0~51，默认 18）"
@@ -239,7 +239,7 @@
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock x:Name="HwQualityLabel" Grid.Column="0" Text="CQ / QP 值" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                            <TextBlock x:Name="HwQualityLabel" Grid.Column="0" Text="CQ / QP 值" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
                             <NumberBox x:Name="HwQualityBox" Grid.Column="1" Value="{x:Bind Vm.HwQuality, Mode=TwoWay}" Minimum="0" Maximum="51" SmallChange="1"
                                        SpinButtonPlacementMode="Compact" Width="120"/>
                             <TextBlock x:Name="HwQualityHint" Grid.Column="2" Text="取值范围 0~51，数值越小画质越好、码率越高；未勾选 CQ/QP 时用默认档。两者互斥：开一个另一个自动关闭。仅硬件编码生效（编码器由显卡自动选择：N 卡 NVENC / A 卡 AMF），CPU 处理模式下不可用。"

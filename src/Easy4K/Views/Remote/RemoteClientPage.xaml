@@ -19,7 +19,7 @@
         <Style x:Key="FieldLabel" TargetType="TextBlock">
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="MinWidth" Value="72"/>
-            <Setter Property="FontFamily" Value="Segoe UI Medium"/>
+            <Setter Property="FontFamily" Value="{StaticResource AppFontMediumFamily}"/>
             <Setter Property="Margin" Value="0,0,8,0"/>
         </Style>
     </Page.Resources>

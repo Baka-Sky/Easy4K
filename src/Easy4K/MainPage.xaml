@@ -30,7 +30,7 @@
                 <Setter Property="VerticalAlignment" Value="Center"/>
                 <Setter Property="MinWidth" Value="80"/>
                 <!-- Win11 Segoe UI 行高差异：指定具体字体变体保证跨版本对齐（替代 Margin hack） -->
-                <Setter Property="FontFamily" Value="Segoe UI Medium"/>
+                <Setter Property="FontFamily" Value="{StaticResource AppFontMediumFamily}"/>
                 <Setter Property="Margin" Value="0,0,8,0"/>
             </Style>
             <!-- 转换器已移除：进度用 x:Bind 格式化，颜色用 LogEntry.LevelColorHex，可见性用 x:Bind 条件 -->
@@ -153,7 +153,7 @@
                                     <ColumnDefinition Width="50"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="算法" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <TextBlock Grid.Column="0" Text="算法" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
                                 <ComboBox Grid.Column="1" x:Name="SrEngineCombo" MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择算法" Style="{StaticResource GlassComboBox}" SelectionChanged="OnSrEngineSelectionChanged"/>
                             </Grid>
                             <Grid ColumnSpacing="8">
@@ -161,7 +161,7 @@
                                     <ColumnDefinition Width="50"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="模型" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <TextBlock Grid.Column="0" Text="模型" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
                                 <ComboBox Grid.Column="1" ItemsSource="{x:Bind Vm.SrModels}" SelectedItem="{x:Bind Vm.SrModel, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择模型" Style="{StaticResource GlassComboBox}"/>
                             </Grid>
                             <Grid ColumnSpacing="8">
@@ -169,7 +169,7 @@
                                     <ColumnDefinition Width="50"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="倍率" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <TextBlock Grid.Column="0" Text="倍率" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
                                 <ComboBox Grid.Column="1" SelectedItem="{x:Bind Vm.SrScale, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch">
                                     <x:Int32>2</x:Int32>
                                     <x:Int32>3</x:Int32>
@@ -192,7 +192,7 @@
                                     <ColumnDefinition Width="64"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="种类" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <TextBlock Grid.Column="0" Text="种类" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
                                 <ComboBox Grid.Column="1" x:Name="IfEngineCombo" MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择种类" Style="{StaticResource GlassComboBox}" SelectionChanged="OnIfEngineSelectionChanged"/>
                             </Grid>
                             <Grid ColumnSpacing="8">
@@ -200,7 +200,7 @@
                                     <ColumnDefinition Width="64"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="模型" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <TextBlock Grid.Column="0" Text="模型" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
                                 <ComboBox Grid.Column="1" x:Name="IfModelCombo" MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择模型" Style="{StaticResource GlassComboBox}" SelectionChanged="OnIfModelSelectionChanged"/>
                             </Grid>
                             <Grid ColumnSpacing="8">
@@ -208,7 +208,7 @@
                                     <ColumnDefinition Width="64"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="倍率" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <TextBlock Grid.Column="0" Text="倍率" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
                                 <ComboBox Grid.Column="1" SelectedItem="{x:Bind Vm.IfMultiplier, Mode=TwoWay}" IsEnabled="{x:Bind Vm.IfMultiplierEnabled, Mode=OneWay}" MinWidth="200" HorizontalAlignment="Stretch" Style="{StaticResource GlassComboBox}">
                                     <x:Int32>2</x:Int32>
                                     <x:Int32>3</x:Int32>
@@ -223,7 +223,7 @@
                                     <ColumnDefinition Width="64"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="目标帧率" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                                <TextBlock Grid.Column="0" Text="目标帧率" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
                                 <NumberBox Grid.Column="1" Value="{x:Bind Vm.TargetFps, Mode=TwoWay}" Minimum="0" Maximum="1000"
                                            SpinButtonPlacementMode="Hidden"
                                            PlaceholderText="0 = 按倍率；填目标帧率则成片 fps 精确等于它"
@@ -250,8 +250,8 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <Button   Grid.Column="0" Content="提取音频" Click="OnExtractAudio" IsEnabled="{x:Bind Vm.ExtractAudioEnabled, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
-                            <TextBlock Grid.Column="1" Text="{x:Bind Vm.ExtractedAudioPath, Mode=OneWay}" VerticalAlignment="Center" IsTextSelectionEnabled="True" Opacity="0.6" TextTrimming="CharacterEllipsis" FontSize="11" FontFamily="Segoe UI Medium"/>
-                            <TextBlock Grid.Column="2" Text="{x:Bind Vm.AudioPipelineLabel, Mode=OneWay}" VerticalAlignment="Center" Opacity="0.6" FontSize="11" FontFamily="Segoe UI Medium"/>
+                            <TextBlock Grid.Column="1" Text="{x:Bind Vm.ExtractedAudioPath, Mode=OneWay}" VerticalAlignment="Center" IsTextSelectionEnabled="True" Opacity="0.6" TextTrimming="CharacterEllipsis" FontSize="11" FontFamily="{StaticResource AppFontMediumFamily}"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind Vm.AudioPipelineLabel, Mode=OneWay}" VerticalAlignment="Center" Opacity="0.6" FontSize="11" FontFamily="{StaticResource AppFontMediumFamily}"/>
                         </Grid>
                         <CheckBox Content="将原音频合并进新视频 (处理结束时自动提取并合并)" IsChecked="{x:Bind Vm.MergeAudio, Mode=TwoWay}" IsEnabled="{x:Bind Vm.MergeAudioEnabled, Mode=OneWay}" FontSize="12"/>
                     </StackPanel>
@@ -300,7 +300,7 @@
                             <TextBlock Grid.Column="0" Text="超分模型" Style="{StaticResource FieldLabel}"/>
                             <ComboBox Grid.Column="1" ItemsSource="{x:Bind Vm.SfImageModels}" SelectedItem="{x:Bind Vm.SfImageModel, Mode=TwoWay}"
                                       MinWidth="200" HorizontalAlignment="Stretch" PlaceholderText="选择模型" Style="{StaticResource GlassComboBox}"/>
-                            <TextBlock Grid.Column="2" Text="倍率" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium" Margin="0,0,8,0"/>
+                            <TextBlock Grid.Column="2" Text="倍率" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}" Margin="0,0,8,0"/>
                             <ComboBox Grid.Column="3" SelectedItem="{x:Bind Vm.SfImageScale, Mode=TwoWay}" MinWidth="80">
                                 <x:Int32>2</x:Int32>
                                 <x:Int32>3</x:Int32>
@@ -357,11 +357,11 @@
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="饱和度" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                            <TextBlock Grid.Column="0" Text="饱和度" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
                             <NumberBox Grid.Column="1" Value="{x:Bind Vm.HdrSaturation, Mode=TwoWay}"
                                        Minimum="0" Maximum="200" SpinButtonPlacementMode="Compact"
                                        SmallChange="1" LargeChange="10" FontSize="12" Style="{StaticResource GlassNumberBox}"/>
-                            <TextBlock Grid.Column="2" Text="对比度" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI Medium"/>
+                            <TextBlock Grid.Column="2" Text="对比度" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
                             <NumberBox Grid.Column="3" Value="{x:Bind Vm.HdrContrast, Mode=TwoWay}"
                                        Minimum="0" Maximum="200" SpinButtonPlacementMode="Compact"
                                        SmallChange="1" LargeChange="10" FontSize="12" Style="{StaticResource GlassNumberBox}"/>
@@ -435,7 +435,7 @@
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Grid.Column="0" Text="{x:Bind RunAtText}" FontSize="11"
-                                                       FontFamily="Segoe UI Medium" VerticalAlignment="Center"/>
+                                                       FontFamily="{StaticResource AppFontMediumFamily}" VerticalAlignment="Center"/>
                                             <TextBlock Grid.Column="1" Text="{x:Bind DateText}" FontSize="11"
                                                        Opacity="0.5" VerticalAlignment="Center"/>
                                             <TextBlock Grid.Column="2" Text="{x:Bind DisplayName}" FontSize="11"

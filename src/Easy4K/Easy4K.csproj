@@ -70,9 +70,21 @@
          以及 MSIX manifest 引用的各尺寸图标(StoreLogo 50 / Square44x44 44+88 / Square150x150 150+300 /
          Wide310x150 310x150+620x300 / SplashScreen 620x300+1240x600 / targetsize 24·48)。
          图标文件名与尺寸遵循 MSIX 资源规范(基名=scale-100, .scale-200 为 200% 变体)，MSIX 打包以输出目录为准。 -->
+    <!-- Fonts 由下面的 Content 项单独处理，这里先移除默认的 None 项，避免同一文件被两种 Item 重复复制 -->
+    <None Remove="Assets\Fonts\*.ttf" />
     <None Update="Assets\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
+  </ItemGroup>
+
+  <!-- 内嵌字体：HarmonyOS Sans（Regular / Medium / Bold）。随包分发，不依赖系统安装，
+       XAML 里用 ms-appx:///Assets/Fonts/HarmonyOS_Sans_Regular.ttf#HarmonyOS Sans 直接引用。 -->
+  <ItemGroup>
+    <Content Include="Assets\Fonts\*.ttf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
   <!-- 随包声明文档（安装声明 / 系统要求 / 入门指南）：跟到输出目录，发行版开箱自带 -->
