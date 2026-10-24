@@ -44,5 +44,10 @@
 
             </StackPanel>
         </ScrollViewer>
+
+        <!-- 右上角 logo（固定不随内容滚动）：浅色主题用黑版、深色主题用白版，主题变化时换图 -->
+        <Image x:Name="AboutLogo" HorizontalAlignment="Right" VerticalAlignment="Top"
+               Width="180" Margin="0,4,0,0"
+               Stretch="Uniform" IsHitTestVisible="False"/>
     </Grid>
 </Page>
