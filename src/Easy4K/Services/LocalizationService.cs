@@ -459,8 +459,28 @@ internal static class ContentDialogLocalizationExtensions
         }
 
         void ApplyFonts(DependencyObject sender) => Loc.ApplyFonts(sender);
+
+        // 弹窗正文（XAML 里给的那块内容）在 ShowAsync 之前就能刷，首帧就是内嵌字体
+        if (dialog.Content is DependencyObject dialogContent) ApplyFonts(dialogContent);
+
         void OnLoading(FrameworkElement sender, object args) => ApplyFonts(sender);
-        void OnOpened(ContentDialog sender, ContentDialogOpenedEventArgs args) => ApplyFonts(sender);
+
+        void OnOpened(ContentDialog sender, ContentDialogOpenedEventArgs args)
+        {
+            ApplyFonts(sender);
+
+            // ContentDialog 的实际内容挂在 XamlRoot 的弹出层（独立 Popup），从 dialog 自身遍历
+            // 可能进不去，正文就会保留模板里的系统字族。这里把所有打开的 popup 一并刷一遍。
+            try
+            {
+                if (sender.XamlRoot is not null)
+                {
+                    foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(sender.XamlRoot))
+                        if (popup.Child is not null) ApplyFonts(popup.Child);
+                }
+            }
+            catch { /* 取不到弹出层时保持原样 */ }
+        }
 
         dialog.Loading += OnLoading;
         dialog.Opened += OnOpened;
