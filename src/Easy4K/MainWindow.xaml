@@ -12,7 +12,11 @@
     <!-- 根布局：普通主题下由代码填主题底色（见 SetRootBackground），亚克力/图片主题保持透明露出背景 -->
     <!-- UseLayoutRounding：把布局对齐到整像素。125% / 175% 这类非整数缩放下，
          否则文本基线会落在半像素上，ClearType 失效，字边缘出现锯齿/发虚。 -->
-    <Grid x:Name="RootLayout" UseLayoutRounding="True">
+    <!-- 界面整体缩放容器：RootLayout 按「窗口逻辑尺寸 / 缩放倍率」定尺，
+         Viewbox 再等比放大回窗口大小，实现 100% / 110% / 125% / 150% 的整体放大 -->
+    <Grid x:Name="ZoomHost">
+        <Viewbox x:Name="ZoomBox" Stretch="Uniform">
+            <Grid x:Name="RootLayout" UseLayoutRounding="True">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -168,5 +172,7 @@
                         HorizontalAlignment="Center" Style="{StaticResource GlassButton}"/>
             </StackPanel>
         </Grid>
+            </Grid>
+        </Viewbox>
     </Grid>
 </Window>

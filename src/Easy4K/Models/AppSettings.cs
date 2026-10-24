@@ -7,6 +7,10 @@ public sealed class AppSettings
     public string TempRoot { get; set; } = "Temp";
     public string OutputRoot { get; set; } = "Output";
 
+    /// <summary>界面整体缩放倍率（1.0 / 1.1 / 1.25 / 1.5）：Viewbox 等比放大整个界面，
+    /// 解决窗口最大化后界面太稀疏的问题。</summary>
+    public double UiZoom { get; set; } = 1.0;
+
     public string DefaultSrModel { get; set; } = "realesr-animevideov3";
     public string DefaultIfModel { get; set; } = "rife-v4.6";
     public int DefaultSrScale { get; set; } = 2;

@@ -110,6 +110,8 @@ public partial class MainViewModel : ObservableObject
         _suppressRedWarning = app.SuppressRedWarning;
         _backgroundImage = app.BackgroundImage ?? "";
         _backdropAcrylicPercent = Math.Clamp(app.BackdropAcrylicPercent, 0, 100);
+        // 界面缩放档位：直接写字段（不触发 setter），窗口创建后再由 MainWindow 读取应用
+        _uiZoomIndex = IndexForZoom(app.UiZoom);
 
         // 「算法」下拉框要对齐到配置里保存的模型，否则启动后算法显示 Real-ESRGAN、模型却是别的引擎的
         _srEngineIndex = SrCatalog.FamilyIndexOf(_srModel);
@@ -3068,6 +3070,34 @@ public partial class MainViewModel : ObservableObject
 
     /// <summary>配置文件中保存的主题模式（light/dark/system/acrylic）</summary>
     public string SavedTheme => _app.Theme;
+
+    // ===================== 界面整体缩放 =====================
+
+    /// <summary>界面缩放档位（0=100% / 1=110% / 2=125% / 3=150%），设置页下拉框双向绑定。</summary>
+    [ObservableProperty] private int _uiZoomIndex;
+
+    partial void OnUiZoomIndexChanged(int value)
+    {
+        _app.UiZoom = ZoomForIndex(value);
+        _settings.Save(_app, _pathConfig);
+        App.MainWindow?.ApplyUiZoom(_app.UiZoom);
+    }
+
+    /// <summary>界面缩放倍率（窗口创建时读取初始值）</summary>
+    public double UiZoom => ZoomForIndex(UiZoomIndex);
+
+    /// <summary>档位 → 倍率</summary>
+    public static double ZoomForIndex(int index) => index switch
+    {
+        1 => 1.10,
+        2 => 1.25,
+        3 => 1.50,
+        _ => 1.00
+    };
+
+    /// <summary>配置里的倍率 → 最接近的档位（旧配置或手改数值时对齐）</summary>
+    public static int IndexForZoom(double zoom) =>
+        zoom >= 1.50 ? 3 : zoom >= 1.25 ? 2 : zoom >= 1.10 ? 1 : 0;
 
     /// <summary>设置主题模式并立即写入配置文件（下次启动恢复）</summary>
     public void SetThemeMode(string theme)

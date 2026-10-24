@@ -66,6 +66,12 @@ public sealed partial class MainWindow : Window
 
         InitDebugOverlay();
 
+        // 界面整体缩放（设置 → 外观）：初始倍率来自配置；窗口尺寸/DPI 变化时重新给 RootLayout 定尺
+        ApplyUiZoom(Vm.UiZoom);
+        AppWindow.Changed += (_, e) => { if (e.DidSizeChange) UpdateZoomLayout(); };
+        RootLayout.Loaded += (_, _) => UpdateZoomLayout();
+        Activated += (_, _) => UpdateZoomLayout();
+
         // 窗口按 16:9 比例设置初始尺寸（1280x720，按 DPI 缩放），并在当前显示器正中间显示
         var hwnd = WindowNative.GetWindowHandle(this);
         var dpi = NativeMethods.GetDpiForWindow(hwnd);
@@ -404,6 +410,34 @@ public sealed partial class MainWindow : Window
         if (s is null) return;
         RemoteBannerText.Text = $"已连接至 {s.Address}";
         RemoteBanner.Visibility = Visibility.Visible;
+    }
+
+    // ===================== 界面整体缩放 =====================
+
+    /// <summary>当前界面缩放倍率（1.0 = 100%）</summary>
+    private double _uiZoom = 1.0;
+
+    /// <summary>应用界面整体缩放：Viewbox 会把 RootLayout 等比放大到窗口大小，
+    /// 所以只要把逻辑画布按倍率缩小，界面视觉上就被整体放大了（最大化时不再稀疏）。</summary>
+    public void ApplyUiZoom(double zoom)
+    {
+        _uiZoom = Math.Clamp(zoom, 1.0, 1.5);
+        UpdateZoomLayout();
+    }
+
+    /// <summary>按窗口客户区（物理像素 → 逻辑像素）和缩放倍率重新给 RootLayout 定尺。</summary>
+    private void UpdateZoomLayout()
+    {
+        try
+        {
+            var scale = RootLayout.XamlRoot?.RasterizationScale ?? 1.0;
+            var size = AppWindow.ClientSize;
+            if (size.Width <= 0 || size.Height <= 0 || scale <= 0) return;
+
+            RootLayout.Width = size.Width / scale / _uiZoom;
+            RootLayout.Height = size.Height / scale / _uiZoom;
+        }
+        catch { /* 窗口尚未就绪时忽略，Loaded/Activated 会再补一次 */ }
     }
 
     // ===================== 导航 =====================
