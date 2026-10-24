@@ -813,7 +813,7 @@ public sealed partial class MainWindow : Window
                 DefaultButton = ContentDialogButton.Close
             };
 
-            var result = await dlg.ShowAsync();
+            var result = await dlg.ShowLocalizedAsync();
             if (result != ContentDialogResult.Primary)
             {
                 if (folder && current is not null) return current;

@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Windows.UI.Text;
 
 namespace Easy4K.Services;
@@ -368,12 +369,56 @@ public static class Loc
 }
 
 /// <summary>ContentDialog 显示前自动本地化的入口：把调用点的 <c>.ShowAsync()</c> 换成
-/// <c>.ShowLocalizedAsync()</c> 即可，弹窗的标题/内容/按钮都会按当前语言翻译。</summary>
+/// <c>.ShowLocalizedAsync()</c> 即可，弹窗的标题/内容/按钮都会按当前语言翻译。
+/// 同时补一个入场动画：WinUI 3 的 ContentDialog 自带关闭动画却没有出现动画，
+/// 弹窗会"啪"地一下跳出来，和退场不对称。</summary>
 internal static class ContentDialogLocalizationExtensions
 {
     public static async System.Threading.Tasks.Task<ContentDialogResult> ShowLocalizedAsync(this ContentDialog dialog)
     {
         Loc.LocalizeDialog(dialog);
-        return await dialog.ShowAsync();
+        dialog.Opened += OnOpened;
+        try
+        {
+            return await dialog.ShowAsync();
+        }
+        finally
+        {
+            dialog.Opened -= OnOpened;
+        }
+    }
+
+    private static void OnOpened(ContentDialog sender, ContentDialogOpenedEventArgs args)
+    {
+        try
+        {
+            // 模板根：动画作用在整个对话框上（含标题/内容/按钮），不是只动内容区
+            if (VisualTreeHelper.GetChildrenCount(sender) == 0) return;
+            if (VisualTreeHelper.GetChild(sender, 0) is not FrameworkElement root) return;
+
+            var translate = new TranslateTransform { Y = 18 };
+            root.RenderTransform = translate;
+            root.Opacity = 0;
+
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            var duration = new Duration(TimeSpan.FromMilliseconds(190));
+
+            var fade = new DoubleAnimation { From = 0, To = 1, Duration = duration, EasingFunction = ease };
+            Storyboard.SetTarget(fade, root);
+            Storyboard.SetTargetProperty(fade, "Opacity");
+
+            var slide = new DoubleAnimation { From = 18, To = 0, Duration = duration, EasingFunction = ease };
+            Storyboard.SetTarget(slide, translate);
+            Storyboard.SetTargetProperty(slide, "Y");
+
+            var sb = new Storyboard();
+            sb.Children.Add(fade);
+            sb.Children.Add(slide);
+            sb.Begin();
+        }
+        catch
+        {
+            // 动画失败不影响弹窗本身
+        }
     }
 }
