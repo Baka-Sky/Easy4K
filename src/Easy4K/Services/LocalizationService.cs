@@ -111,6 +111,9 @@ public static class Loc
     /// <summary>元素 → 首次见到时的原文。切换语言时用原文重新查表，避免"译文再翻译"。</summary>
     private static readonly ConditionalWeakTable<DependencyObject, string> _origin = new();
 
+    /// <summary>XAML 里给动态文案元素打的标记：内容由代码实时写入，不参与字符串本地化。</summary>
+    public const string NoLocalizeTag = "NoLocalize";
+
     /// <summary>遍历可视树，把已知的中文原文替换成当前语言译文（未收录的文案原样保留）。
     /// 顺带把内嵌字体刷到每个文本元素上：主题字典覆盖管不到控件模板里写死 FontFamily 的地方，
     /// 模板又是运行期才实例化的，只能在树上逐个兑现。</summary>
@@ -382,6 +385,10 @@ public static class Loc
 
     private static void LocalizeElement(DependencyObject element)
     {
+        // 运行期动态写入的文案（通知条标题/正文等）不参与本地化，
+        // 否则切页时会按首次记录的原文把最新内容覆盖回去
+        if (element is FrameworkElement { Tag: NoLocalizeTag }) return;
+
         switch (element)
         {
             case TextBlock tb:
@@ -437,7 +444,16 @@ public static class Loc
 
     private static string OriginIn(ConditionalWeakTable<DependencyObject, string> table, DependencyObject element, string current)
     {
-        if (table.TryGetValue(element, out var text)) return text;
+        // 空文本不记原文：启动时模板里的空 TextBlock 会先被遍历到、把 "" 记成原文，
+        // 之后运行期写进去的动态文本（通知条标题/正文等）会在下次切页本地化时被空原文清掉
+        if (string.IsNullOrEmpty(current)) return current;
+
+        if (table.TryGetValue(element, out var text))
+        {
+            if (!string.IsNullOrEmpty(text)) return text;
+            table.Remove(element); // 之前误记的空原文，用当前真实文本重建
+        }
+
         table.Add(element, current);
         return current;
     }

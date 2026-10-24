@@ -127,8 +127,9 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
-                    <TextBlock x:Name="NoticeTitle" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                    <TextBlock x:Name="NoticeMessage" FontSize="13" TextWrapping="Wrap"
+                    <!-- Tag=NoLocalize：内容是运行期动态写入的，不参与字符串本地化（否则切页会被旧文本覆盖） -->
+                    <TextBlock x:Name="NoticeTitle" Tag="NoLocalize" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="NoticeMessage" Tag="NoLocalize" FontSize="13" TextWrapping="Wrap"
                                IsTextSelectionEnabled="True"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                 </StackPanel>
