@@ -48,6 +48,9 @@ public sealed partial class MainWindow : Window
         }
         catch { /* 旧版 Windows 不支持，保持默认高度 */ }
 
+        // 自绘标题栏高度对齐系统实际值（Win10 不支持 Tall，只有 32），徽标尺寸随之调整
+        SyncTitleBarMetrics();
+
         AppWindow.SetIcon("Assets/AppIcon.ico");
 
         // 标题追加版本号（版本号来自 config 文件 appsettings.json 的 Version）
@@ -273,8 +276,19 @@ public sealed partial class MainWindow : Window
         // 系统标题栏按钮（— □ ✕）颜色跟着实际主题走：浅色黑字、深色白字。
         // ActualThemeChanged 能同时覆盖手动切主题与系统深浅色变化两条路径。
         RootLayout.ActualThemeChanged += (_, _) => UpdateTitleBarColors();
-        if (RootLayout.IsLoaded) UpdateTitleBarColors();
-        else RootLayout.Loaded += (_, _) => UpdateTitleBarColors();
+        // 布局完成后、以及跨显示器 DPI 变化后，重新对齐标题栏高度/徽标尺寸
+        void SyncTitleBar()
+        {
+            UpdateTitleBarColors();
+            SyncTitleBarMetrics();
+        }
+        if (RootLayout.IsLoaded) SyncTitleBar();
+        else RootLayout.Loaded += (_, _) => SyncTitleBar();
+        // 跨显示器（DPI 变化）时系统标题栏高度可能变，跟着重新对齐
+        RootLayout.Loaded += (_, _) =>
+        {
+            try { RootLayout.XamlRoot.Changed += (_, _) => SyncTitleBar(); } catch { }
+        };
 
         // 导航：默认选中第 1 项（主页）；随窗口宽度在顶栏/左侧最小化之间自适应
         if (RootNav.MenuItems.Count > 0) RootNav.SelectedItem = RootNav.MenuItems[0];
@@ -1083,6 +1097,24 @@ public sealed partial class MainWindow : Window
                 : Windows.UI.Color.FromArgb(40, 0, 0, 0);
         }
         catch { /* 旧版 Windows 不支持自定义标题栏颜色 */ }
+    }
+
+    /// <summary>把自绘标题栏的高度对齐到系统标题栏的真实高度。
+    /// Windows 10 不支持 Tall，实际只有 32，若仍按 48 布局，徽标和标题会被顶到偏下的位置，
+    /// 看起来就是"标题、徽标跟最小化/关闭按钮没齐平"。徽标尺寸也按高度缩放，保持上下留白一致。</summary>
+    private void SyncTitleBarMetrics()
+    {
+        try
+        {
+            var height = AppWindow.TitleBar.Height;
+            if (height <= 0) return;
+
+            AppTitleBar.Height = height;
+            var icon = height >= 44 ? 24 : 20;
+            TitleBarIcon.Width = icon;
+            TitleBarIcon.Height = icon;
+        }
+        catch { /* 取不到标题栏高度时保持 XAML 里的默认值 */ }
     }
 
     /// <summary>普通主题显示窗口底色层，亚克力/图片主题隐藏（露出背景材质）。

@@ -43,7 +43,7 @@
         <Grid x:Name="AppTitleBar" Grid.Row="0" Height="48" Padding="16,0">
             <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                 <!-- 用 256px PNG 而不是 .ico：Image 控件按 .ico 渲染时会挑到小尺寸帧再放大，24px 下就是马赛克 -->
-                <Image Source="Assets/TitleBarIcon.png" Width="24" Height="24"/>
+                <Image x:Name="TitleBarIcon" Source="Assets/TitleBarIcon.png" Width="24" Height="24"/>
                 <TextBlock x:Name="TitleTextBlock" Text="Easy4K" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="SemiBold" VerticalAlignment="Center"/>
             </StackPanel>
         </Grid>
