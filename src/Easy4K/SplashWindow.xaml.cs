@@ -1,7 +1,9 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using Easy4K.Services;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Imaging;
 using WinRT.Interop;
 
@@ -38,6 +40,35 @@ public sealed partial class SplashWindow : Window
     {
         try { Application.Current.Exit(); }
         catch { Close(); }
+    }
+
+    /// <summary>启动检测失败：直接在启动画面上弹窗（不进主界面）；关闭后由调用方退出程序。
+    /// 检测可能在窗口完成首帧之前就返回，这里先等 XamlRoot 就绪，否则弹窗会直接抛异常。</summary>
+    public async Task ShowStartupProblemAsync(string message)
+    {
+        try
+        {
+            for (var i = 0; i < 60 && Content?.XamlRoot is null; i++)
+                await Task.Delay(50);
+            if (Content?.XamlRoot is null) return;
+
+            var dlg = new ContentDialog
+            {
+                Title = "必要文件缺失",
+                Content = new TextBlock
+                {
+                    Text = message,
+                    TextWrapping = TextWrapping.Wrap,
+                    IsTextSelectionEnabled = true
+                },
+                CloseButtonText = "退出",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = Content.XamlRoot,
+                RequestedTheme = ElementTheme.Dark
+            };
+            await dlg.ShowLocalizedAsync();
+        }
+        catch { /* 弹窗失败也由调用方退出 */ }
     }
 
     /// <summary>窗口按屏幕工作区面积的约 10%（线性约 31.6%）居中显示，保持启动图 16:10 比例。

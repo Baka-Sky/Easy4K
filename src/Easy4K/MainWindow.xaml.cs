@@ -1062,30 +1062,6 @@ public sealed partial class MainWindow : Window
     /// <summary>打开临时目录（提取音频等动作的查看入口）。</summary>
     public void OpenTempFolder() => OpenFolder(Vm.TempRoot);
 
-    /// <summary>启动自检发现必要文件/模型缺失时的警告（主窗口打开后调用，等 XamlRoot 就绪）。</summary>
-    public async Task ShowStartupWarningAsync(string message)
-    {
-        try
-        {
-            await Task.Delay(250);   // 等主窗口完成首帧，XamlRoot 才可用
-            var dlg = new ContentDialog
-            {
-                Title = "必要文件缺失",
-                Content = new TextBlock
-                {
-                    Text = message,
-                    TextWrapping = TextWrapping.Wrap,
-                    IsTextSelectionEnabled = true
-                },
-                CloseButtonText = "知道了",
-                DefaultButton = ContentDialogButton.Close,
-                XamlRoot = RootFrame.XamlRoot
-            };
-            await dlg.ShowLocalizedAsync();
-        }
-        catch { /* 提示失败不影响进入主界面 */ }
-    }
-
     public Task ShowInfoDialogAsync(string title, string content)
     {
         ShowDialog(title, content);

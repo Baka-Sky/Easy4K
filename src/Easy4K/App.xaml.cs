@@ -268,18 +268,20 @@ public partial class App : Application
             var sw = Stopwatch.StartNew();
             var problem = await Task.Run(() => CheckStartupAssets(tools));
 
+            if (problem is not null)
+            {
+                // 必要文件缺失：不进入主界面，直接在启动画面上弹窗；关掉后退出程序
+                await splash.ShowStartupProblemAsync(problem);
+                Application.Current.Exit();
+                return;
+            }
+
             var remain = TimeSpan.FromSeconds(2) - sw.Elapsed;
             if (remain > TimeSpan.Zero) await Task.Delay(remain);
 
             OpenMainWindow();
             try { splash.Close(); } catch { }
             splash = null;
-
-            if (problem is not null)
-            {
-                var main = MainWindow;
-                if (main is not null) await main.ShowStartupWarningAsync(problem);
-            }
         }
         catch (Exception ex)
         {
