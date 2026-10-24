@@ -1160,7 +1160,7 @@ public sealed partial class MainWindow : Window
     /// <summary>关于正文（含免责声明）：关于页面与弹窗共用同一份文本。</summary>
     public string AboutText =>
         $"Easy4K v{Vm.Version} - 一键视频超分补帧工具\n\n基于 WinUI 3 / Windows App SDK\n\n" +
-        "本软件免费分发；唯一收费内容为自研的帧去重（SFDP）算法及其相关服务。\n\n" +
+        "本软件完全免费，无任何收费内容。\n\n" +
         "附加能力（「高级」页，默认关闭，均提供 FP16 性能模式与 FP32 完美模式）：\n" +
         "· 帧去重：自研 SFDP 孪生网络 ONNX 模型，整帧 128×128 分块算相似度，DirectML / CPU 自动降级；\n" +
         "· 音频超分：AudioSR，48kHz 高带宽重建。\n\n" +
