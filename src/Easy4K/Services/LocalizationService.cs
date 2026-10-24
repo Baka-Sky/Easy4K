@@ -297,46 +297,6 @@ public static class Loc
         catch { }
     }
 
-    /// <summary>弹窗正文默认 14px，小字号在灰度抗锯齿下容易发毛；统一提到 16px。
-    /// 只抬正文那个 ContentPresenter（按内容对象/模板名比对），标题和按钮不动。</summary>
-    public static void EnlargeDialogBody(ContentDialog? dialog)
-    {
-        if (dialog?.Content is null) return;
-        try
-        {
-            EnlargeDialogBodyCore(dialog, dialog.Content);
-            if (dialog.Content is DependencyObject content) EnlargeTextCore(content);
-        }
-        catch { }
-    }
-
-    private static void EnlargeTextCore(DependencyObject root)
-    {
-        if (root is TextBlock tb && tb.FontSize < 16) tb.FontSize = 16;
-
-        if (root is Popup { Child: not null } popup) EnlargeTextCore(popup.Child);
-
-        var count = VisualTreeHelper.GetChildrenCount(root);
-        for (var i = 0; i < count; i++)
-            EnlargeTextCore(VisualTreeHelper.GetChild(root, i));
-    }
-
-    private static void EnlargeDialogBodyCore(DependencyObject root, object content)
-    {
-        if (root is ContentPresenter cp
-            && (ReferenceEquals(cp.Content, content) || cp.Name == "Content")
-            && cp.FontSize < 16)
-        {
-            cp.FontSize = 16;
-        }
-
-        if (root is Popup { Child: not null } popup) EnlargeDialogBodyCore(popup.Child, content);
-
-        var count = VisualTreeHelper.GetChildrenCount(root);
-        for (var i = 0; i < count; i++)
-            EnlargeDialogBodyCore(VisualTreeHelper.GetChild(root, i), content);
-    }
-
     /// <summary>NavigationView 的导航项单独处理：窄窗口（LeftMinimal）下这些项在折叠面板里，
     /// 不在可视树上，直接遍历 LocalizeTree 扫不到，所以按数据逐项翻译。
     /// 原文按 Tag 硬映射（不用元素实例记录）：NavigationView 切换顶栏/折叠面板时会重建容器，
@@ -508,16 +468,11 @@ internal static class ContentDialogLocalizationExtensions
         // 弹窗正文（XAML 里给的那块内容）在 ShowAsync 之前就能刷，首帧就是内嵌字体
         if (dialog.Content is DependencyObject dialogContent) ApplyFonts(dialogContent);
 
-        void OnLoading(FrameworkElement sender, object args)
-        {
-            ApplyFonts(sender);
-            Loc.EnlargeDialogBody(dialog);
-        }
+        void OnLoading(FrameworkElement sender, object args) => ApplyFonts(sender);
 
         void OnOpened(ContentDialog sender, ContentDialogOpenedEventArgs args)
         {
             ApplyFonts(sender);
-            Loc.EnlargeDialogBody(sender);
 
             // ContentDialog 的实际内容挂在 XamlRoot 的弹出层（独立 Popup），从 dialog 自身遍历
             // 可能进不去，正文就会保留模板里的系统字族。这里把所有打开的 popup 一并刷一遍。
