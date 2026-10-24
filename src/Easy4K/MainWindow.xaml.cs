@@ -1196,7 +1196,8 @@ public sealed partial class MainWindow : Window
         "========== 自主研发项目 ==========\n\n" +
         "Easy4K 客户端与界面、超分 / 补帧 / 音频各阶段调度流水线\n" +
         "SFDP 帧去重算法（像素差与分块局部检查 / dHash / QR 分解 / Farnebäck 稠密光流四阶级联判决）\n" +
-        "Siamese NET AI 孪生网络及其 FP16 / FP32 ONNX 权重\n\n" +
+        "Siamese NET AI 孪生网络及其 FP16 / FP32 ONNX 权重\n" +
+        "模型主页：https://huggingface.co/Sudabaka/SFDP-Siamese-NET-AI\n\n" +
         "========== 版权信息 ==========\n\n" +
         $"Copyright © 2025-{DateTime.Now.Year} Baka-Sky. All rights reserved.\n" +
         "本项目以 GPL-3.0 许可开源：https://github.com/Baka-Sky/Easy4K\n" +
