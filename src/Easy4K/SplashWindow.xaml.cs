@@ -17,15 +17,14 @@ public sealed partial class SplashWindow : Window
         InitializeComponent();
         Title = "Easy4K";   // 任务栏/Alt+Tab 显示用（窗口本身无标题栏）
 
-        // 保留系统边框（DWM 圆角/阴影依赖它），但把内容延伸进标题栏 → 视觉上无标题栏、四角抗锯齿圆角
+        // 保留系统边框（DWM 圆角/阴影依赖它）但不要标题栏 → 四角是抗锯齿圆角，也没有系统按钮
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
-            presenter.SetBorderAndTitleBar(true, true);
+            presenter.SetBorderAndTitleBar(true, false);
             presenter.IsResizable = false;
             presenter.IsMaximizable = false;
             presenter.IsMinimizable = false;
         }
-        try { ExtendsContentIntoTitleBar = true; } catch { /* 旧 SDK 忽略 */ }
 
         var hwnd = WindowNative.GetWindowHandle(this);
         _ = CenterAt(NativeMethods.GetDpiForWindow(hwnd));
