@@ -287,13 +287,12 @@ public sealed partial class MainWindow : Window
         Loc.LanguageChanged += () => DispatcherQueue.TryEnqueue(ApplyLocalization);
         RootFrame.Navigated += (_, e) =>
         {
-            if (e.Content is FrameworkElement page)
-                page.Loaded += (s, _) =>
-                {
-                    if (s is DependencyObject loaded) Loc.LocalizeTree(loaded);
-                };
+            if (e.Content is FrameworkElement page) HookPageLocalization(page);
             DispatcherQueue.TryEnqueue(ApplyLocalization);
         };
+        // 首页在构造函数前段就 Navigate 完了，那时还没订阅 Navigated，不补这一次的话
+        // 首屏的字重/小字修正要等切一次页面才生效（表现为"刚开启有锯齿，切页就好了"）。
+        if (RootFrame.Content is FrameworkElement startupPage) HookPageLocalization(startupPage);
         DispatcherQueue.TryEnqueue(ApplyLocalization);
 
         // 启动后异步检查更新（服务器版本高于 config 里的本地版本时弹窗提示）
@@ -355,6 +354,21 @@ public sealed partial class MainWindow : Window
         if (Content is DependencyObject root) Loc.LocalizeTree(root);
         // 本地化会整树重写文本，遥控横幅是运行时文案，翻译后重新写回
         if (RemoteSession.IsActive) RefreshRemoteBannerText();
+    }
+
+    /// <summary>页面可视树还没构建时（Navigated 刚触发）遍历不到任何东西，
+    /// 所以等页面的 Loaded 再本地化；已经加载过的（如启动首屏）立即处理。</summary>
+    private void HookPageLocalization(FrameworkElement page)
+    {
+        if (page.IsLoaded)
+        {
+            Loc.LocalizeTree(page);
+            return;
+        }
+        page.Loaded += (s, _) =>
+        {
+            if (s is DependencyObject loaded) Loc.LocalizeTree(loaded);
+        };
     }
 
     /// <summary>把「已连接至 …」横幅文字按当前会话重写一遍（本地化/切页后调用）。</summary>
