@@ -382,6 +382,16 @@ public sealed partial class MainPage : Page
             picker.FileTypeFilter.Add(".bmp");
             picker.SuggestedStartLocation = PickerLocationId.PicturesLibrary;
         }
+        else if (Vm.SfIsVideoHdr)
+        {
+            picker.FileTypeFilter.Add(".mp4");
+            picker.FileTypeFilter.Add(".mkv");
+            picker.FileTypeFilter.Add(".mov");
+            picker.FileTypeFilter.Add(".avi");
+            picker.FileTypeFilter.Add(".ts");
+            picker.FileTypeFilter.Add(".m2ts");
+            picker.SuggestedStartLocation = PickerLocationId.VideosLibrary;
+        }
         else
         {
             picker.FileTypeFilter.Add(".wav");

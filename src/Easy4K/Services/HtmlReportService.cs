@@ -89,7 +89,13 @@ public static class HtmlReportService
             }
 
             sb.AppendLine("</body></html>");
-            File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
+            // 先写临时文件再原子改名：浏览器/杀毒软件可能在写入过程中就拿到半截文件，
+            // 表现为 Edge 报"文件已被移除或禁止访问"。改名是原子操作，最终文件一出现就是完整的。
+            // 不带 BOM 的 UTF-8：文件头已有 charset=utf-8，BOM 反而会让部分浏览器把 <!DOCTYPE 当正文。
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, sb.ToString(), new UTF8Encoding(false));
+            if (File.Exists(path)) File.Delete(path);
+            File.Move(tmp, path);
             return path;
         }
         catch

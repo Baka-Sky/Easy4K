@@ -554,6 +554,25 @@ public sealed class ProcessingOrchestrator
         var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中", ifTarget,
             vfiExe, args, ifFrames, ct);
 
+        // 有些显卡补帧"不启动"：Vulkan 设备 0 是核显 / 虚拟显卡 / 仅显示设备时，
+        // rife 要么起不来（报 vkCreateInstance 一类错误），要么静默退出、一帧都不产。
+        // 这里按设备序号 1、2 依次重试；都失败才交给后面的降级/停止逻辑。
+        if (!useTorch && CountFrames(ifFrames) == 0)
+        {
+            var why = exit != 0 ? $"退出码 {exit}" : "一帧未产出";
+            for (var gpuIndex = 1; gpuIndex <= 2; gpuIndex++)
+            {
+                _logger.Warn($"补帧：GPU 0 未能启动（{why}），切换至 GPU {gpuIndex} 重试");
+                await CleanPartialOutputAsync(ifFrames, ProcessStage.Interpolating, "补帧中", ct);
+                var argsGpu = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier,
+                    ifTarget, jThreads, ctx.Settings.LowerQualityForVram, useCpu: cpu, gpuIndex: gpuIndex);
+                _logger.Command($"rife-ncnn-vulkan {argsGpu}（切换至 GPU {gpuIndex} 重试）");
+                exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中", ifTarget,
+                    ctx.Tools.RifeExe, argsGpu, ifFrames, ct);
+                if (CountFrames(ifFrames) > 0) break;
+            }
+        }
+
         // BUG-04：rife-v4.25/v4.26 命令行版会报 "layer MemoryData not exists" → 回退 v4.6
         if (!useTorch && exit != 0 && _lastStderr.Contains("MemoryData not exists", StringComparison.OrdinalIgnoreCase))
         {

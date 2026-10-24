@@ -19,7 +19,8 @@ public static class FFmpegCommandBuilder
         var pattern = Path.Combine(framesDir, "%08d.png").Replace('\\', '/');
         var hw = useGpu ? " -hwaccel auto" : "";
         // -q:v 2 高质量 PNG；-y 覆盖
-        var args = $"-y{hw} -i \"{videoPath}\" -q:v 2 -vsync 0 \"{pattern}\"";
+        // -fps_mode passthrough：FFmpeg 9 已移除 -vsync（旧值 0 = passthrough），等价替换，保持逐帧不丢不补
+        var args = $"-y{hw} -i \"{videoPath}\" -q:v 2 -fps_mode passthrough \"{pattern}\"";
         return (args, pattern);
     }
 

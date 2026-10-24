@@ -131,7 +131,7 @@
                             <!-- 只在检测到字幕流时可勾：没有字幕时禁用以免造成"勾了但没用"的误解 -->
                             <CheckBox Content="保留原视频内嵌字幕" IsChecked="{x:Bind Vm.KeepSubtitles, Mode=TwoWay}"
                                       IsEnabled="{x:Bind Vm.KeepSubtitlesEnabled, Mode=OneWay}" FontSize="12"/>
-                            <TextBlock Text="仅在原视频确实带字幕流时可勾；成片是从帧序列重建的，字幕会从原文件复制过来（合并产物为 mkv）。"
+                            <TextBlock Text="仅在原视频确实带字幕流时可勾；成片是从帧序列重建的，字幕会从原文件复制过来。"
                                        FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>
@@ -271,6 +271,7 @@
                             <ComboBox Grid.Column="1" SelectedIndex="{x:Bind Vm.SfKindIndex, Mode=TwoWay}" MinWidth="110" Style="{StaticResource GlassComboBox}">
                                 <x:String>图片</x:String>
                                 <x:String>音频</x:String>
+                                <x:String>视频 HDR</x:String>
                             </ComboBox>
                             <TextBlock Grid.Column="2" Text="只处理这一个文件，不拆帧/不补帧/不合并" VerticalAlignment="Center" Opacity="0.6" FontSize="11"/>
                         </Grid>
@@ -284,7 +285,7 @@
                             <TextBlock Grid.Column="0" Text="输入文件" Style="{StaticResource FieldLabel}"/>
                             <TextBox  Grid.Column="1" Text="{x:Bind Vm.SfInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                       IsEnabled="{x:Bind Vm.SfIdle, Mode=OneWay}"
-                                      PlaceholderText="选择一张图片（png/jpg/webp）或一个音频（wav/mp3/flac…）" Style="{StaticResource GlassTextBox}"/>
+                                      PlaceholderText="图片（png/jpg/webp）/ 音频（wav/mp3/flac…）/ 视频（mp4/mkv…）" Style="{StaticResource GlassTextBox}"/>
                             <Button   Grid.Column="2" Content="浏览" Click="OnBrowseSfInput" IsEnabled="{x:Bind Vm.SfIdle, Mode=OneWay}" Margin="0,0,8,0" Style="{StaticResource GlassButton}"/>
                             <Button   Grid.Column="3" Content="清除" Click="OnClearSfInput" IsEnabled="{x:Bind Vm.SfIdle, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                         </Grid>
@@ -320,6 +321,16 @@
                                 <x:String>fp32</x:String>
                             </ComboBox>
                         </Grid>
+                        <!-- 视频 HDR：参数沿用主管线「HDR 参数」的饱和度/对比度 -->
+                        <Grid ColumnSpacing="8" Visibility="{x:Bind Vm.SfHdrRowVis, Mode=OneWay}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="80"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="HDR 参数" Style="{StaticResource FieldLabel}"/>
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="11" Opacity="0.6" TextWrapping="Wrap"
+                                       Text="沿用下方「HDR 参数」的饱和度/对比度；需要 NVIDIA RTX 20/30/40/50 系列 + NVEncC，输出 HDR10 的 MKV。"/>
+                        </Grid>
                         <TextBlock Text="{x:Bind Vm.SfOutputText, Mode=OneWay}" Opacity="0.6" FontSize="11" TextTrimming="CharacterEllipsis"/>
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
@@ -327,7 +338,7 @@
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <Button Grid.Column="0" Content="开始超分" Click="OnStartSingleFile" IsEnabled="{x:Bind Vm.CanStartSingle, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
+                            <Button Grid.Column="0" Content="{x:Bind Vm.SfStartButtonText, Mode=OneWay}" Click="OnStartSingleFile" IsEnabled="{x:Bind Vm.CanStartSingle, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                             <Button Grid.Column="1" Content="停止" Click="OnStopSingleFile" IsEnabled="{x:Bind Vm.CanStopSingle, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                             <TextBlock Grid.Column="2" Text="{x:Bind Vm.SfStatus, Mode=OneWay}" VerticalAlignment="Center" FontSize="11"
                                        TextWrapping="Wrap" IsTextSelectionEnabled="True" Opacity="0.8"/>

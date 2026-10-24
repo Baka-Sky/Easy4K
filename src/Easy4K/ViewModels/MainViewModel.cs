@@ -814,7 +814,32 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VramWarning))]
+    [NotifyPropertyChangedFor(nameof(GpuAccelerationLabel))]
     private GpuInfo _gpu = new();
+
+    /// <summary>「使 FFmpeg 尝试使用 GPU 加速」勾选项的文案：按当前显卡厂商显示对应的硬件加速器，
+    /// 不再笼统写成"GPU 加速"——用户看到自己显卡对应的名字才知道这条路走的是 AMF / NVEncC / QSV。</summary>
+    public string GpuAccelerationLabel
+    {
+        get
+        {
+            var gpu = Gpu;
+            var (name, detail) = gpu.IsAmd
+                ? ("AMD VAF", "合并帧优先使用 AMF 硬件编码")
+                : gpu.IsNvidia
+                    ? ("NVEncC", "合并帧优先使用 NVENC 硬件编码")
+                    : IsIntel(gpu.Name)
+                        ? ("QSV", "合并帧优先使用 QSV 硬件编码")
+                        : ("GPU", "合并帧优先使用本机可用硬件编码器");
+            return $"使FFmpeg尝试使用{name}硬件加速 (拆帧解码 -hwaccel / {detail}；失败自动回退 CPU)";
+        }
+    }
+
+    private static bool IsIntel(string gpuName) =>
+        gpuName.Contains("Intel", StringComparison.OrdinalIgnoreCase) ||
+        gpuName.Contains("Arc", StringComparison.OrdinalIgnoreCase) ||
+        gpuName.Contains("UHD Graphics", StringComparison.OrdinalIgnoreCase) ||
+        gpuName.Contains("Iris", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>切换界面显示的显卡来源：遥控时灌入远端显卡，断开时传 null 恢复本机显卡。
     /// 显存状态条与警告文本都由 Gpu 推导，换完必须重算，否则会出现「本机 6G 卡却按远端的提示」这类错判。</summary>
@@ -1206,9 +1231,13 @@ public partial class MainViewModel : ObservableObject
     /// <summary>单文件类型：0 = 图片，1 = 音频</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SfIsImage))]
+    [NotifyPropertyChangedFor(nameof(SfIsAudio))]
+    [NotifyPropertyChangedFor(nameof(SfIsVideoHdr))]
     [NotifyPropertyChangedFor(nameof(SfOutputText))]
     [NotifyPropertyChangedFor(nameof(SfImageRowVis))]
     [NotifyPropertyChangedFor(nameof(SfAudioRowVis))]
+    [NotifyPropertyChangedFor(nameof(SfHdrRowVis))]
+    [NotifyPropertyChangedFor(nameof(SfStartButtonText))]
     [NotifyPropertyChangedFor(nameof(CanStartSingle))]
     private int _sfKindIndex;
 
@@ -1262,11 +1291,23 @@ public partial class MainViewModel : ObservableObject
     private static readonly System.Text.RegularExpressions.Regex SfPercentRe =
         new(@"进度\s*(\d+)\s*%", System.Text.RegularExpressions.RegexOptions.Compiled);
 
+    /// <summary>NVEncC 进度行里的百分比（形如 "[59.8%] 1000 frames: ..."）</summary>
+    private static readonly System.Text.RegularExpressions.Regex SfHdrPercentRe =
+        new(@"\[\s*(\d+(?:\.\d+)?)\s*%\]", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     public bool SfIsImage => SfKindIndex == 0;
+    public bool SfIsAudio => SfKindIndex == 1;
+    /// <summary>单文件 HDR：把一个视频整体做 SDR→HDR（NVEncC --vpp-ngx-truehdr）</summary>
+    public bool SfIsVideoHdr => SfKindIndex == 2;
     public Microsoft.UI.Xaml.Visibility SfImageRowVis
         => SfIsImage ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
     public Microsoft.UI.Xaml.Visibility SfAudioRowVis
-        => SfIsImage ? Microsoft.UI.Xaml.Visibility.Collapsed : Microsoft.UI.Xaml.Visibility.Visible;
+        => SfIsAudio ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+    public Microsoft.UI.Xaml.Visibility SfHdrRowVis
+        => SfIsVideoHdr ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+    /// <summary>单文件卡片主按钮文案：按类型区分，避免视频 HDR 也写着"开始超分"</summary>
+    public string SfStartButtonText => SfIsVideoHdr ? "开始HDR转换" : "开始超分";
 
     /// <summary>单文件超分是否可以开始：文件存在、主管线空闲、图片模式还要有模型</summary>
     public bool CanStartSingle
@@ -1276,6 +1317,7 @@ public partial class MainViewModel : ObservableObject
             if (SfRunning || IsProcessing) return false;
             var input = SfInput.Trim().Trim('"');
             if (!File.Exists(input)) return false;
+            if (SfIsVideoHdr) return IsHdrEnabled;   // 仅 RTX + NVEncC 可用
             return !SfIsImage || !string.IsNullOrEmpty(SfImageModel);
         }
     }
@@ -1292,7 +1334,9 @@ public partial class MainViewModel : ObservableObject
         {
             var input = SfInput.Trim().Trim('"');
             if (string.IsNullOrEmpty(input)) return "输出：选择文件后自动命名";
-            var name = SfIsImage ? SfImageFileName(input) : SfAudioFileName(input);
+            var name = SfIsImage ? SfImageFileName(input)
+                : SfIsVideoHdr ? SfVideoHdrFileName(input)
+                : SfAudioFileName(input);
             return $"输出：{Path.Combine(SfOutputDir(input), name).Replace('\\', '/')}";
         }
     }
@@ -1315,6 +1359,10 @@ public partial class MainViewModel : ObservableObject
     /// <summary>音频输出文件名：{原名}_AudioSR_48k.wav（AudioSR 固定产出 48kHz PCM WAV）</summary>
     private static string SfAudioFileName(string input)
         => $"{Path.GetFileNameWithoutExtension(input)}_AudioSR_48k.wav";
+
+    /// <summary>视频 HDR 输出文件名：{原名}_HDR.mkv（统一 MKV，NVEncC 直接封装）</summary>
+    private static string SfVideoHdrFileName(string input)
+        => $"{Path.GetFileNameWithoutExtension(input)}_HDR.mkv";
 
     /// <summary>重建单文件模式的图片模型列表：与主管线共用 SrCatalog，按倍率筛、只列已部署引擎。
     /// 列表按算法顺序铺开（同一算法的模型自然连在一起）。</summary>
@@ -1356,16 +1404,20 @@ public partial class MainViewModel : ObservableObject
         }
 
         SfRunning = true;
+        // 单文件超分不产生帧序列，预览区没有内容可显示：直接关掉并禁用开关
+        ShowPreview = false;
+        PreviewBlocked = true;
         _sfCts = new CancellationTokenSource();
         var ct = _sfCts.Token;
         // 单文件也走「进行中」页：开始即显示导航并切过去，否则跑起来看不到进度与日志
-        Stage = SfIsImage ? ProcessStage.SuperRes : ProcessStage.AudioSr;
+        Stage = SfIsImage ? ProcessStage.SuperRes : SfIsAudio ? ProcessStage.AudioSr : ProcessStage.HdrConverting;
         ProgressPercent = 0;
-        ProgressDetail = SfIsImage ? "图片超分中（单文件）" : "音频超分中（单文件）";
+        ProgressDetail = SfIsImage ? "图片超分中（单文件）" : SfIsAudio ? "音频超分中（单文件）" : "HDR 转换中（单文件）";
         ProcessingStarted?.Invoke();
         try
         {
             if (SfIsImage) await RunSingleImageAsync(input, ct);
+            else if (SfIsVideoHdr) await RunSingleVideoHdrAsync(input, ct);
             else await RunSingleAudioAsync(input, ct);
         }
         catch (OperationCanceledException)
@@ -1381,6 +1433,7 @@ public partial class MainViewModel : ObservableObject
         finally
         {
             SfRunning = false;
+            PreviewBlocked = false;
             _sfCts?.Dispose();
             _sfCts = null;
             Stage = ProcessStage.Idle;
@@ -1436,6 +1489,58 @@ public partial class MainViewModel : ObservableObject
             SfStatus = "图片超分失败，详见「进行中」页日志";
             _logger.Error($"单文件超分（图片）失败（退出码 {exit}）");
         }
+    }
+
+    /// <summary>单个视频 HDR 转换：NVEncC --vpp-ngx-truehdr 一条命令完成解码 → 色调映射 → 硬件编码，
+    /// 直接产出 HDR10 的 MKV（不拆帧、不补帧、不超分）。</summary>
+    private async Task RunSingleVideoHdrAsync(string input, CancellationToken ct)
+    {
+        if (!Tools.NvEncExists)
+        {
+            SfStatus = "NVEncC64 未安装，无法做 HDR 转换";
+            _logger.Error($"单文件 HDR：找不到 {Tools.NvEncExe}");
+            return;
+        }
+        if (!Gpu.SupportsHdr)
+        {
+            SfStatus = "当前显卡不是 RTX 20/30/40/50 系列，无法做 HDR 转换";
+            _logger.Error("单文件 HDR：NVEncC 的 NGX TrueHDR 需要 NVIDIA RTX 20/30/40/50 系列");
+            return;
+        }
+
+        var dir = SfOutputDir(input);
+        if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+        var output = Path.Combine(dir, SfVideoHdrFileName(input));
+
+        var args = NvEncCommandBuilder.Build(input, output, HdrSaturation, HdrContrast);
+        _logger.Info($"单文件 HDR 开始：{Path.GetFileName(input)}（饱和度 {HdrSaturation} / 对比度 {HdrContrast}）");
+        _logger.Command($"NVEncC64 {args}");
+        SfStatus = "HDR 转换中… 0%";
+
+        var exit = await _runner.RunAsync(Tools.NvEncExe, args, onLine: line =>
+        {
+            var m = SfHdrPercentRe.Match(line);
+            if (!m.Success) return;
+            var pct = m.Groups[1].Value;
+            var pctValue = double.TryParse(pct, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var p) ? p : 0;
+            // 回调在后台线程：改属性必须调度回 UI 线程
+            _dispatcherQueue.TryEnqueue(() =>
+            {
+                SfStatus = $"HDR 转换中… {pct}%";
+                ProgressPercent = pctValue;
+            });
+        }, ct: ct);
+
+        if (exit != 0 || !File.Exists(output))
+        {
+            SfStatus = $"HDR 转换失败（退出码 {exit}），详见「进行中」页日志";
+            _logger.Error($"单文件 HDR 失败（退出码 {exit}）");
+            return;
+        }
+        ProgressPercent = 100;
+        SfStatus = $"完成：{output}";
+        _logger.Success($"单文件 HDR 完成: {output}");
     }
 
     /// <summary>单个音频文件超分：ffmpeg 转 48kWAV → audiosr_onnx.py → 把结果复制到输出目录</summary>
@@ -2136,9 +2241,10 @@ public partial class MainViewModel : ObservableObject
                 _etaStageStarted = DateTime.Now;
             }
             EtaText = BuildEtaText(p.Percent, p.Stage);
-            // 合并/HDR/音频/审查阶段不产生新帧：自动关闭预览并禁用预览开关，避免预览停在旧画面
-            var blockPreview = p.Stage is ProcessStage.Merging or ProcessStage.HdrConverting
-                or ProcessStage.AudioSr or ProcessStage.AddingAudio or ProcessStage.Auditing;
+            // 合并/HDR/音频/审查阶段不产生新帧：自动关闭预览并禁用预览开关，避免预览停在旧画面；
+            // 单文件超分（图片/音频）同样不产生帧序列，全程禁用预览开关
+            var blockPreview = (p.Stage is ProcessStage.Merging or ProcessStage.HdrConverting
+                or ProcessStage.AudioSr or ProcessStage.AddingAudio or ProcessStage.Auditing) || SfRunning;
             PreviewBlocked = blockPreview;
             if (blockPreview && ShowPreview) ShowPreview = false;
             if (!string.IsNullOrEmpty(p.LatestFramePath))

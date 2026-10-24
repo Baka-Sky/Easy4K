@@ -16,9 +16,12 @@ public static class RifeCommandBuilder
     /// rife-v4+ 用 -n {targetFrames}；rife-v2/v3 用 -n {multiplier}。
     /// jThreads 控制线程（load:proc:save）："1:1:1" 安全帧率单线程；空串不加 -j 用工具默认。
     /// useUhdMode：勾选「降低部分画质以降低显存占用」时加 -u（UHD 模式，降画质省显存）。
-    /// useCpu：使用 CPU 推理（-g -1），仅在 GPU 不可用/不稳定时使用。</summary>
+    /// useCpu：使用 CPU 推理（-g -1），仅在 GPU 不可用/不稳定时使用。
+    /// gpuIndex：Vulkan 设备序号（默认 0）。有些机器设备 0 是核显/虚拟显卡/仅显示设备，
+    /// rife 起不来或产出 0 帧，上层会换 1、2 重试，见 ProcessingOrchestrator 的补帧阶段。</summary>
     public static string Build(string inputFramesDir, string outputFramesDir, string model,
-        int multiplier, long targetFrames, string jThreads, bool useUhdMode = false, bool useCpu = false)
+        int multiplier, long targetFrames, string jThreads, bool useUhdMode = false, bool useCpu = false,
+        int gpuIndex = 0)
     {
         Directory.CreateDirectory(outputFramesDir);
         // BUG-09：只有 rife-v4+ 支持 -n 自定义帧数；v2/v3 传 -n 会报
@@ -28,7 +31,7 @@ public static class RifeCommandBuilder
         // -m 模型名（不含路径，工作目录=exe 目录）  -g 0 GPU / -g -1 CPU  -u UHD（勾选才加）  -j 线程数（空则不加，用默认）
         var j = string.IsNullOrEmpty(jThreads) ? "" : $" -j {jThreads}";
         var u = useUhdMode ? " -u" : "";
-        var g = useCpu ? "-g -1" : "-g 0";
+        var g = useCpu ? "-g -1" : $"-g {gpuIndex}";
         var args = $"-i \"{inputFramesDir}\" -o \"{outputFramesDir}\" -m {model} {g} {nArg}{u}{j}";
         return args;
     }

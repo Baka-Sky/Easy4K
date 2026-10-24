@@ -72,6 +72,7 @@ public partial class MainViewModel
         _app.StartupSelfTest = startupSelfTest;
         _app.ReportDir = reportDir;
         _app.ReportEnabled = reportEnabled;
+        NoReport = !reportEnabled;   // 高级页的开关与向导同源，否则两处显示不一致
         _app.ReportAutoOpen = reportAutoOpen;
         _app.Theme = theme;
         _app.SetupCompleted = true;
@@ -295,7 +296,9 @@ public partial class MainViewModel
     /// <summary>正式处理（非自检）完成后生成 HTML 报告并可选自动打开。</summary>
     public void TryGenerateReport(string? outputPath, string stepsText, TimeSpan elapsed)
     {
-        if (outputPath is null || !_app.ReportEnabled || IsStartupSelfTest) return;
+        // 报告开关有两个入口（向导的 ReportEnabled、高级页反相的 NoReport），
+        // 任一处表示"不生成"就都不生成——否则用户关掉开关后仍会看到报告，只能靠内存里的旧值碰运气。
+        if (outputPath is null || !_app.ReportEnabled || NoReport || IsStartupSelfTest) return;
         try
         {
             var optionLines = BuildReportOptionLines();
@@ -314,16 +317,38 @@ public partial class MainViewModel
             if (file is null) return;
 
             _logger.Success($"HTML 报告已生成: {file}");
-            if (_app.ReportAutoOpen)
-            {
-                try { Process.Start(new ProcessStartInfo { FileName = file, UseShellExecute = true }); }
-                catch { }
-            }
+            if (_app.ReportAutoOpen) OpenReportFile(file);
         }
         catch (Exception ex)
         {
             _logger.Warn($"生成 HTML 报告失败: {ex.Message}");
         }
+    }
+
+    /// <summary>用默认浏览器打开报告。新写的文件常被杀毒软件实时扫描短暂占用，
+    /// 立刻打开会概率性失败（Edge 报"文件已被移除或禁止访问"），这里退避重试，且不占用 UI 线程。</summary>
+    private void OpenReportFile(string file)
+    {
+        _ = Task.Run(() =>
+        {
+            for (var attempt = 0; attempt < 6; attempt++)
+            {
+                try
+                {
+                    var info = new FileInfo(file);
+                    if (info.Exists && info.Length > 0)
+                    {
+                        Process.Start(new ProcessStartInfo { FileName = file, UseShellExecute = true });
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (attempt == 5) _logger.Warn($"打开 HTML 报告失败（{Path.GetFileName(file)}）：{ex.Message}");
+                }
+                Thread.Sleep(250 * (attempt + 1));
+            }
+        });
     }
 
     private List<string> BuildReportOptionLines()
