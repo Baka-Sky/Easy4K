@@ -529,6 +529,244 @@ public partial class MainViewModel
         _logger.Info("==== API 自动测试结束 ====");
     }
 
+    // ===================== 孤儿模式式 API 自动测试（每例一个进程） =====================
+
+    /// <summary>单例用例描述（父进程写 JSON，子进程按它设置 ViewModel 后调 StartAsync）。</summary>
+    public sealed class ApiCaseSpec
+    {
+        public string Name { get; set; } = "";
+        public string Input { get; set; } = "";
+        public string TempRoot { get; set; } = "";
+        public string OutputRoot { get; set; } = "";
+        public bool SplitFrames { get; set; } = true;
+        public bool SuperResolution { get; set; }
+        public bool Interpolation { get; set; }
+        public bool MergeVideo { get; set; }
+        public bool MergeAudio { get; set; }
+        public bool SdrToHdr { get; set; }
+        public string SrModel { get; set; } = "";
+        public int SrScale { get; set; } = 2;
+        public string IfModel { get; set; } = "";
+        public int IfMultiplier { get; set; } = 2;
+        public bool Safe { get; set; }
+        public bool LowerQuality { get; set; }
+        public bool GpuAccel { get; set; }
+        public bool Cpu { get; set; }
+        public int Threads { get; set; } = 4;
+        public bool Dedup { get; set; }
+        public string DedupMode { get; set; } = "performance";
+        public bool Turbo { get; set; }
+        public int TurboSegments { get; set; } = 2;
+        /// <summary>子进程把结果写到这个路径</summary>
+        public string ResultPath { get; set; } = "";
+    }
+
+    public sealed class ApiCaseResult
+    {
+        public string Name { get; set; } = "";
+        public bool Ok { get; set; }
+        public double Seconds { get; set; }
+        public string? Output { get; set; }
+        public string? Note { get; set; }
+    }
+
+    /// <summary>子进程：按用例 JSON 设置界面状态，再调 StartAsync()（与用户点「开始处理」同一条入口）。</summary>
+    public async Task RunSingleApiCaseAsync(string jsonPath)
+    {
+        var result = new ApiCaseResult();
+        ApiCaseSpec? spec = null;
+        try
+        {
+            spec = System.Text.Json.JsonSerializer.Deserialize<ApiCaseSpec>(await File.ReadAllTextAsync(jsonPath));
+            if (spec is null) return;
+            result.Name = spec.Name;
+
+            HeadlessAutoTest = true;
+            SuppressCompletionDialog = true;
+
+            ApplySpecToViewModel(spec);
+            await SetInputVideoAsync(spec.Input);
+            await Task.Delay(500);   // 等视频检测完成
+
+            var sw = Stopwatch.StartNew();
+            await StartAsync();
+            sw.Stop();
+            result.Seconds = sw.Elapsed.TotalSeconds;
+
+            var produced = Path.Combine(spec.OutputRoot, FinalOutputName);
+            result.Ok = Stage == ProcessStage.Done && File.Exists(produced);
+            if (Stage == ProcessStage.Done && !File.Exists(produced)) result.Note = "产物不存在";
+            else if (Stage == ProcessStage.Failed) result.Note = "处理失败";
+            // 涡轮要求固态临时目录：命中机械盘会被启动校验自动关掉，注明这一例实际跑的是串行
+            if (spec.Turbo && !TurboMode && string.IsNullOrEmpty(result.Note))
+                result.Note = "涡轮被自动关闭（临时目录在机械硬盘）";
+            result.Output = result.Ok ? produced : null;
+        }
+        catch (Exception ex)
+        {
+            result.Note = ex.Message;
+        }
+        finally
+        {
+            HeadlessAutoTest = false;
+            SuppressCompletionDialog = false;
+            if (spec is not null && !string.IsNullOrEmpty(spec.ResultPath))
+            {
+                try
+                {
+                    await File.WriteAllTextAsync(spec.ResultPath,
+                        System.Text.Json.JsonSerializer.Serialize(result), Encoding.UTF8);
+                }
+                catch { }
+            }
+        }
+    }
+
+    private void ApplySpecToViewModel(ApiCaseSpec s)
+    {
+        TempRoot = s.TempRoot.Replace('\\', '/');
+        OutputRoot = s.OutputRoot.Replace('\\', '/');
+
+        SplitFrames = s.SplitFrames;
+        SuperResolution = s.SuperResolution;
+        Interpolation = s.Interpolation;
+        MergeVideo = s.MergeVideo;
+        MergeAudio = s.MergeAudio;
+        SdrToHdr = s.SdrToHdr;
+
+        SrModel = s.SrModel;
+        SrScale = s.SrScale;
+        IfModel = s.IfModel;
+        IfMultiplier = s.IfMultiplier;
+
+        UseSafeFrameRate = s.Safe;
+        LowerQualityForVram = s.LowerQuality;
+        UseGpuAcceleration = s.GpuAccel;
+        UseCpuProcessing = s.Cpu;
+        ThreadCount = s.Threads;
+
+        DedupEnabled = s.Dedup;
+        DedupMode = string.IsNullOrEmpty(s.DedupMode) ? "performance" : s.DedupMode;
+
+        TurboMode = s.Turbo;
+        TurboSegments = Math.Clamp(s.TurboSegments, 1, 5);
+
+        AudioSrEnabled = false;
+        KeepSubtitles = false;
+    }
+
+    /// <summary>父进程：逐例拉起一个 --api-case 子进程（跑完关闭再启动下一例），汇总结果写桌面报告。</summary>
+    public async Task RunApiOrchestratorAsync(bool fullMatrix = false)
+    {
+        if (!Tools.CoreToolsOk)
+        {
+            _logger.Error("API 自动测试: FFmpeg/RealESRGAN/RIFE 未就绪，无法开始");
+            return;
+        }
+
+        var startAll = DateTime.Now;
+        var results = new List<AutoResult>();
+        var root = Path.Combine(ResDir, "autotest_api");
+        try { if (Directory.Exists(root)) Directory.Delete(root, true); } catch { }
+        Directory.CreateDirectory(root);
+
+        if (!await EnsureStartupTestVideoAsync())
+        {
+            _logger.Error("API 自动测试: 测试视频不可用");
+            return;
+        }
+        var info = _videoDetector.Detect(StartupTestVideoPath);
+        if (info is null || !info.IsValid)
+        {
+            _logger.Error("API 自动测试: 测试视频检测失败");
+            return;
+        }
+
+        var cases = BuildAutoTestCases(info, fullMatrix);
+        var exe = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "Easy4K.exe");
+        _logger.Info($"==== API 自动测试（每例独立进程）开始，共 {cases.Count} 例 ====");
+
+        for (var i = 0; i < cases.Count; i++)
+        {
+            var c = cases[i];
+            var dir = Path.Combine(root, $"run{i + 1:D3}");
+            var tempDir = Path.Combine(dir, "temp");
+            var outDir = Path.Combine(dir, "out");
+            Directory.CreateDirectory(tempDir);
+            Directory.CreateDirectory(outDir);
+
+            var caseJson = Path.Combine(dir, "case.json");
+            var resultJson = Path.Combine(dir, "result.json");
+
+            var spec = new ApiCaseSpec
+            {
+                Name = c.Name,
+                Input = StartupTestVideoPath,
+                TempRoot = tempDir,
+                OutputRoot = outDir,
+                SplitFrames = c.Options.SplitFrames,
+                SuperResolution = c.Options.SuperResolution,
+                Interpolation = c.Options.Interpolation,
+                MergeVideo = c.Options.MergeVideo,
+                MergeAudio = c.Options.MergeAudio,
+                SdrToHdr = c.Options.SdrToHdr,
+                SrModel = c.SrModel ?? "",
+                SrScale = c.SrScale,
+                IfModel = c.IfModel ?? "",
+                IfMultiplier = c.IfMultiplier,
+                Safe = c.Safe,
+                LowerQuality = c.LowerQuality,
+                GpuAccel = c.GpuAccel,
+                Cpu = c.Cpu,
+                Threads = c.Threads,
+                Dedup = c.Dedup,
+                DedupMode = c.DedupMode,
+                Turbo = c.Turbo,
+                TurboSegments = c.TurboSegments,
+                ResultPath = resultJson
+            };
+            await File.WriteAllTextAsync(caseJson,
+                System.Text.Json.JsonSerializer.Serialize(spec), Encoding.UTF8);
+
+            _logger.Info($"---- [{i + 1}/{cases.Count}] {c.Name}：启动子进程 ----");
+            var sw = Stopwatch.StartNew();
+            ApiCaseResult? r = null;
+            try
+            {
+                var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
+                psi.ArgumentList.Add("--api-case");
+                psi.ArgumentList.Add(caseJson);
+                using var proc = Process.Start(psi);
+                if (proc is not null)
+                {
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(20));
+                    try { await proc.WaitForExitAsync(timeout.Token); }
+                    catch (OperationCanceledException)
+                    {
+                        try { proc.Kill(true); } catch { }
+                    }
+                }
+                if (File.Exists(resultJson))
+                    r = System.Text.Json.JsonSerializer.Deserialize<ApiCaseResult>(await File.ReadAllTextAsync(resultJson));
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn($"子进程启动/等待失败：{ex.Message}");
+            }
+            sw.Stop();
+
+            var ok = r?.Ok == true;
+            var note = r?.Note ?? "子进程未产出结果";
+            results.Add(new AutoResult(c, ok, sw.Elapsed, r?.Output, note));
+            _logger.Info($"---- [{i + 1}/{cases.Count}] {c.Name} → {(ok ? "通过" : "失败")}，耗时 {sw.Elapsed.TotalSeconds:F1}s{(string.IsNullOrEmpty(note) ? "" : $"（{note}）")} ----");
+
+            try { if (ok) Directory.Delete(dir, true); } catch { }
+        }
+
+        WriteAutoTestSummary(root, results, DateTime.Now - startAll, false, desktopReport: true);
+        _logger.Info("==== API 自动测试结束 ====");
+    }
+
     private static string Sanitize(string name)
     {
         var invalids = Path.GetInvalidFileNameChars();

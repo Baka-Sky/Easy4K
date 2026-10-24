@@ -104,6 +104,7 @@ public partial class App : Application
         var autoTestCli = false;
         var autoTestFull = false;
         var autoTestApi = false;
+        string? apiCaseJson = null;
         var dedupOnly = false;
         var remoteCli = false;
         for (int i = 0; i < cmdLine.Length; i++)
@@ -147,7 +148,17 @@ public partial class App : Application
                 break;
             }
 
-            // API 模式全组合自动测试（同孤儿模式：隐藏窗口后台跑，跑完把报告写桌面并退出进程）
+            // 单例 API 测试用例（子进程）：Easy4K.exe --api-case <用例json>
+            // 与孤儿模式一致：单独进程里用 StartAsync() 跑一例，跑完写结果文件并退出
+            if (cmdLine[i].Equals("--api-case", StringComparison.OrdinalIgnoreCase) && i + 1 < cmdLine.Length)
+            {
+                autoTestCli = true;
+                autoTestApi = true;
+                apiCaseJson = cmdLine[i + 1];
+                break;
+            }
+
+            // API 模式全组合自动测试（父进程）：逐例拉起 --api-case 子进程，结束关闭再启动下一例
             // Easy4K.exe --autotest-api [full]
             if (cmdLine[i].Equals("--autotest-api", StringComparison.OrdinalIgnoreCase)
                 || cmdLine[i].Equals("--autotest-headless", StringComparison.OrdinalIgnoreCase))
@@ -184,7 +195,23 @@ public partial class App : Application
             return;
         }
 
+        // ---- API 自动测试（孤儿模式那套：单独进程、单独目录、跑完关闭再起下一例）----
+        // 父进程：不开主窗口，逐例拉起 --api-case 子进程
+        if (autoTestApi && apiCaseJson is null)
+        {
+            _ = RunApiOrchestratorDelayedAsync(autoTestFull);
+            return;
+        }
+
         OpenMainWindow();
+
+        // 子进程：只跑一例（窗口照常显示，方便观察），跑完写结果并退出
+        if (apiCaseJson is not null)
+        {
+            _ = RunApiCaseDelayedAsync(apiCaseJson);
+            return;
+        }
+
         // 孤儿执行：界面起来后立刻按任务里的选项开跑，跑完自动退出进程
         if (orphanTask is not null)
             _ = RunOrphanTaskDelayedAsync(orphanTask);
@@ -232,8 +259,43 @@ public partial class App : Application
         MainWindow.Activate();
     }
 
-    /// <summary>延迟到主窗口/页面加载完成后再跑 GUI 自动测试（--autotest-all / --dedup-test / --autotest-api 专用）。
-    /// apiMode = 同孤儿模式：隐藏窗口后台跑，报告写桌面，跑完自动退出进程。</summary>
+    /// <summary>API 自动测试父进程：逐例拉起 --api-case 子进程（跑完关闭再启动下一例），最后写桌面报告并退出。</summary>
+    private static async Task RunApiOrchestratorDelayedAsync(bool fullMatrix)
+    {
+        try
+        {
+            await Task.Delay(1200);
+            await Services.RunApiOrchestratorAsync(fullMatrix);
+        }
+        catch (Exception ex)
+        {
+            File.AppendAllText(CrashLogPath, $"[ApiOrchestrator @ {DateTime.Now}]\n{ex}\n\n");
+        }
+        finally
+        {
+            try { Application.Current.Exit(); } catch { }
+        }
+    }
+
+    /// <summary>API 自动测试子进程：只跑一例（StartAsync 入口），写结果文件后退出进程。</summary>
+    private static async Task RunApiCaseDelayedAsync(string caseJson)
+    {
+        try
+        {
+            await Task.Delay(1200);
+            await Services.RunSingleApiCaseAsync(caseJson);
+        }
+        catch (Exception ex)
+        {
+            File.AppendAllText(CrashLogPath, $"[ApiCase @ {DateTime.Now}]\n{ex}\n\n");
+        }
+        finally
+        {
+            try { Application.Current.Exit(); } catch { }
+        }
+    }
+
+    /// <summary>GUI 模式自动测试（--autotest-all / --dedup-test）：在同一个进程里逐例直接调 Orchestrator。</summary>
     private static async Task RunAutoTestDelayedAsync(bool fullMatrix, bool dedupOnly = false, bool apiMode = false)
     {
         try
