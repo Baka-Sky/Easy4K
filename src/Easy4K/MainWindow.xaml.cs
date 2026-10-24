@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Windowing;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -906,8 +907,64 @@ public sealed partial class MainWindow : Window
         NoticeActionButton.Visibility = actionText is null ? Visibility.Collapsed : Visibility.Visible;
         _noticeAction = actionText is null ? null : action;
 
-        // 已显示时只替换内容（同一时刻只留最新一条）
-        NoticeBar.Visibility = Visibility.Visible;
+        _noticeVersion++;   // 作废上一次淡出动画的回调
+
+        if (NoticeBar.Visibility != Visibility.Visible)
+        {
+            // 已显示时只替换内容（同一时刻只留最新一条）；新弹出才做淡入
+            NoticeBar.Visibility = Visibility.Visible;
+            NoticeBar.Opacity = 0;
+            FadeNotice(0, 1);
+        }
+        else
+        {
+            NoticeBar.Opacity = 1;
+        }
+
+        RestartNoticeTimer();
+    }
+
+    /// <summary>通知条自动隐藏计时器（每次弹出重置；5 秒后淡出收起）</summary>
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _noticeTimer;
+
+    /// <summary>通知条显示/隐藏版本号：旧动画结束回调不能关掉新弹出的通知</summary>
+    private int _noticeVersion;
+
+    private void RestartNoticeTimer()
+    {
+        if (_noticeTimer is null)
+        {
+            _noticeTimer = DispatcherQueue.CreateTimer();
+            _noticeTimer.IsRepeating = false;
+            _noticeTimer.Tick += (_, _) => HideNotice();
+        }
+
+        _noticeTimer.Interval = TimeSpan.FromSeconds(5);
+        _noticeTimer.Stop();
+        _noticeTimer.Start();
+    }
+
+    /// <summary>淡入/淡出通知条（180ms）。动画结束回调带上版本号，避免误关新通知。</summary>
+    private void FadeNotice(double from, double to, Action? done = null)
+    {
+        var version = _noticeVersion;
+
+        var sb = new Storyboard();
+        var fade = new DoubleAnimation
+        {
+            From = from,
+            To = to,
+            Duration = new Duration(TimeSpan.FromMilliseconds(180)),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+        };
+        Storyboard.SetTarget(fade, NoticeBar);
+        Storyboard.SetTargetProperty(fade, "Opacity");
+        sb.Children.Add(fade);
+
+        if (done is not null)
+            sb.Completed += (_, _) => { if (version == _noticeVersion) done(); };
+
+        sb.Begin();
     }
 
     private void OnNoticeBarAction(object sender, RoutedEventArgs e)
@@ -921,8 +978,13 @@ public sealed partial class MainWindow : Window
 
     private void HideNotice()
     {
+        _noticeTimer?.Stop();
         _noticeAction = null;
-        NoticeBar.Visibility = Visibility.Collapsed;
+        _noticeVersion++;   // 作废上一次淡入/淡出的回调
+        if (NoticeBar.Visibility != Visibility.Visible) return;
+
+        FadeNotice(NoticeBar.Opacity, 0,
+            () => NoticeBar.Visibility = Visibility.Collapsed);
     }
 
     /// <summary>用资源管理器打开目录（通知条动作按钮用）。</summary>
