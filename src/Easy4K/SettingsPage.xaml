@@ -92,7 +92,7 @@
                                 <ComboBoxItem Content="150%（最大）"/>
                             </ComboBox>
                             <TextBlock Grid.Column="2" VerticalAlignment="Center" FontSize="12" Opacity="0.6"
-                                       Text="整体等比放大界面（导航、按钮、文字），最大化时不再显得稀疏"/>
+                                       Text="仅在窗口最大化时生效（普通窗口保持 100%），整体等比放大界面"/>
                         </Grid>
                     </StackPanel>
                 </Border>

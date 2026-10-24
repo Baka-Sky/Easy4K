@@ -66,9 +66,12 @@ public sealed partial class MainWindow : Window
 
         InitDebugOverlay();
 
-        // 界面整体缩放（设置 → 外观）：初始倍率来自配置；窗口尺寸/DPI 变化时重新给 RootLayout 定尺
+        // 界面整体缩放（设置 → 外观）：仅窗口最大化时生效；尺寸/最大化状态/DPI 变化时重新定尺
         ApplyUiZoom(Vm.UiZoom);
-        AppWindow.Changed += (_, e) => { if (e.DidSizeChange) UpdateZoomLayout(); };
+        AppWindow.Changed += (_, e) =>
+        {
+            if (e.DidSizeChange || e.DidPresenterChange) UpdateZoomLayout();
+        };
         RootLayout.Loaded += (_, _) => UpdateZoomLayout();
         Activated += (_, _) => UpdateZoomLayout();
 
@@ -425,7 +428,8 @@ public sealed partial class MainWindow : Window
         UpdateZoomLayout();
     }
 
-    /// <summary>按窗口客户区（物理像素 → 逻辑像素）和缩放倍率重新给 RootLayout 定尺。</summary>
+    /// <summary>按窗口客户区（物理像素 → 逻辑像素）和缩放倍率重新给 RootLayout 定尺。
+    /// 缩放只在窗口最大化（或全屏）时生效，普通/还原窗口固定 100%。</summary>
     private void UpdateZoomLayout()
     {
         try
@@ -434,8 +438,14 @@ public sealed partial class MainWindow : Window
             var size = AppWindow.ClientSize;
             if (size.Width <= 0 || size.Height <= 0 || scale <= 0) return;
 
-            RootLayout.Width = size.Width / scale / _uiZoom;
-            RootLayout.Height = size.Height / scale / _uiZoom;
+            var maximized = AppWindow.Presenter is OverlappedPresenter
+            {
+                State: OverlappedPresenterState.Maximized
+            };
+            var zoom = maximized ? _uiZoom : 1.0;
+
+            RootLayout.Width = size.Width / scale / zoom;
+            RootLayout.Height = size.Height / scale / zoom;
         }
         catch { /* 窗口尚未就绪时忽略，Loaded/Activated 会再补一次 */ }
     }
