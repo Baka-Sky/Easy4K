@@ -22,6 +22,8 @@
                     <SolidColorBrush x:Key="ButtonBgBrush" Color="#8CF5F5F5"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FFC8C8C8"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="#20FFB300"/>
+                    <!-- 占位文字用不透明灰：系统默认的半透明占位色会让文字走灰度抗锯齿，看起来发虚 -->
+                    <SolidColorBrush x:Key="InputPlaceholderBrush" Color="#FF6E6E6E"/>
                     <!-- 字族必须写进主题字典：WinUI 的内置样式用 {ThemeResource ContentControlThemeFontFamily} 取，
                          而 ThemeResource 优先查主题字典，只在普通资源里覆盖对控件不生效。 -->
                     <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
@@ -33,6 +35,7 @@
                     <SolidColorBrush x:Key="ButtonBgBrush" Color="#8C2A2A2A"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FF444444"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="#30FFB300"/>
+                    <SolidColorBrush x:Key="InputPlaceholderBrush" Color="#FFA8A8A8"/>
                     <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="HighContrast">
@@ -42,6 +45,7 @@
                     <SolidColorBrush x:Key="ButtonBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
+                    <SolidColorBrush x:Key="InputPlaceholderBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
                     <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
@@ -72,12 +76,14 @@
                 <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
                 <Setter Property="CornerRadius" Value="4"/>
                 <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
+                <Setter Property="PlaceholderForeground" Value="{ThemeResource InputPlaceholderBrush}"/>
             </Style>
             <Style x:Key="GlassComboBox" TargetType="ComboBox" BasedOn="{StaticResource DefaultComboBoxStyle}">
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
                 <Setter Property="CornerRadius" Value="4"/>
                 <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
+                <Setter Property="PlaceholderForeground" Value="{ThemeResource InputPlaceholderBrush}"/>
             </Style>
             <Style x:Key="GlassNumberBox" TargetType="NumberBox">
                 <Setter Property="Background" Value="Transparent"/>
@@ -91,13 +97,8 @@
                 <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
             </Style>
 
-            <!-- 所有下拉框（含没写 Style 的）统一内嵌字体；否则一部分走 GlassComboBox、
-                 一部分走模板默认字族，中文观感不一致（有的发虚）。
-                 下拉项也单独指定字体：ComboBoxItem 模板里的 ContentPresenter 不一定会继承
-                 ComboBox 的 FontFamily，展开后的列表就会有的清晰有的发虚。 -->
-            <Style TargetType="ComboBox" BasedOn="{StaticResource DefaultComboBoxStyle}">
-                <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
-            </Style>
+            <!-- 所有下拉框（含没写 Style 的）统一玻璃样式 + 内嵌字体 + TextBlock 项模板 -->
+            <Style TargetType="ComboBox" BasedOn="{StaticResource GlassComboBox}"/>
             <Style TargetType="ComboBoxItem" BasedOn="{StaticResource DefaultComboBoxItemStyle}">
                 <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}"/>
             </Style>

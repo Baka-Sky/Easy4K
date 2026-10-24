@@ -87,10 +87,10 @@
                             <ComboBox Grid.Column="1" MinWidth="130" VerticalAlignment="Center"
                                       Style="{StaticResource GlassComboBox}"
                                       SelectedIndex="{x:Bind Vm.UiZoomIndex, Mode=TwoWay}">
-                                <ComboBoxItem Content="100%（标准）"/>
-                                <ComboBoxItem Content="110%"/>
-                                <ComboBoxItem Content="125%"/>
-                                <ComboBoxItem Content="150%（最大）"/>
+                                <x:String>100%（标准）</x:String>
+                                <x:String>110%</x:String>
+                                <x:String>125%</x:String>
+                                <x:String>150%（最大）</x:String>
                             </ComboBox>
                             <TextBlock Grid.Column="2" VerticalAlignment="Center" FontSize="12" Opacity="0.6"
                                        Text="在窗口最大化时生效（普通窗口保持100%），整体等比放大界面"/>
