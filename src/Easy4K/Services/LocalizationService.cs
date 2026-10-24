@@ -425,17 +425,23 @@ internal static class ContentDialogLocalizationExtensions
             var sb = new Storyboard();
             sb.Children.Add(fade);
 
-            // 位移走合成层（不触发重新布局）
+            // 缩放走合成层：Fluent 的标准对话框入场是「轻微放大 + 淡入」，
+            // 与退场的缩小淡出成对；位移不参与，避免和模板自身的居中定位打架。
             try
             {
-                ElementCompositionPreview.SetIsTranslationEnabled(sender, true);
-                sender.Translation = new System.Numerics.Vector3(0, 18, 0);
                 var visual = ElementCompositionPreview.GetElementVisual(sender);
-                var slide = visual.Compositor.CreateVector3KeyFrameAnimation();
-                slide.InsertKeyFrame(1f, System.Numerics.Vector3.Zero);
-                slide.Duration = TimeSpan.FromMilliseconds(190);
-                slide.StopBehavior = AnimationStopBehavior.SetToFinalValue;
-                visual.StartAnimation("Translation", slide);
+                var compositor = visual.Compositor;
+                visual.CenterPoint = new System.Numerics.Vector3(
+                    (float)sender.ActualWidth / 2f, (float)sender.ActualHeight / 2f, 0f);
+                visual.Scale = new System.Numerics.Vector3(0.92f, 0.92f, 1f);
+
+                var scaleEase = compositor.CreateCubicBezierEasingFunction(
+                    new System.Numerics.Vector2(0.1f, 0.9f), new System.Numerics.Vector2(0.2f, 1f));
+                var scale = compositor.CreateVector3KeyFrameAnimation();
+                scale.InsertKeyFrame(1f, System.Numerics.Vector3.One, scaleEase);
+                scale.Duration = TimeSpan.FromMilliseconds(220);
+                scale.StopBehavior = AnimationStopBehavior.SetToFinalValue;
+                visual.StartAnimation("Scale", scale);
             }
             catch { }
 
