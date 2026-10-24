@@ -56,17 +56,25 @@
                     </StackPanel>
                 </Border>
 
-                <!-- 赞助 -->
+                <!-- 赞助：文字在左（垂直居中），二维码在右 -->
                 <Border Style="{StaticResource CardBorder}">
-                    <StackPanel Spacing="10">
-                        <TextBlock Text="赞助" FontSize="14" FontWeight="SemiBold"/>
-                        <TextBlock FontSize="13" TextWrapping="Wrap"
-                                   Text="如果您觉得项目不错，您可以考虑赞助我；我会将资金投入服务器费用及宣发费用中。"/>
-                        <StackPanel Orientation="Horizontal" Spacing="16" HorizontalAlignment="Left">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Spacing="8" VerticalAlignment="Center">
+                            <TextBlock Text="赞助" FontSize="14" FontWeight="SemiBold"/>
+                            <TextBlock FontSize="13" TextWrapping="Wrap"
+                                       Text="如果您觉得项目不错，您可以考虑赞助我；我会将资金投入服务器费用及宣发费用中。"/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
                             <Image x:Name="SponsorQr1" Height="200" Stretch="Uniform"/>
                             <Image x:Name="SponsorQr2" Height="200" Stretch="Uniform"/>
                         </StackPanel>
-                    </StackPanel>
+                    </Grid>
                 </Border>
 
             </StackPanel>
