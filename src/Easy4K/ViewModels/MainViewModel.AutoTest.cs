@@ -254,9 +254,9 @@ public partial class MainViewModel
                 null, 2, ifModel, 2, false, false, false, false, 4, true, dedupMode));
         }
 
-        // 1/2：只拆帧 + 合并（不跑任何模型）——最快看清去重进度与预览
-        Add(false, true, "去重·性能模式（拆帧+合并，不跑模型）", "performance");
-        Add(false, true, "去重·完美模式（拆帧+合并，含 QR+光流）", "uhd");
+        // 1/2：只拆帧 + 合并（不跑超分/补帧模型，仅去重判决）——最快看清去重进度与预览
+        Add(false, true, "去重·性能模式（拆帧+合并，FP16 模型）", "performance");
+        Add(false, true, "去重·完美模式（拆帧+合并，FP32 模型）", "uhd");
         // 3/4：最轻补帧 ×2 + 合并 —— 验证去重与补帧回填的联动
         Add(true, true, $"去重·性能模式 + 最轻补帧 {lite} ×2", "performance", lite);
         Add(true, true, $"去重·完美模式 + 最轻补帧 {lite} ×2", "uhd", lite);
@@ -335,11 +335,11 @@ public partial class MainViewModel
         // SDR→HDR（仅 RTX + NVEncC 可用）
         if (gpu.SupportsHdr && Tools.NvEncExists)
             Add(true, true, false, true, true, true, dftSr, 2, null, 2, "组合 SDR→HDR（NVEncC 硬件编码）");
-        // 帧去重：性能模式（前两阶）与完美模式（四阶全开，含 QR 分解 + Farnebäck 光流）
+        // 帧去重：性能模式（FP16 模型）与完美模式（FP32 模型）
         Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
-            "组合 帧去重·性能模式（像素差+dHash）", dedup: true, dedupMode: "performance");
+            "组合 帧去重·性能模式（FP16）", dedup: true, dedupMode: "performance");
         Add(true, true, true, true, true, false, dftSr, 2, ncnnDefault, 2,
-            "组合 帧去重·完美模式（QR分解+光流四阶）", dedup: true, dedupMode: "uhd");
+            "组合 帧去重·完美模式（FP32）", dedup: true, dedupMode: "uhd");
         // CPU 模式（代表性单模型，速度最慢放最后）
         Add(true, true, false, true, true, false, dftSr, 2, null, 2,
             "组合 CPU处理模式（超分代表性模型，最慢）", safe: true, cpu: true, threads: 8);

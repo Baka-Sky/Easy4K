@@ -54,7 +54,7 @@
                             <Button Grid.Column="1" HorizontalAlignment="Left"
                                     Padding="3" Background="Transparent" BorderThickness="0"
                                     VerticalAlignment="Center" Click="OnDedupInfoClick"
-                                    ToolTipService.ToolTip="性能模式：像素差粗筛 + dHash 细筛&#x0a;完美模式：再加 QR 分解精判 + Farnebäck 光流终判&#x0a;&#x0a;点击图标查看详细讲解"
+                                    ToolTipService.ToolTip="性能模式：FP16 半精度 AI 模型，速度快、误删更少&#x0a;完美模式：FP32 单精度 AI 模型，判得更细，更吃算力&#x0a;&#x0a;点击图标查看详细讲解"
                                     AutomationProperties.Name="帧去重说明">
                                 <FontIcon Glyph="&#xE946;" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             </Button>
@@ -64,12 +64,13 @@
                                       IsOn="{x:Bind Vm.DedupEnabled, Mode=TwoWay}" FontSize="12"/>
 
                         <TextBlock TextWrapping="Wrap" FontSize="10" Opacity="0.6"
-                                   Text="在超分/补帧前剔除与上一帧重复的画面，处理完按索引表回填，成品时长、帧率与音频均不变；重复帧越多省得越多（动画「一拍二/三」通常可省 30%~50% 的超分/补帧耗时）。"/>
+                                   Text="用 AI 孪生网络判断相邻两帧是不是同一画面：重复帧不进超分/补帧，处理完按索引表原样补回，成品时长、帧率与音频都不变。重复帧越多省得越多（动画「一拍二/三」通常可省 30%~50% 的超分/补帧耗时）。"/>
 
                         <RadioButton x:Name="DedupPerfRb" Content="Performance Mode 性能模式" GroupName="DedupMode"
                                      Checked="OnDedupModeChecked" FontSize="12"/>
                         <RadioButton x:Name="DedupUhdRb" Content="UHD Mode 完美模式" GroupName="DedupMode"
                                      Checked="OnDedupModeChecked" FontSize="12"/>
+                        <TextBlock x:Name="DedupHint" FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
                         </StackPanel>
 
                         <!-- 卡片右下角插图（随主题切换：浅色用黑版、深色用白版；源码见 AdvancedPage.xaml.cs）。

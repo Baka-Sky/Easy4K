@@ -996,8 +996,8 @@ public sealed partial class MainWindow : Window
         "音频超分：AudioSR（ONNX Runtime，CUDA / DirectML / CPU 自动降级）\n" +
         "其他组件：FFmpeg / NVEncC / Python / PyTorch / CuPy / OpenCV\n" +
         "本软件免费分发；唯一收费内容为自研的帧去重（SFDP）算法及其相关服务。\n\n" +
-        "附加能力（「高级」页，默认关闭）：帧去重（自研四阶级联判决：像素差+分块局部 / dHash / QR 分解 /\n" +
-        "Farnebäck 稠密光流）/ 音频超分（AudioSR，48kHz 高带宽重建，FP16 性能模式与 FP32 完美模式）\n\n" +
+        "附加能力（「高级」页，默认关闭）：帧去重（自研 SFDP 孪生网络 ONNX 模型：整帧 128×128 分块算相似度，\n" +
+        "FP16 性能模式与 FP32 完美模式，DirectML / CPU 自动降级）/ 音频超分（AudioSR，48kHz 高带宽重建，FP16 性能模式与 FP32 完美模式）\n\n" +
         "========== 免责声明 ==========\n\n" +
         "1. 本软件以\"现状\"（AS-IS）提供，开发者不对其正确性、可靠性、完整性及适用性作任何明示或暗示保证。\n\n" +
         "2. 使用本软件及所调用第三方组件（FFmpeg / ncnn / PyTorch / AudioSR / NVEncC 等）产生的一切后果，包括但不限于：\n" +

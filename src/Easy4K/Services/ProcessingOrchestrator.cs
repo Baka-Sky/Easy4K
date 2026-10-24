@@ -1676,7 +1676,7 @@ public sealed class ProcessingOrchestrator
             var removedDir = Path.Combine(tempRoot, "input_frames_dedup_removed");
             if (!dedupOnlyForIf) Directory.CreateDirectory(removedDir);
 
-            // 进度文本形如：帧去重(性能) 判决阶段(dHash) 已判重365帧 第1234帧/共7187帧
+            // 进度文本形如：帧去重(性能) AI判决 已判重365帧 第1234帧/共7187帧
             // （"已判重"=累计判为重复的帧数；"第 N 帧/共 M 帧"=判决进度；百分比单独显示在右侧）
             string DedupText(string phase, int dup) => $"帧去重({modeShort}) {phase} 已判重{dup}帧";
 
@@ -1789,22 +1789,35 @@ public sealed class ProcessingOrchestrator
                 ? $"帧去重完成：剔除 {movedCount} 帧；超分仍处理全部 {decisions.Count} 帧，补帧只处理 {keptNow} 帧（省 {dedupRate:P1}）"
                 : $"帧去重完成：剔除 {movedCount} 帧，实际处理 {keptNow} 帧（省 {dedupRate:P1}），重复帧保留在 {removedDir}");
 
-            // 各阶淘汰量（论文四阶级联的可观测性：出问题时能一眼看出卡在哪一阶）
-            var byPixel = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.PixelDiff);
-            var byHash = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.Hash);
-            var byQr = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.Qr);
-            var byFlow = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.Flow);
-            _logger.Info($"各阶判决：像素差淘汰 {byPixel}，dHash 淘汰 {byHash}，QR 淘汰 {byQr}，" +
-                         $"光流淘汰 {byFlow}，四阶全过判重 {result.DuplicateCount}");
+            if (ai is not null)
+            {
+                // AI 判决：Mad 位存的是模型给出的相似度分，直接看分布最有诊断价值
+                var sims = result.Decisions.Where(d => d.Decided == FrameDedupService.Stage.Ai)
+                    .Select(d => d.Mad).ToList();
+                var threshold = opt.Mode == "uhd" ? 0.5 : 0.6;
+                if (sims.Count > 0)
+                    _logger.Info($"AI 判决：相似度最低 {sims.Min():0.###}，最高 {sims.Max():0.###}，" +
+                                 $"阈值 {threshold:0.##} → 判重 {result.DuplicateCount} 帧（{ai.Provider}）");
+            }
+            else
+            {
+                // 各阶淘汰量（四阶判决器的可观测性：出问题时能一眼看出卡在哪一阶）
+                var byPixel = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.PixelDiff);
+                var byHash = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.Hash);
+                var byQr = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.Qr);
+                var byFlow = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.Flow);
+                _logger.Info($"各阶判决：像素差淘汰 {byPixel}，dHash 淘汰 {byHash}，QR 淘汰 {byQr}，" +
+                             $"光流淘汰 {byFlow}，四阶全过判重 {result.DuplicateCount}");
 
-            var qrSample = result.Decisions.Where(d => d.Decided >= FrameDedupService.Stage.Qr).Select(d => d.Qr).ToList();
-            if (qrSample.Count > 0)
-                _logger.Info($"QR 距离 D_norm（论文归一化）：最小 {qrSample.Min():0.###e-0}，最大 {qrSample.Max():0.###e-0}，" +
-                             $"阈值 {opt.QrThreshold} → 共淘汰 {byQr} 帧");
-            var flowSample = result.Decisions.Where(d => d.Decided >= FrameDedupService.Stage.Flow).Select(d => d.MeanFlow).ToList();
-            if (flowSample.Count > 0)
-                _logger.Info($"光流 MeanFlow：最小 {flowSample.Min():0.###}，最大 {flowSample.Max():0.###} 像素，" +
-                             $"阈值 {opt.FlowThreshold} → 共淘汰 {byFlow} 帧");
+                var qrSample = result.Decisions.Where(d => d.Decided >= FrameDedupService.Stage.Qr).Select(d => d.Qr).ToList();
+                if (qrSample.Count > 0)
+                    _logger.Info($"QR 距离 D_norm（论文归一化）：最小 {qrSample.Min():0.###e-0}，最大 {qrSample.Max():0.###e-0}，" +
+                                 $"阈值 {opt.QrThreshold} → 共淘汰 {byQr} 帧");
+                var flowSample = result.Decisions.Where(d => d.Decided >= FrameDedupService.Stage.Flow).Select(d => d.MeanFlow).ToList();
+                if (flowSample.Count > 0)
+                    _logger.Info($"光流 MeanFlow：最小 {flowSample.Min():0.###}，最大 {flowSample.Max():0.###} 像素，" +
+                                 $"阈值 {opt.FlowThreshold} → 共淘汰 {byFlow} 帧");
+            }
             return keptNow;
         }
         catch (OperationCanceledException) { throw; }

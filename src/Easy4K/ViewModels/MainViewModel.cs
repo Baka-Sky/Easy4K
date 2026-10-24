@@ -460,7 +460,7 @@ public partial class MainViewModel : ObservableObject
     /// <summary>相邻帧去重开关（超分/补帧前剔除重复帧，处理完回填，时长与音频不变）</summary>
     [ObservableProperty] private bool _dedupEnabled;
 
-    /// <summary>去重模式：performance=性能模式（像素差+dHash）；uhd=完美模式（再加 SSIM 与块运动精判）</summary>
+    /// <summary>去重模式：performance=性能模式（FP16 半精度模型，阈值 0.60）；uhd=完美模式（FP32 单精度模型，阈值 0.50）</summary>
     [ObservableProperty] private string _dedupMode = "performance";
 
     partial void OnDedupEnabledChanged(bool value)
