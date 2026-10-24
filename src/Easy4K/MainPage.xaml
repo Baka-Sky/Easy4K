@@ -37,13 +37,6 @@
         </ResourceDictionary>
     </Page.Resources>
 
-    <Page.KeyboardAccelerators>
-        <KeyboardAccelerator Key="S" Modifiers="Control" Invoked="OnAcceleratorStart"/>
-        <KeyboardAccelerator Key="S" Modifiers="Control,Shift" Invoked="OnAcceleratorStop"/>
-        <KeyboardAccelerator Key="L" Modifiers="Control" Invoked="OnAcceleratorClearLog"/>
-        <KeyboardAccelerator Key="F1" Invoked="OnAcceleratorHelp"/>
-    </Page.KeyboardAccelerators>
-
     <Grid Padding="16,0,16,16">
         <ScrollViewer Padding="0,8,0,0" VerticalScrollBarVisibility="Auto">
             <StackPanel Spacing="10">

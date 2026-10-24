@@ -13,7 +13,7 @@ using WinRT.Interop;
 
 namespace Easy4K;
 
-/// <summary>主页 code-behind：路径选择、处理按钮、快捷键。菜单栏已上移到 MainWindow。</summary>
+/// <summary>主页 code-behind：路径选择、处理按钮。菜单栏已上移到 MainWindow。</summary>
 public sealed partial class MainPage : Page
 {
     private MainViewModel Vm => App.Services;
@@ -906,49 +906,5 @@ public sealed partial class MainPage : Page
         var now = DateTime.Now;
         var next = now.AddMinutes(15 - now.Minute % 15).AddSeconds(-now.Second);
         return next.TimeOfDay;
-    }
-
-    // ===================== 快捷键 =====================
-
-    /// <summary>本窗口线程里某键此刻是否真的按下。</summary>
-    private static bool IsKeyDown(Windows.System.VirtualKey key) =>
-        Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(key)
-            .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
-
-    /// <summary>Ctrl 组合键闸门：WinUI 部分版本会忽略 KeyboardAccelerator 的 Modifiers，
-    /// 只按字母就触发 Invoked——在路径输入框里打 s/l 会误开始处理、误清日志。
-    /// 所以每个快捷键都按真实键态二次校验；校验不过时**不设 Handled**，把按键原样放行给控件当普通输入。
-    /// shift=true 时要求 Shift 同时按下（Ctrl+Shift+S），并要求不带 Shift（Ctrl+S）以免互相串。</summary>
-    private bool CtrlChord(KeyboardAcceleratorInvokedEventArgs args, bool shift = false)
-    {
-        if (!IsKeyDown(Windows.System.VirtualKey.Control)) return false;
-        if (IsKeyDown(Windows.System.VirtualKey.Shift) != shift) return false;
-        args.Handled = true;
-        return true;
-    }
-
-    private async void OnAcceleratorStart(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
-    { if (!CtrlChord(args)) return; await StartWithFrameParamsAsync(); }
-    private void OnAcceleratorStop(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
-    { if (!CtrlChord(args, shift: true)) return; Vm.Stop(); }
-    private void OnAcceleratorClearLog(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
-    { if (!CtrlChord(args)) return; Vm.ClearLog(); }
-    private void OnAcceleratorHelp(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
-    {
-        args.Handled = true;
-        _ = ShowHelpAsync();
-    }
-
-    private async Task ShowHelpAsync()
-    {
-        var dlg = new ContentDialog
-        {
-            Title = "使用说明",
-            Content = "1. 选择输入视频\n2. 自动检测分辨率/帧率\n3. 勾选要执行的处理（超分/补帧/合并/音频/HDR）\n" +
-                      "4. 选择模型与倍率\n5. 点击开始处理\n\n处理流程：拆帧 → 超分 → 补帧 → 合并 → 嵌入音频 → HDR",
-            CloseButtonText = "关闭",
-            XamlRoot = XamlRoot
-        };
-        await dlg.ShowLocalizedAsync();
     }
 }
