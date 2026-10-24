@@ -20,8 +20,9 @@ public sealed class EnvironmentDetector
         {
             Check("FFmpeg", _tools.FFmpegExists, extra: _tools.FFmpegExists ? GetVersion(_tools.FFmpegExe, "-version") : ""),
             Check("FFprobe", _tools.FFprobeExists, extra: _tools.FFprobeExists ? GetVersion(_tools.FFprobeExe, "-version") : ""),
-            Check("Real-ESRGAN", _tools.RealEsrganExists, extra: _tools.RealEsrganExists ? GetVersion(_tools.RealEsrganExe, "-v") : ""),
-            Check("RIFE", _tools.RifeExists, extra: _tools.RifeExists ? GetVersion(_tools.RifeExe, "-v") : "")
+            // ncnn 工具没有版本输出（-v 只是 verbose，会打印 usage 退出），只报是否部署
+            Check("Real-ESRGAN", _tools.RealEsrganExists, extra: _tools.RealEsrganExists ? "已部署" : ""),
+            Check("RIFE", _tools.RifeExists, extra: _tools.RifeExists ? "已部署" : "")
         };
 
         // NVEncC：需要版本 ≥ 9.32 才支持 --vpp-ngx-truehdr (BUG-05)

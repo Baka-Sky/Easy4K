@@ -1072,7 +1072,7 @@ public sealed partial class MainWindow : Window
                     Text = content,
                     TextWrapping = TextWrapping.Wrap,
                     FontFamily = new FontFamily("Consolas"),
-                    FontSize = 12
+                    FontSize = 13
                 }
             },
             CloseButtonText = "关闭",
@@ -1448,7 +1448,7 @@ public sealed partial class MainWindow : Window
                 TextWrapping = TextWrapping.Wrap,
                 IsTextSelectionEnabled = true,
                 FontFamily = new FontFamily("Consolas"),
-                FontSize = 12
+                FontSize = 13
             }
         };
 
