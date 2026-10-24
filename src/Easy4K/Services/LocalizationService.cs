@@ -224,6 +224,11 @@ public static class Loc
                 case Control c:
                     c.FontFamily = PickFace(c.FontFamily, c.FontWeight);
                     break;
+                // 正文（ContentDialog.Content 是字符串时）由模板里的 ContentPresenter 自己绘制，
+                // 它不是 Control，上面那个分支管不到，会一直用主题里的系统字族
+                case ContentPresenter cp:
+                    cp.FontFamily = PickFace(cp.FontFamily, cp.FontWeight);
+                    break;
             }
         }
         catch { }
