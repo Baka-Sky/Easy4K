@@ -4,9 +4,11 @@ using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Composition;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
+using Microsoft.UI.Xaml.Hosting;
 using Windows.UI.Text;
 
 namespace Easy4K.Services;
@@ -377,6 +379,8 @@ internal static class ContentDialogLocalizationExtensions
     public static async System.Threading.Tasks.Task<ContentDialogResult> ShowLocalizedAsync(this ContentDialog dialog)
     {
         Loc.LocalizeDialog(dialog);
+        // Loading 早于模板实例化：在这里把初始透明度压成 0，避免"先完整闪一下再淡入"
+        dialog.Loading += OnLoading;
         dialog.Opened += OnOpened;
         try
         {
@@ -384,36 +388,57 @@ internal static class ContentDialogLocalizationExtensions
         }
         finally
         {
+            dialog.Loading -= OnLoading;
             dialog.Opened -= OnOpened;
         }
+    }
+
+    private static void OnLoading(FrameworkElement sender, object args)
+    {
+        try
+        {
+            sender.Opacity = 0;
+        }
+        catch { }
     }
 
     private static void OnOpened(ContentDialog sender, ContentDialogOpenedEventArgs args)
     {
         try
         {
-            // 模板根：动画作用在整个对话框上（含标题/内容/按钮），不是只动内容区
-            if (VisualTreeHelper.GetChildrenCount(sender) == 0) return;
-            if (VisualTreeHelper.GetChild(sender, 0) is not FrameworkElement root) return;
-
-            var translate = new TranslateTransform { Y = 18 };
-            root.RenderTransform = translate;
-            root.Opacity = 0;
-
-            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
             var duration = new Duration(TimeSpan.FromMilliseconds(190));
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
 
-            var fade = new DoubleAnimation { From = 0, To = 1, Duration = duration, EasingFunction = ease };
-            Storyboard.SetTarget(fade, root);
+            // 透明度用 XAML Storyboard 改 XAML 属性本身：ContentDialog 的模板与视觉状态也会动
+            // Opacity，若只改合成层 visual.Opacity，会在下一帧被 XAML 值覆盖回去，看起来"没有动画"。
+            var fade = new DoubleAnimation
+            {
+                From = 0,
+                To = 1,
+                Duration = duration,
+                EasingFunction = ease,
+                EnableDependentAnimation = true
+            };
+            Storyboard.SetTarget(fade, sender);
             Storyboard.SetTargetProperty(fade, "Opacity");
-
-            var slide = new DoubleAnimation { From = 18, To = 0, Duration = duration, EasingFunction = ease };
-            Storyboard.SetTarget(slide, translate);
-            Storyboard.SetTargetProperty(slide, "Y");
 
             var sb = new Storyboard();
             sb.Children.Add(fade);
-            sb.Children.Add(slide);
+
+            // 位移走合成层（不触发重新布局）
+            try
+            {
+                ElementCompositionPreview.SetIsTranslationEnabled(sender, true);
+                sender.Translation = new System.Numerics.Vector3(0, 18, 0);
+                var visual = ElementCompositionPreview.GetElementVisual(sender);
+                var slide = visual.Compositor.CreateVector3KeyFrameAnimation();
+                slide.InsertKeyFrame(1f, System.Numerics.Vector3.Zero);
+                slide.Duration = TimeSpan.FromMilliseconds(190);
+                slide.StopBehavior = AnimationStopBehavior.SetToFinalValue;
+                visual.StartAnimation("Translation", slide);
+            }
+            catch { }
+
             sb.Begin();
         }
         catch
