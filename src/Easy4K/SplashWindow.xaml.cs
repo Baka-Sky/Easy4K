@@ -92,6 +92,7 @@ public sealed partial class SplashWindow : Window
                 w = h * 16.0 / 10.0;
             }
 
+            _dpiScale = scale;
             _logicalWidth = Math.Max(320, (int)Math.Round(w));
             var physW = (int)Math.Round(w * scale);
             var physH = (int)Math.Round(h * scale);
@@ -114,6 +115,9 @@ public sealed partial class SplashWindow : Window
     /// <summary>窗口逻辑宽度（供图片按显示尺寸解码）</summary>
     private int _logicalWidth = 800;
 
+    /// <summary>当前显示器 DPI 缩放（1.0 = 100%）</summary>
+    private double _dpiScale = 1.0;
+
     private async Task LoadImageAsync()
     {
         try
@@ -121,10 +125,12 @@ public sealed partial class SplashWindow : Window
             var path = Path.Combine(AppContext.BaseDirectory, "Assets", "Splash.png");
             if (!File.Exists(path)) return;
 
+            // 按物理像素解码（逻辑宽 × DPI 缩放）：解码尺寸 ≈ 实际显示像素，
+            // 避免"先解码成小图再被系统放大"造成的二次模糊
             var bmp = new BitmapImage
             {
-                DecodePixelWidth = _logicalWidth,   // 按实际窗口宽度解码（高 DPI 下仍清晰）
-                DecodePixelType = DecodePixelType.Logical
+                DecodePixelWidth = Math.Max(1, (int)Math.Round(_logicalWidth * _dpiScale)),
+                DecodePixelType = DecodePixelType.Physical
             };
             using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 await bmp.SetSourceAsync(fs.AsRandomAccessStream());
