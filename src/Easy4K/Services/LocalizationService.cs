@@ -406,7 +406,7 @@ internal static class ContentDialogLocalizationExtensions
     {
         try
         {
-            var duration = new Duration(TimeSpan.FromMilliseconds(190));
+            var duration = new Duration(TimeSpan.FromMilliseconds(250));
             var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
 
             // 透明度用 XAML Storyboard 改 XAML 属性本身：ContentDialog 的模板与视觉状态也会动
@@ -425,23 +425,21 @@ internal static class ContentDialogLocalizationExtensions
             var sb = new Storyboard();
             sb.Children.Add(fade);
 
-            // 缩放走合成层：Fluent 的标准对话框入场是「轻微放大 + 淡入」，
-            // 与退场的缩小淡出成对；位移不参与，避免和模板自身的居中定位打架。
+            // 位移走合成层：与退场的「推出」方向相反 —— 从下方向上滑入（48px），不触发重新布局。
             try
             {
+                ElementCompositionPreview.SetIsTranslationEnabled(sender, true);
+                sender.Translation = new System.Numerics.Vector3(0, 48, 0);
+
                 var visual = ElementCompositionPreview.GetElementVisual(sender);
                 var compositor = visual.Compositor;
-                visual.CenterPoint = new System.Numerics.Vector3(
-                    (float)sender.ActualWidth / 2f, (float)sender.ActualHeight / 2f, 0f);
-                visual.Scale = new System.Numerics.Vector3(0.92f, 0.92f, 1f);
-
-                var scaleEase = compositor.CreateCubicBezierEasingFunction(
+                var slideEase = compositor.CreateCubicBezierEasingFunction(
                     new System.Numerics.Vector2(0.1f, 0.9f), new System.Numerics.Vector2(0.2f, 1f));
-                var scale = compositor.CreateVector3KeyFrameAnimation();
-                scale.InsertKeyFrame(1f, System.Numerics.Vector3.One, scaleEase);
-                scale.Duration = TimeSpan.FromMilliseconds(220);
-                scale.StopBehavior = AnimationStopBehavior.SetToFinalValue;
-                visual.StartAnimation("Scale", scale);
+                var slide = compositor.CreateVector3KeyFrameAnimation();
+                slide.InsertKeyFrame(1f, System.Numerics.Vector3.Zero, slideEase);
+                slide.Duration = TimeSpan.FromMilliseconds(250);
+                slide.StopBehavior = AnimationStopBehavior.SetToFinalValue;
+                visual.StartAnimation("Translation", slide);
             }
             catch { }
 
