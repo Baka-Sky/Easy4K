@@ -10,7 +10,9 @@
     mc:Ignorable="d">
 
     <!-- 根布局：普通主题下由代码填主题底色（见 SetRootBackground），亚克力/图片主题保持透明露出背景 -->
-    <Grid x:Name="RootLayout">
+    <!-- UseLayoutRounding：把布局对齐到整像素。125% / 175% 这类非整数缩放下，
+         否则文本基线会落在半像素上，ClearType 失效，字边缘出现锯齿/发虚。 -->
+    <Grid x:Name="RootLayout" UseLayoutRounding="True">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>

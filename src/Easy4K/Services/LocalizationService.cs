@@ -158,17 +158,25 @@ public static class Loc
     private static FontFamily FontForWeight(FontWeight weight) =>
         weight.Weight >= FontWeights.SemiBold.Weight ? AppBoldFont : AppFont;
 
-    /// <summary>该字族要不要替换成内嵌字体。图标字体（Fluent Icons / MDL2 / Symbol）与等宽日志（Consolas）
-    /// 是刻意保留的，不能动；已经是内嵌字体的也不重复设置。</summary>
-    private static bool ShouldReplaceFont(FontFamily? f)
+    /// <summary>该字族是不是内嵌的 HarmonyOS（Regular / Medium / Bold 三个文件都算）。</summary>
+    private static bool IsAppFont(FontFamily? f)
+        => (f?.Source ?? "").Contains("HarmonyOS", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>图标字体与等宽日志是刻意保留的，不能替换。</summary>
+    private static bool IsIconFont(FontFamily? f)
+    {
+        var s = f?.Source ?? "";
+        return s.Contains("Consolas", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("Fluent Icons", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("MDL2", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("Symbol", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>是不是系统默认字族（这类要换成内嵌字体）。</summary>
+    private static bool IsSystemFont(FontFamily? f)
     {
         var s = f?.Source ?? "";
         if (s.Length == 0) return true;
-        if (s.Contains("HarmonyOS", StringComparison.OrdinalIgnoreCase)) return false;
-        if (s.Contains("Consolas", StringComparison.OrdinalIgnoreCase)) return false;
-        if (s.Contains("Fluent Icons", StringComparison.OrdinalIgnoreCase)) return false;
-        if (s.Contains("MDL2", StringComparison.OrdinalIgnoreCase)) return false;
-        if (s.Contains("Symbol", StringComparison.OrdinalIgnoreCase)) return false;
         return s.Contains("Segoe", StringComparison.OrdinalIgnoreCase)
             || s.Contains("YaHei", StringComparison.OrdinalIgnoreCase)
             || s.Contains("Arial", StringComparison.OrdinalIgnoreCase)
@@ -182,15 +190,35 @@ public static class Loc
         {
             switch (el)
             {
-                case TextBlock tb when ShouldReplaceFont(tb.FontFamily):
-                    tb.FontFamily = FontForWeight(tb.FontWeight);
+                case TextBlock tb:
+                    tb.FontFamily = PickFace(tb.FontFamily, tb.FontWeight);
                     break;
-                case Control c when ShouldReplaceFont(c.FontFamily):
-                    c.FontFamily = FontForWeight(c.FontWeight);
+                case Control c:
+                    c.FontFamily = PickFace(c.FontFamily, c.FontWeight);
                     break;
             }
         }
         catch { }
+    }
+
+    /// <summary>按字重挑真实字面：SemiBold 及以上用 Bold 文件，其余用 Regular。
+    /// 注意：全局隐式 TextBlock 样式会给每个文本挂上 Regular，如果这里只判断"不是系统字体就跳过"，
+    /// 所有 SemiBold/Bold 都会被 DirectWrite 合成假粗体 —— 笔画发毛、边缘锯齿，小字号尤其明显。
+    /// 例外：显式用了 Medium 家族且不是粗体时保持 Medium，那正是它的用途。</summary>
+    private static FontFamily PickFace(FontFamily? current, FontWeight weight)
+    {
+        if (IsIconFont(current)) return current ?? AppFont;
+
+        var s = current?.Source ?? "";
+        var bold = weight.Weight >= FontWeights.SemiBold.Weight;
+
+        if (!bold && s.Contains("HarmonyOS Sans SC Medium", StringComparison.OrdinalIgnoreCase))
+            return current!;
+
+        if (IsAppFont(current) || IsSystemFont(current))
+            return FontForWeight(weight);
+
+        return current ?? AppFont;
     }
 
     /// <summary>代码里 new 出来的 ContentDialog 不在可视树里（弹窗挂在 XamlRoot 的 popup 层），
