@@ -29,7 +29,7 @@
                 </StackPanel>
 
                 <Border Style="{StaticResource CardBorder}">
-                    <StackPanel Spacing="10">
+                    <StackPanel Spacing="8">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -47,8 +47,10 @@
                                    HorizontalAlignment="Right" VerticalAlignment="Top"/>
                         </Grid>
 
-                        <!-- 版本、组件、附加能力、免责声明：与旧「关于」弹窗同一份文本 -->
+                        <!-- 版本、组件、附加能力、免责声明：与旧「关于」弹窗同一份文本。
+                             行高按字号收紧，否则内嵌字体自带的 ascent/descent 会留下很大的行距 -->
                         <TextBlock x:Name="AboutTextBlock" FontSize="13" TextWrapping="Wrap"
+                                   LineHeight="18" LineStackingStrategy="BlockLineHeight"
                                    IsTextSelectionEnabled="True"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     </StackPanel>

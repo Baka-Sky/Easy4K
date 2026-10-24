@@ -20,9 +20,11 @@ public sealed partial class AboutPage : Page
         InitializeComponent();
 
         var text = App.MainWindow?.AboutText ?? "";
-        // AboutText 首行是「Easy4K vX - 一键视频超分补帧工具」，页面上方已单独显示，正文去掉这行
+        // AboutText 首行是「Easy4K vX - 一键视频超分补帧工具」，页面上方已单独显示，正文去掉这行；
+        // 段落间原本是空行（\n\n），页面上按行高收紧后显得间隔过大，压成单换行
         var firstBreak = text.IndexOf('\n');
-        AboutTextBlock.Text = firstBreak >= 0 ? text[(firstBreak + 1)..].TrimStart() : text;
+        var body = firstBreak >= 0 ? text[(firstBreak + 1)..].TrimStart() : text;
+        AboutTextBlock.Text = body.Replace("\n\n", "\n");
 
         // 右上角 logo：浅色用黑版、深色用白版。构造期先发起解码，主题解析出来后再确认一次
         ApplyLogo();
