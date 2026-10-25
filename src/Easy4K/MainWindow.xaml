@@ -107,42 +107,44 @@
 
                 <Frame x:Name="RootFrame" Grid.Row="2"/>
 
-                <!-- 仅 Debug：开发信息（左下角常驻，无底色、不参与命中测试、不挡操作） -->
+                <!-- 非目标式通知条：自绘卡片，直接放在页面树里（不用 TeachingTip —— 它挂在弹出层，
+                     文字只能走灰度抗锯齿，小字发毛）。底部居中，点"知道了"或动作按钮关闭。
+                     标题、正文、动作按钮由 MainWindow.ShowNotice 动态指定。
+                     放在 DebugInfoText 之前：让调试叠层压住通知条，而不是反过来。 -->
+                <Border x:Name="NoticeBar" Grid.Row="2"
+                        Visibility="Collapsed"
+                        HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                        Margin="24,0,24,20" Padding="16,12" MaxWidth="760"
+                        CornerRadius="8"
+                        Background="{ThemeResource CardBgBrush}"
+                        BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                            <!-- Tag=NoLocalize：内容是运行期动态写入的，不参与字符串本地化（否则切页会被旧文本覆盖） -->
+                            <TextBlock x:Name="NoticeTitle" Tag="NoLocalize" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="NoticeMessage" Tag="NoLocalize" FontSize="13" TextWrapping="Wrap"
+                                       IsTextSelectionEnabled="True"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <Button x:Name="NoticeActionButton" Grid.Column="1" Visibility="Collapsed"
+                                Style="{StaticResource GlassButton}" Click="OnNoticeBarAction"/>
+                        <Button x:Name="NoticeCloseButton" Grid.Column="2" VerticalAlignment="Center"
+                                Style="{StaticResource GlassButton}" Content="知道了" Click="OnNoticeBarClose"/>
+                    </Grid>
+                </Border>
+
+                <!-- 仅 Debug：开发信息（左下角常驻，无底色、不参与命中测试、不挡操作）。
+                     放在通知条之后，保证调试叠层始终在最上层。 -->
                 <TextBlock x:Name="DebugInfoText" Grid.Row="2" HorizontalAlignment="Left" VerticalAlignment="Bottom"
                            Margin="12,0,0,10" FontSize="13" IsHitTestVisible="False" Visibility="Collapsed"
                            Foreground="{ThemeResource SystemFillColorCautionBrush}"/>
             </Grid>
         </NavigationView>
-
-        <!-- 非目标式通知条：自绘卡片，直接放在页面树里（不用 TeachingTip —— 它挂在弹出层，
-             文字只能走灰度抗锯齿，小字发毛）。底部居中，点"知道了"或动作按钮关闭。
-             标题、正文、动作按钮由 MainWindow.ShowNotice 动态指定。 -->
-        <Border x:Name="NoticeBar" Grid.Row="0" Grid.RowSpan="2"
-                Visibility="Collapsed"
-                HorizontalAlignment="Center" VerticalAlignment="Bottom"
-                Margin="24,0,24,20" Padding="16,12" MaxWidth="760"
-                CornerRadius="8"
-                Background="{ThemeResource CardBgBrush}"
-                BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
-            <Grid ColumnSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
-                    <!-- Tag=NoLocalize：内容是运行期动态写入的，不参与字符串本地化（否则切页会被旧文本覆盖） -->
-                    <TextBlock x:Name="NoticeTitle" Tag="NoLocalize" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                    <TextBlock x:Name="NoticeMessage" Tag="NoLocalize" FontSize="13" TextWrapping="Wrap"
-                               IsTextSelectionEnabled="True"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                </StackPanel>
-                <Button x:Name="NoticeActionButton" Grid.Column="1" Visibility="Collapsed"
-                        Style="{StaticResource GlassButton}" Click="OnNoticeBarAction"/>
-                <Button x:Name="NoticeCloseButton" Grid.Column="2" VerticalAlignment="Center"
-                        Style="{StaticResource GlassButton}" Content="知道了" Click="OnNoticeBarClose"/>
-            </Grid>
-        </Border>
 
         <!-- 远程控制模式：整窗盖住所有界面，只留中间的等待/已连接提示。
              由设置页「远程控制 → 启动」打开；结束远程控制后收起。 -->

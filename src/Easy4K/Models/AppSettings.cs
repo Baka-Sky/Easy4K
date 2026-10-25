@@ -58,6 +58,11 @@ public sealed class AppSettings
     /// <summary>图片背景主题中覆盖在背景图上的亚克力浓度（0-100，越大越糊/越暗、文字越清晰）</summary>
     public int BackdropAcrylicPercent { get; set; } = 45;
 
+    // ===================== 电源 =====================
+    /// <summary>启动时禁止 Windows 自动休眠：Easy4K 运行期间持续向系统申请唤醒，
+    /// 避免长时间处理被睡眠打断（不阻止关闭显示器或自动锁屏）</summary>
+    public bool PreventAutoSleep { get; set; }
+
     // ===================== 首次运行向导 / 启动自检 =====================
     /// <summary>首次运行欢迎向导是否已完成（协议/硬件声明/报告目录/主题等均已配置）</summary>
     public bool SetupCompleted { get; set; }

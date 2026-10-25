@@ -20,7 +20,7 @@ public sealed class VideoInfoDetector
         // 注意：r_frame_rate 是分数字符串如 "24/1"；duration 在 format 下，单位秒（小数）
         // 详细字段：编码/档次/像素格式/色彩（位深、HDR 判断都从这几项推）
         var args = "-v error -select_streams v:0 -count_packets " +
-                   "-show_entries stream=width,height,r_frame_rate,nb_read_packets,bit_rate," +
+                   "-show_entries stream=width,height,r_frame_rate,avg_frame_rate,nb_read_packets,bit_rate," +
                    "codec_name,profile,pix_fmt,color_space,color_transfer " +
                    "-show_entries format=duration,bit_rate,format_name,size -of json " +
                    $"\"{videoPath}\"";
@@ -38,6 +38,8 @@ public sealed class VideoInfoDetector
         if (stream.TryGetProperty("height", out var h)) info.Height = h.GetInt32();
         if (stream.TryGetProperty("r_frame_rate", out var fr)) info.FrameRateRaw = fr.GetString() ?? "";
         info.FrameRate = ParseFps(info.FrameRateRaw);
+        if (stream.TryGetProperty("avg_frame_rate", out var afr))
+            info.AverageFrameRate = ParseFps(afr.GetString() ?? "");
         if (stream.TryGetProperty("bit_rate", out var sb) && long.TryParse(sb.GetString(), out var sbr)) info.BitRate = sbr;
 
         if (stream.TryGetProperty("codec_name", out var cn)) info.VideoCodec = cn.GetString() ?? "";
@@ -64,6 +66,10 @@ public sealed class VideoInfoDetector
         else if (info.Duration.TotalSeconds > 0 && info.FrameRate > 0)
             frames = (long)Math.Round(info.Duration.TotalSeconds * info.FrameRate);
         info.TotalFrames = frames;
+
+        // 动态帧率（VFR）判定：标称帧率与平均帧率明显不一致，或按总帧数/时长算出的实际帧率
+        // 与标称帧率明显不一致，就按动态帧率处理（常见于手机拍摄、录屏与部分剪辑导出）。
+        info.IsVariableFrameRate = DetectVariableFrameRate(info);
 
         // 音频：编解码器 + 采样率 + 声道 + 码率（采样率供音频链路判断"这次有没有重采样"）
         var audio = DetectAudio(videoPath);
@@ -106,6 +112,28 @@ public sealed class VideoInfoDetector
         var bitRate = stream.TryGetProperty("bit_rate", out var b) && long.TryParse(b.GetString(), out var br) ? br : 0;
 
         return (string.IsNullOrWhiteSpace(codec) ? "" : codec, rate, channels, bitRate);
+    }
+
+    /// <summary>是否为动态帧率。容差 0.5%：正常 CFR 视频的标称/平均帧率只会有极小的取整误差。</summary>
+    private static bool DetectVariableFrameRate(VideoInfo info)
+    {
+        if (info.FrameRate <= 0) return false;
+        const double tolerance = 0.005;
+
+        // avg_frame_rate 与 r_frame_rate 不一致（VFR 最典型的特征）
+        if (info.AverageFrameRate > 0 &&
+            Math.Abs(info.AverageFrameRate - info.FrameRate) > info.FrameRate * tolerance)
+            return true;
+
+        // 辅助判断：总帧数 ÷ 时长 得到的实际平均帧率与标称帧率不一致
+        if (info.TotalFrames > 0 && info.Duration.TotalSeconds > 0)
+        {
+            var measured = info.TotalFrames / info.Duration.TotalSeconds;
+            if (Math.Abs(measured - info.FrameRate) > info.FrameRate * tolerance)
+                return true;
+        }
+
+        return false;
     }
 
     private static double ParseFps(string raw)

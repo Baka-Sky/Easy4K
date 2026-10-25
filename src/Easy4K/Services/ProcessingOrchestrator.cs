@@ -11,6 +11,9 @@ namespace Easy4K.Services;
 public sealed class ProcessingContext
 {
     public string InputVideo { get; set; } = "";
+    /// <summary>成品文件命名基准（原视频路径）。输入视频可能是自动转换出来的中间文件，
+    /// 空 = 用 <see cref="InputVideo"/>；帧文件夹模式用 <see cref="ExternalFramesDir"/>。</summary>
+    public string OutputNameBase { get; set; } = "";
     public string TempRoot { get; set; } = "";
     public string OutputRoot { get; set; } = "";
     /// <summary>手动导入的外部帧文件夹（非空时复制到 Temp/input_frames 并跳过拆帧）</summary>
@@ -495,6 +498,7 @@ public sealed class ProcessingOrchestrator
         var stageTexts = new string[segments];
         var outputs = new string?[segments];
         var errors = new string?[segments];
+        var segmentStages = BuildSegmentStages(ctx.Options);
 
         var tasks = new List<Task>(segments);
         for (var i = 0; i < segments; i++)
@@ -531,7 +535,9 @@ public sealed class ProcessingOrchestrator
                     orch.ProgressChanged += p =>
                     {
                         stageTexts[index] = p.StageText;
-                        progress[index] = p.Total > 0 ? Math.Clamp((double)p.Current / p.Total, 0, 1) : 0;
+                        // 段内进度按"已完成阶段数 + 当前阶段比例"折算，再做只增不减钳制：
+                        // 阶段切换时阶段内进度会从 100% 掉回 0%，直接平均会让总进度倒退（数字抽搐）
+                        progress[index] = Math.Max(progress[index], SegmentProgressOf(segmentStages, p));
                         ReportSegmentedProgress(segments, index, p, progress, stageTexts, total);
                     };
 
@@ -624,7 +630,9 @@ public sealed class ProcessingOrchestrator
         return ok ? expanded : null;
     }
 
-    /// <summary>分段并行进度：总进度按各段进度平均，预览区每段一格。</summary>
+    /// <summary>分段并行进度：总进度按各段进度平均，预览区每段一格。
+    /// 明细里不放百分比（右侧已有唯一的百分比），阶段文字按"当前有几段在做什么"汇总，
+    /// 只在段真正换阶段时才变化，避免进度文字一直抖动。</summary>
     private void ReportSegmentedProgress(int segments, int index, ProcessProgress segmentProgress,
         double[] progress, string[] stageTexts, long totalFrames)
     {
@@ -644,17 +652,45 @@ public sealed class ProcessingOrchestrator
             });
         }
 
+        var stageTally = string.Join(" · ", stageTexts
+            .Where(t => !string.IsNullOrEmpty(t))
+            .GroupBy(t => t)
+            .Select(g => g.Count() > 1 ? $"{g.Key} ×{g.Count()}" : g.Key));
+
         ProgressChanged?.Invoke(new ProcessProgress
         {
-            Stage = segmentProgress.Stage,
+            // 用固定的 SuperRes 作为阶段值：段与段各自在不同阶段上报，若直接透传，
+            // 主界面会误以为"阶段不停切换"而反复重置剩余时间估算（文字一闪一闪）
+            Stage = ProcessStage.SuperRes,
             StageText = $"分段并行 {segments} 段",
             Current = (long)Math.Round(overall * 1000),
             Total = 1000,
             PercentDisplay = true,
-            CustomDetail = $"{segmentProgress.StageText}  ·  总进度 {overall * 100:0}%（{segments} 段并行，共 {totalFrames} 帧）",
+            CustomDetail = string.IsNullOrEmpty(stageTally)
+                ? $"分段并行 {segments} 段  ·  共 {totalFrames} 帧"
+                : $"分段并行 {segments} 段  ·  {stageTally}",
             LatestFramePath = segmentProgress.LatestFramePath,
             Pipelines = pipelines
         });
+    }
+
+    /// <summary>分段子流水线实际经过的阶段顺序（帧去重也上报 Splitting，与拆帧合并计一段）。</summary>
+    private static List<ProcessStage> BuildSegmentStages(ProcessingOptions options)
+    {
+        var stages = new List<ProcessStage> { ProcessStage.Splitting };
+        if (options.SuperResolution) stages.Add(ProcessStage.SuperRes);
+        if (options.Interpolation) stages.Add(ProcessStage.Interpolating);
+        return stages;
+    }
+
+    /// <summary>把"当前阶段内的进度"折算成"整条段流水线的进度"（0~1）。
+    /// 阶段切换时阶段内进度会从 100% 回到 0%，各段直接平均会让总进度倒退，所以按阶段权重折算，
+    /// 调用方再按只增不减钳制。</summary>
+    private static double SegmentProgressOf(List<ProcessStage> stages, ProcessProgress p)
+    {
+        var idx = Math.Max(0, stages.IndexOf(p.Stage));
+        var frac = p.Total > 0 ? Math.Clamp((double)p.Current / p.Total, 0, 1) : 0;
+        return (idx + frac) / stages.Count;
     }
 
     /// <summary>阶段3 超分：读取拆分帧 → 模型 → 倍率 → 构建启动代码 → 超分中。
@@ -1235,8 +1271,11 @@ public sealed class ProcessingOrchestrator
     private string? FinalizeOutput(PipelineState st)
     {
         var ctx = st.Ctx;
-        // 帧文件夹模式无输入视频文件，用帧文件夹名作为输出文件基础名
-        var nameBase = string.IsNullOrEmpty(ctx.InputVideo) ? ctx.ExternalFramesDir : ctx.InputVideo;
+        // 帧文件夹模式无输入视频文件，用帧文件夹名作为输出文件基础名；
+        // 动态帧率自动转换时 InputVideo 是中间文件，输出名仍取原视频（OutputNameBase）。
+        var nameBase = string.IsNullOrEmpty(ctx.OutputNameBase)
+            ? (string.IsNullOrEmpty(ctx.InputVideo) ? ctx.ExternalFramesDir : ctx.InputVideo)
+            : ctx.OutputNameBase;
         var finalName = OutputNamer.Build(nameBase, ctx.Options.SuperResolution, ctx.Options.Interpolation,
             st.HdrDone, st.OutWidth, st.OutHeight, st.OutFps, ctx.Options.MergeAudio);
         var finalPath = Path.Combine(ctx.OutputRoot, finalName).Replace('\\', '/');
@@ -2288,6 +2327,11 @@ public sealed class ProcessingOrchestrator
         private readonly Dictionary<string, Slot> _byKey = new();
         /// <summary>单调钳制用的上次百分比：任何情况下都不让进度条倒退</summary>
         private double _lastPercent;
+        /// <summary>文字节流：流水线每帧都会上报，每次都重排文字会让顶部文案不停抖动，
+        /// 这里限制最快 200ms 推一次；块提交与首次布格子时强制推。</summary>
+        private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        private long _lastEmitMs;
+        private const int EmitIntervalMs = 200;
 
         private sealed class Slot
         {
@@ -2325,7 +2369,7 @@ public sealed class ProcessingOrchestrator
                 if (!_byKey.TryGetValue(key, out var s)) return;
                 s.Live = Math.Max(0, done);
                 if (!string.IsNullOrEmpty(path)) { s.Path = path; s.FrameIndex = frameIndex; }
-                EmitLocked();
+                EmitLocked(false);
             }
         }
 
@@ -2337,7 +2381,7 @@ public sealed class ProcessingOrchestrator
                 if (!_byKey.TryGetValue(key, out var s)) return;
                 s.Committed += Math.Max(0, sourceFrames);
                 s.Live = 0;
-                EmitLocked();
+                EmitLocked(true);
             }
         }
 
@@ -2354,13 +2398,18 @@ public sealed class ProcessingOrchestrator
         /// <summary>立刻按当前状态推一次进度（用于开跑时先把预览区各流水格子摆出来）。</summary>
         public void Emit()
         {
-            lock (_lock) EmitLocked();
+            lock (_lock) EmitLocked(true);
         }
 
-        private void EmitLocked()
+        private void EmitLocked(bool force)
         {
+            var now = _clock.ElapsedMilliseconds;
+            if (!force && now - _lastEmitMs < EmitIntervalMs) return;
+            _lastEmitMs = now;
+
             long done = 0, total = 0;
             var parts = new List<string>(_slots.Count);
+            var names = new List<string>(_slots.Count);
             var pipelines = new List<PipelineFramePreview>(_slots.Count);
             for (var i = 0; i < _slots.Count; i++)
             {
@@ -2369,6 +2418,7 @@ public sealed class ProcessingOrchestrator
                 done += live;
                 total += s.Total;
                 parts.Add($"{s.StageName} {live}/{s.Total}");
+                names.Add(s.StageName);
                 pipelines.Add(new PipelineFramePreview
                 {
                     Key = s.Key,
@@ -2383,6 +2433,7 @@ public sealed class ProcessingOrchestrator
             else _lastPercent = percent;
 
             var summary = parts.Count > 0 ? string.Join(" · ", parts) : "准备中";
+            var stageLine = names.Count > 0 ? string.Join(" + ", names) : "准备中";
             _emit(new ProcessProgress
             {
                 Stage = ProcessStage.SuperRes,
@@ -2390,7 +2441,9 @@ public sealed class ProcessingOrchestrator
                 Current = (long)Math.Round(percent),
                 Total = 100,
                 PercentDisplay = true,
-                CustomDetail = $"[涡轮] 并行推进 {percent:0.#}%（各流水已完成源帧 {summary}）",
+                // 明细里不再带百分比（右侧已有唯一的百分比），也不再逐帧刷新数字：
+                // 文案固定后顶部这行不会因为数字位数变化而左右抖动。
+                CustomDetail = $"[涡轮] {stageLine} 并行推进 · 共 {total} 源帧",
                 Pipelines = pipelines
             });
         }

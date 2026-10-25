@@ -192,6 +192,18 @@
                     </StackPanel>
                 </Border>
 
+                <!-- 电源：启动时阻止 Windows 自动休眠 -->
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="电源" Style="{StaticResource SectionTitle}"/>
+                        <CheckBox x:Name="PreventSleepCb" FontSize="12"
+                                  Content="启动时禁止 Windows 自动休眠（长时间处理不会被系统睡眠打断）"
+                                  IsChecked="{x:Bind Vm.PreventAutoSleep, Mode=TwoWay}"/>
+                        <TextBlock FontSize="11" Opacity="0.6" TextWrapping="Wrap"
+                                   Text="开启后 Easy4K 运行期间会持续向系统申请唤醒。只阻止系统休眠，不阻止关闭显示器或自动锁屏；关闭开关或退出程序后立即恢复系统默认电源策略。"/>
+                    </StackPanel>
+                </Border>
+
                 <!-- 高级性能选项（原主界面同名区块整体移入） -->
                 <Border Style="{StaticResource CardBorder}" BorderBrush="Orange" Background="{ThemeResource WarnBgBrush}">
                     <StackPanel Spacing="2">

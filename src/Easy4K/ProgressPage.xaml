@@ -135,7 +135,7 @@
                         <Button Grid.Column="2" Content="清空" Click="OnClearLog" FontSize="11" Style="{StaticResource GlassButton}"/>
                     </Grid>
                     <TextBox x:Name="CommandLogBox" Grid.Row="1" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
-                             FontFamily="Consolas" FontSize="11" Background="Transparent" BorderThickness="0"
+                             FontFamily="{StaticResource AppFontFamily}" FontSize="11" Background="Transparent" BorderThickness="0"
                              ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
                 </Grid>
             </Border>

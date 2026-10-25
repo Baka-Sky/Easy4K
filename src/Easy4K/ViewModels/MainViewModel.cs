@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -47,6 +48,10 @@ public partial class MainViewModel : ObservableObject
     /// <summary>临时目录缓存与当前视频不符（UI 弹窗引导重新选择/清理）。
     /// 参数 true = 点击"开始处理"时触发（累计愤怒警告计数）；false = 选视频/换目录时触发（只弹普通提示）。</summary>
     public event Action<bool>? TempCacheMismatchDetected;
+    /// <summary>点击开始处理时检测到动态帧率（VFR）：UI 先提示改用 PR / 剪映转成静态帧率，用户确认后继续。</summary>
+    public event Action? VariableFrameRateDetected;
+    /// <summary>选择/检测视频时发现动态帧率：UI 用底部通知条提示（不打断操作，启动时另有一次确认）。</summary>
+    public event Action? VariableFrameRateNoticed;
     /// <summary>清理临时文件时请求 UI 释放预览帧句柄（Image.Source 不清空会锁住帧文件删不掉）</summary>
     public event Action? CleanRequested;
     /// <summary>启动前 CPU 最终警告（UI 弹窗确认"不建议开启 CPU 处理"；确认后调 DialogResult(true) 继续）</summary>
@@ -144,6 +149,9 @@ public partial class MainViewModel : ObservableObject
         // 恢复"保存的默认步骤"（向导或主界面"保存当前设置为默认"后，下次启动即恢复勾选）
         RestoreDefaultStepsFromConfig();
 
+        // 电源策略：配置里开启了「启动时禁止自动休眠」就立即生效（主 UI 线程长期存活，请求不会随临时线程结束）
+        SleepGuard.SetEnabled(_preventAutoSleep);
+
         // 孤儿任务：把上次排的队列读回来，并按需重新拉起守护进程（上次关机时还有任务没跑完的情况）
         ReloadOrphanTasks();
     }
@@ -193,6 +201,7 @@ public partial class MainViewModel : ObservableObject
         _threadsBeforeTurbo = _threadCount;
         if (_turboMode) _threadCount = 1;
         _autoRemoteOnStartup = _app.AutoRemoteOnStartup;
+        _preventAutoSleep = _app.PreventAutoSleep;
         _superResolution = _app.DefaultSuperResolution;
         _interpolation = _app.DefaultInterpolation;
         _mergeVideo = _app.DefaultMergeVideo;
@@ -584,6 +593,20 @@ public partial class MainViewModel : ObservableObject
             : $"涡轮分段数：{normalized} 段（并行流水线，每段处理连续的帧）");
     }
 
+    // ===================== 电源（高级模式） =====================
+    /// <summary>启动时禁止 Windows 自动休眠：开启后运行期间持续向系统申请唤醒，避免长时间处理被睡眠打断</summary>
+    [ObservableProperty] private bool _preventAutoSleep;
+
+    partial void OnPreventAutoSleepChanged(bool value)
+    {
+        _app.PreventAutoSleep = value;
+        _settings.Save(_app, _pathConfig);
+        SleepGuard.SetEnabled(value);
+        _logger?.Info(value
+            ? "已开启：Easy4K 运行期间禁止 Windows 自动休眠"
+            : "已关闭：恢复系统默认自动休眠策略");
+    }
+
     // ===================== 远程控制 =====================
     /// <summary>每次启动自动进入远程连接模式（等价于启动参数 --remote）：启动后直接监听 11451 等待手机端连接</summary>
     [ObservableProperty] private bool _autoRemoteOnStartup;
@@ -941,7 +964,7 @@ public partial class MainViewModel : ObservableObject
 
             return
                 $"编码：{v.CodecText}\n" +
-                $"画面：{v.ResolutionText} · {v.FpsText} · 总帧数 {v.TotalFrames}\n" +
+                $"画面：{v.ResolutionText} · {v.FpsText} · {v.FrameRateKindText} · 总帧数 {v.TotalFrames}\n" +
                 $"时长：{v.DurationText} · 大小 {v.FileSizeText} · 码率 {videoBitRate / 1000} kbps\n" +
                 $"色彩：{v.ColorText}\n" +
                 $"音频：{v.AudioText}\n" +
@@ -1152,6 +1175,13 @@ public partial class MainViewModel : ObservableObject
             {
                 _logger.Warn($"临时目录缓存来自其他视频（{csource}），处理当前视频前请更换临时目录或清理缓存");
                 TempCacheMismatchDetected?.Invoke(false); // 选视频触发：只弹普通提示，不计入愤怒计数
+            }
+
+            // 选视频时就提示动态帧率（放在缓存提示之后：WinUI 同一时刻只允许一个 ContentDialog）
+            if (t.Result is { IsVariableFrameRate: true })
+            {
+                _logger.Warn("检测到动态帧率（VFR）：帧间隔不固定，建议先用 PR / 剪映导出为静态帧率（CFR）后再处理");
+                VariableFrameRateNoticed?.Invoke();
             }
         }, TaskScheduler.FromCurrentSynchronizationContext());
     }
@@ -1909,6 +1939,9 @@ public partial class MainViewModel : ObservableObject
         if (!Tools.CoreToolsOk)
             warns.AppendLine("[缺少核心工具] FFmpeg/RealESRGAN/RIFE 未就绪，请检查 Tools 目录");
 
+        if (Video is { IsValid: true, IsVariableFrameRate: true })
+            warns.AppendLine("[动态帧率] 当前视频是 VFR（帧间隔不固定），启动处理前会自动转换为静态帧率（CFR）");
+
         Warnings = warns.ToString().TrimEnd();
     }
 
@@ -1986,11 +2019,20 @@ public partial class MainViewModel : ObservableObject
     // ===================== 处理流程 =====================
 
     /// <summary>启动前确认流程（顺序执行）：
+    /// 0) 检测到动态帧率 → 先提示改用 PR / 剪映转成静态帧率，用户取消则阻断启动；
     /// 1) 临时目录有旧文件/缓存不符 → 弹窗引导（重新选择临时目录/清理缓存/取消），未解决则阻断启动；
     /// 2) CPU 处理模式开启 → 弹最终警告"不建议开启 CPU 处理"，取消则不启动。
     /// 弹窗由 MainWindow 弹出并处理，处理完成后回调 DialogResult 唤醒本流程继续。</summary>
     public async Task<bool> ConfirmStartAsync()
     {
+        // 0. 动态帧率提醒最先弹：VFR 的帧间隔不固定，拆帧/补帧按恒定帧率重建容易音画不同步
+        if (Video is { IsValid: true, IsVariableFrameRate: true } && VariableFrameRateDetected is not null)
+        {
+            _dialogTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            VariableFrameRateDetected?.Invoke();
+            if (!await _dialogTcs.Task) return false;
+        }
+
         // 1. 临时目录冲突优先处理
         while (true)
         {
@@ -2118,13 +2160,59 @@ public partial class MainViewModel : ObservableObject
         _logger.Info($"处理参数: 超分 {SrModel} ×{SrScale} / 补帧模型 {IfModel} "
             + (TargetFpsActive ? $"→ 目标 {TargetFps:0.##}fps（≈{EffectiveRatio:0.###}×，共 {ExpectedIfFrames} 帧）" : $"×{IfMultiplier}"));
 
+        // 动态帧率（VFR）：启动流水线前先自动转成静态帧率（CFR）。
+        // 拆帧/补帧/合并都按恒定帧率重建，VFR 直接处理会出现音画不同步或成片时长异常。
+        var pipelineInput = InputVideo;
+        var pipelineVideo = Video!;
+        if (!HasExternalFrames && Video is { IsVariableFrameRate: true })
+        {
+            // 转换期间没有帧可供预览：关闭并禁用预览开关，转换结束后恢复用户原来的选择
+            var previewBefore = ShowPreview;
+            ShowPreview = false;
+            PreviewBlocked = true;
+            (string Path, VideoInfo Info)? cfr;
+            try
+            {
+                cfr = await ConvertToCfrAsync(Video, _cts.Token);
+            }
+            finally
+            {
+                PreviewBlocked = false;
+                ShowPreview = previewBefore;
+            }
+            if (cfr is null)
+            {
+                _monitor.Stop();
+                IsProcessing = false;
+                if (_cts.IsCancellationRequested)
+                {
+                    Stage = ProcessStage.Stopped;
+                    ProgressDetail = "已停止";
+                    _logger.Warn("已取消动态帧率转换");
+                }
+                else
+                {
+                    Stage = ProcessStage.Failed;
+                    ProgressDetail = "动态帧率转换失败，详见日志";
+                    var msg = "动态帧率（VFR）自动转换为静态帧率失败。请先用 Adobe Premiere Pro 或剪映导出为静态帧率（CFR）后再处理。";
+                    _logger.Error(msg);
+                    StartFailed?.Invoke(msg);
+                }
+                return;
+            }
+            pipelineInput = cfr.Value.Path;
+            pipelineVideo = cfr.Value.Info;
+        }
+
         var ctx = new ProcessingContext
         {
-            InputVideo = InputVideo,
+            InputVideo = pipelineInput,
+            // 输出文件仍按原视频命名（转换后的中间文件叫 input_cfr，不能拿它当成品名）
+            OutputNameBase = HasExternalFrames ? "" : InputVideo,
             TempRoot = TempRoot.Replace('\\', '/'),
             OutputRoot = OutputRoot.Replace('\\', '/'),
             ExternalFramesDir = ExternalFramesDir.Replace('\\', '/'),
-            Video = Video,
+            Video = pipelineVideo,
             Options = new ProcessingOptions
             {
                 SplitFrames = SplitFrames,
@@ -2219,6 +2307,77 @@ public partial class MainViewModel : ObservableObject
                 Elapsed = DateTime.Now - _startTime
             });
         }
+    }
+
+    /// <summary>把动态帧率视频转成静态帧率（CFR）：按目标 fps 重排时间轴，音轨与字幕原样复制。
+    /// 输出放在临时目录，不覆盖用户原文件；失败或取消返回 null（调用方区分两种状态）。</summary>
+    private async Task<(string Path, VideoInfo Info)?> ConvertToCfrAsync(VideoInfo video, CancellationToken ct)
+    {
+        var fps = ChooseCfrFps(video);
+        var fpsArg = fps.ToString("0.###", CultureInfo.InvariantCulture);
+        Directory.CreateDirectory(TempRoot);
+        var outPath = Path.Combine(TempRoot, "input_cfr.mkv");
+        try { if (File.Exists(outPath)) File.Delete(outPath); } catch { }
+
+        var args = $"-y -i \"{InputVideo}\" -map 0:v:0 -map 0:a? -map 0:s? " +
+                   $"-vf fps={fpsArg} -c:v libx264 -preset veryfast -crf 16 -pix_fmt yuv420p " +
+                   $"-c:a copy -c:s copy -nostats -progress pipe:1 \"{outPath}\"";
+
+        _logger.Info($"检测到动态帧率（VFR）：启动前自动转换为静态帧率 {fpsArg} fps（音轨/字幕原样复制）");
+        _logger.Command($"ffmpeg {args}");
+        ProgressPercent = 0;
+        ProgressDetail = "正在转换为静态帧率（CFR）...";
+
+        // ffmpeg -progress 输出 key=value：out_time_us / out_time_ms 实际都是微秒
+        var durationSec = video.Duration.TotalSeconds;
+        var lastPct = 0.0;
+        var exit = await _runner.RunAsync(Tools.FFmpegExe, args, onLine: line =>
+        {
+            if (!line.StartsWith("out_time_us=", StringComparison.Ordinal) &&
+                !line.StartsWith("out_time_ms=", StringComparison.Ordinal)) return;
+            var idx = line.IndexOf('=');
+            if (idx < 0) return;
+            if (!double.TryParse(line[(idx + 1)..], NumberStyles.Any, CultureInfo.InvariantCulture, out var us)) return;
+            if (us <= 0 || durationSec <= 0) return;
+
+            var pct = Math.Clamp(us / 1_000_000.0 / durationSec * 100, 0, 99.9);
+            if (pct - lastPct < 0.5) return;
+            lastPct = pct;
+            _dispatcherQueue.TryEnqueue(() =>
+            {
+                ProgressPercent = pct;
+                ProgressDetail = $"正在转换为静态帧率（CFR）{pct:0.#}%";
+            });
+        }, ct: ct);
+
+        if (ct.IsCancellationRequested) return null;
+
+        if (exit != 0 || !File.Exists(outPath) || new FileInfo(outPath).Length == 0)
+        {
+            _logger.Error($"动态帧率转换失败（ffmpeg 退出码 {exit}）");
+            return null;
+        }
+
+        var info = await Task.Run(() => _videoDetector.Detect(outPath));
+        if (info is null)
+        {
+            _logger.Error("动态帧率转换完成，但重新检测转换后的视频失败");
+            return null;
+        }
+
+        ProgressPercent = 100;
+        ProgressDetail = $"已转换为静态帧率 {fpsArg} fps，开始处理";
+        _logger.Success($"动态帧率转换完成：{info.ResolutionText} {info.FpsText} {info.TotalFrames} 帧 → {outPath}");
+        return (outPath, info);
+    }
+
+    /// <summary>选择转换后的目标帧率：优先标称帧率，异常值（如 1000/1）退回平均帧率，再退回 30。</summary>
+    private static double ChooseCfrFps(VideoInfo video)
+    {
+        var fps = video.FrameRate;
+        if (fps <= 0 || fps > 240) fps = video.AverageFrameRate;
+        if (fps <= 0 || fps > 240) fps = 30;
+        return Math.Round(fps, 3);
     }
 
     /// <summary>把本次失败的完整现场写到桌面，并用底部通知条给出入口。

@@ -7,6 +7,10 @@ public sealed class VideoInfo
     public int Height { get; set; }
     public double FrameRate { get; set; }          // 解析后的浮点帧率，如 24.0
     public string FrameRateRaw { get; set; } = ""; // 原始分数，如 "24/1"
+    /// <summary>平均帧率（ffprobe avg_frame_rate）。与标称帧率不一致时通常说明是动态帧率（VFR）。</summary>
+    public double AverageFrameRate { get; set; }
+    /// <summary>是否动态帧率（VFR）：帧间隔不固定，拆帧/补帧按恒定帧率重建会出错，建议先转成静态帧率。</summary>
+    public bool IsVariableFrameRate { get; set; }
     public TimeSpan Duration { get; set; }
     public long BitRate { get; set; }              // bps
     public string AudioCodec { get; set; } = "";   // aac / flac / 无
@@ -40,6 +44,8 @@ public sealed class VideoInfo
 
     public string ResolutionText => $"{Width} x {Height}";
     public string FpsText => $"{FrameRate:0.00} fps";
+    /// <summary>帧率类型：动态帧率 / 静态帧率（帧率未知时为空）</summary>
+    public string FrameRateKindText => FrameRate <= 0 ? "" : (IsVariableFrameRate ? "动态帧率" : "静态帧率");
     public string DurationText => Duration.ToString(Duration.TotalHours >= 1 ? "hh\\:mm\\:ss" : "mm\\:ss");
     public string BitRateText => $"{BitRate / 1000} kbps";
     public bool HasAudio => !string.IsNullOrWhiteSpace(AudioCodec) && !AudioCodec.Equals("none", StringComparison.OrdinalIgnoreCase);

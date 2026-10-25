@@ -29,32 +29,54 @@
                 </StackPanel>
 
                 <Border Style="{StaticResource CardBorder}">
-                    <StackPanel Spacing="8">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
+                    <Grid ColumnSpacing="24">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
 
-                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                                <TextBlock Text="Easy4K" FontSize="24" FontWeight="Bold"/>
-                                <TextBlock Text="{x:Bind Version}" FontSize="24" FontWeight="Bold" VerticalAlignment="Bottom"/>
+                        <StackPanel Spacing="6" VerticalAlignment="Center">
+                            <TextBlock Text="Easy4K" FontSize="30" FontWeight="Bold"/>
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock Text="版本" FontSize="15"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="{x:Bind Version}" FontSize="15"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             </StackPanel>
+                            <TextBlock Text="一键视频超分与补帧工具" FontSize="14" Margin="0,4,0,0"/>
+                        </StackPanel>
 
-                            <!-- 右上角 logo：浅色主题用黑版、深色主题用白版（主题变化时换图）。
-                                 右边距用来微调它离卡片右缘的距离 -->
-                            <Image x:Name="AboutLogo" Grid.Column="1"
-                                   Width="180" Stretch="Uniform"
-                                   Margin="0,0,7,0"
-                                   HorizontalAlignment="Right" VerticalAlignment="Top"/>
-                        </Grid>
+                        <!-- 主题适配的黑白 logo 保持由 AboutPage.xaml.cs 加载 -->
+                        <Image x:Name="AboutLogo" Grid.Column="1"
+                               Width="180" Stretch="Uniform"
+                               Margin="0,0,7,0"
+                               HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
 
-                        <!-- 版本、组件、附加能力、免责声明：与旧「关于」弹窗同一份文本。
-                             行高按字号收紧，否则内嵌字体自带的 ascent/descent 会留下很大的行距 -->
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="项目说明" FontSize="16" FontWeight="SemiBold"/>
                         <TextBlock x:Name="AboutTextBlock" FontSize="13" TextWrapping="Wrap"
                                    LineHeight="18" LineStackingStrategy="BlockLineHeight"
                                    IsTextSelectionEnabled="True"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="版权与许可" FontSize="16" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="CopyrightTextBlock" FontSize="13" TextWrapping="Wrap"
+                                   IsTextSelectionEnabled="True"/>
+                        <StackPanel Spacing="4">
+                            <HyperlinkButton Content="项目主页：github.com/Baka-Sky/Easy4K"
+                                             NavigateUri="https://github.com/Baka-Sky/Easy4K"
+                                             HorizontalAlignment="Left" Padding="0"/>
+                            <HyperlinkButton Content="模型主页：huggingface.co/Sudabaka/SFDP-Siamese-NET-AI"
+                                             NavigateUri="https://huggingface.co/Sudabaka/SFDP-Siamese-NET-AI"
+                                             HorizontalAlignment="Left" Padding="0"/>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
 

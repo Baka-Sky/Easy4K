@@ -222,6 +222,74 @@ public sealed partial class MainWindow : Window
             }
         });
 
+        // 选择视频时检测到动态帧率（VFR）→ 与启动时同一个居中大弹窗，提醒改用 PR / 剪映转静态帧率
+        Vm.VariableFrameRateNoticed += () => DispatcherQueue.TryEnqueue(async () =>
+        {
+            if ((RemoteControlServer.IsActive || RemoteSession.IsActive)) return;
+
+            // 先等临时目录提示关掉：WinUI 同一时刻只能显示一个 ContentDialog，否则直接抛异常
+            for (var i = 0; i < 1200 && _cacheDialogOpen; i++) await Task.Delay(100);
+
+            var dlg = new ContentDialog
+            {
+                Title = "检测到动态帧率",
+                Content = "当前视频是动态帧率（VFR）。选择此视频后，启动流水线前会先自动把它转换为静态帧率（CFR），"
+                          + "以保证拆帧、补帧与音画同步稳定；转换会多花一些时间。\n\n"
+                          + "也可以先用 Adobe Premiere Pro 或剪映导出为静态帧率后再导入。",
+                PrimaryButtonText = "更换当前视频",
+                CloseButtonText = "知道了",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = RootFrame.XamlRoot
+            };
+            try
+            {
+                if (await dlg.ShowLocalizedAsync() == ContentDialogResult.Primary &&
+                    !await PickVideoAsync())
+                {
+                    // 点了「更换当前视频」但没选新文件：不再沿用这个动态帧率视频
+                    Vm.ClearInputVideo();
+                    Vm.Logger.Info("已取消更换视频，当前输入已清空（动态帧率视频不再继续使用）");
+                }
+            }
+            catch
+            {
+                // 极端情况下仍有其它弹窗占用：退化为底部通知条，至少不丢失提示
+                ShowNotice("检测到动态帧率",
+                    "当前视频是动态帧率（VFR），建议先用 PR / 剪映导出为静态帧率（CFR）后再处理。");
+            }
+        });
+
+        // 启动时检测到动态帧率（VFR）→ 最先提示改用 PR / 剪映转静态帧率，用户可坚持继续
+        Vm.VariableFrameRateDetected += () => DispatcherQueue.TryEnqueue(async () =>
+        {
+            // 远程控制模式：无人值守，直接放行
+            if ((RemoteControlServer.IsActive || RemoteSession.IsActive)) { Vm.DialogResult(true); return; }
+            var dlg = new ContentDialog
+            {
+                Title = "检测到动态帧率",
+                Content = "当前视频是动态帧率（VFR）。启动流水线前会先自动转换为静态帧率（CFR），"
+                          + "转换会多花一些时间，请耐心等待。\n\n是否继续处理？",
+                PrimaryButtonText = "更换当前视频",
+                SecondaryButtonText = "继续处理",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = RootFrame.XamlRoot
+            };
+            var r = await dlg.ShowLocalizedAsync();
+            if (r == ContentDialogResult.Primary)
+            {
+                Vm.DialogResult(false);      // 先阻断本次启动
+                if (!await PickVideoAsync())
+                {
+                    // 没选到新视频：清空输入，避免"点了更换却仍用原视频"
+                    Vm.ClearInputVideo();
+                    Vm.Logger.Info("已取消更换视频，本次启动已取消，当前输入已清空");
+                }
+                return;
+            }
+            Vm.DialogResult(r == ContentDialogResult.Secondary);
+        });
+
         // 启动前 CPU 最终警告（ConfirmStartAsync 在临时目录冲突通过后触发）
         Vm.CpuFinalWarningRequired += () => DispatcherQueue.TryEnqueue(async () =>
         {
@@ -284,8 +352,7 @@ public sealed partial class MainWindow : Window
             // 跟随系统（含首次启动的默认值）：底色层用 ThemeResource 自动跟随系统深浅色，
             // 这里只保证它可见，系统在浅色/深色之间切换时无需重启就会跟着变。
             default:
-                RootLayout.RequestedTheme = ElementTheme.Default;
-                RootFrame.RequestedTheme = ElementTheme.Default;
+                ApplyRequestedTheme(ElementTheme.Default);
                 ShowThemeBackdrop(true);
                 break;
         }
@@ -738,15 +805,15 @@ public sealed partial class MainWindow : Window
     private async void OnChooseOutputMenu(object sender, RoutedEventArgs e) => await PickFolderAsync(p => Vm.SetOutputRoot(p));
     private void OnExitMenu(object sender, RoutedEventArgs e) => Application.Current.Exit();
 
-    private async Task PickVideoAsync()
+    private async Task<bool> PickVideoAsync()
     {
         // 遥控远端：从远端电脑的磁盘里挑（本地选择器看不到对方的文件）
         if (RemoteSession.IsActive)
         {
             var picked = await PickRemotePathAsync(folder: false, kind: "video", start: null);
-            if (string.IsNullOrWhiteSpace(picked)) return;
+            if (string.IsNullOrWhiteSpace(picked)) return false;
             await Vm.SetInputVideoAsync(picked);
-            return;
+            return true;
         }
 
         var picker = new FileOpenPicker();
@@ -757,7 +824,9 @@ public sealed partial class MainWindow : Window
         picker.FileTypeFilter.Add(".mov");
         picker.SuggestedStartLocation = PickerLocationId.VideosLibrary;
         var file = await picker.PickSingleFileAsync();
-        if (file is not null) await Vm.SetInputVideoAsync(file.Path);
+        if (file is null) return false;
+        await Vm.SetInputVideoAsync(file.Path);
+        return true;
     }
 
     private async Task PickFolderAsync(Action<string> apply)
@@ -1196,12 +1265,13 @@ public sealed partial class MainWindow : Window
         "========== 自主研发项目 ==========\n\n" +
         "Easy4K 客户端与界面、超分 / 补帧 / 音频各阶段调度流水线\n" +
         "SFDP 帧去重算法（像素差与分块局部检查 / dHash / QR 分解 / Farnebäck 稠密光流四阶级联判决）\n" +
-        "Siamese NET AI 孪生网络及其 FP16 / FP32 ONNX 权重\n\n" +
+        "Siamese NET AI 孪生网络及其 FP16 / FP32 ONNX 权重（CC BY-NC 4.0）\n\n" +
         "========== 版权信息 ==========\n\n" +
-        $"Copyright © 2025-{DateTime.Now.Year} Baka-Sky. All rights reserved.\n" +
-        "本项目以 GPL-3.0 许可开源：https://github.com/Baka-Sky/Easy4K\n" +
-        "Siamese NET AI 模型主页：https://huggingface.co/Sudabaka/SFDP-Siamese-NET-AI\n" +
-        "Easy4K 名称、图标、SFDP 帧去重算法与 Siamese NET AI 模型的版权归作者所有。";
+        $"Copyright © 2025-{DateTime.Now.Year} Wells,Jiang. All rights reserved.\n" +
+        "Easy4K 源代码依据 GPL-3.0 发布。\n" +
+        "Easy4K 名称、图标及 SFDP 帧去重算法的版权归 Wells,Jiang 所有；Siamese NET AI 模型依据 CC BY-NC 4.0 开源；第三方组件依各自许可使用。\n" +
+        "项目主页：https://github.com/Baka-Sky/Easy4K\n" +
+        "模型主页：https://huggingface.co/Sudabaka/SFDP-Siamese-NET-AI";
 
     private async void ShowDialog(string title, string content)
     {
@@ -1399,6 +1469,16 @@ public sealed partial class MainWindow : Window
     }
 #endif
 
+    /// <summary>把主题同时落到窗口根内容、根布局与 Frame。
+    /// ContentDialog / ComboBox 弹出层挂在 XamlRoot 上，只继承 XamlRoot 根元素（ZoomHost）的主题；
+    /// 只设置 RootLayout 时，切换主题后这些弹出层里的文字颜色不会跟着变。</summary>
+    private void ApplyRequestedTheme(ElementTheme theme)
+    {
+        ZoomHost.RequestedTheme = theme;
+        RootLayout.RequestedTheme = theme;
+        RootFrame.RequestedTheme = theme;
+    }
+
     /// <summary>普通主题显示窗口底色层，亚克力/图片主题隐藏（露出背景材质）。
     /// 底色本身是 XAML 里的 {ThemeResource ApplicationPageBackgroundThemeBrush}：
     /// 用 ThemeResource 才能跟随系统主题实时变（浅色/深色切换无需重启），
@@ -1412,10 +1492,11 @@ public sealed partial class MainWindow : Window
         SystemBackdrop = null; // 亚克力是独立主题选项，切回普通主题时移除
         HideBackdropLayers();  // 图片背景层只在图片主题显示
         SetNavPaneTransparent(false);
-        // 主题必须同时落在根布局上：RootFrame 只管页面内容，NavigationView / 标题栏在它外面，
-        // 只设 RootFrame 会出现"浅色内容 + 深色导航栏/黑底"的严重错色。
-        RootLayout.RequestedTheme = theme;
-        RootFrame.RequestedTheme = theme;
+        // 主题必须同时落在窗口根内容上：RootFrame 只管页面内容，NavigationView / 标题栏在它外面，
+        // 只设 RootFrame 会出现"浅色内容 + 深色导航栏/黑底"的严重错色；
+        // 而 ContentDialog / Popup 这些弹出层只认 XamlRoot 根元素（ZoomHost）的主题，
+        // 不设 ZoomHost 时切换主题后弹窗里的文字颜色不会跟着变。
+        ApplyRequestedTheme(theme);
         ShowThemeBackdrop(true);
         Vm.SetThemeMode(theme switch
         {
@@ -1437,8 +1518,7 @@ public sealed partial class MainWindow : Window
         HideBackdropLayers();
         SetNavPaneTransparent(false);
         // 亚克力颜色跟随系统主题，内容也切回跟随系统保持一致
-        RootLayout.RequestedTheme = ElementTheme.Default;
-        RootFrame.RequestedTheme = ElementTheme.Default;
+        ApplyRequestedTheme(ElementTheme.Default);
         ShowThemeBackdrop(false);   // 隐藏底色层，露出亚克力
         Vm.SetThemeMode("acrylic");
         // 系统关闭"透明度效果"时所有亚克力/云母材质都会回退为纯色背景
@@ -1454,8 +1534,7 @@ public sealed partial class MainWindow : Window
         // 未选图时整窗只剩这层系统亚克力，不会出现"空背景"
         _acrylic ??= new DesktopAcrylicBackdrop();
         SystemBackdrop = _acrylic;
-        RootLayout.RequestedTheme = ElementTheme.Dark;
-        RootFrame.RequestedTheme = ElementTheme.Dark;
+        ApplyRequestedTheme(ElementTheme.Dark); // 图片主题固定深色，避免亮图下白字看不清
         ShowThemeBackdrop(false);   // 图片/亚克力层要在根布局之下才看得见
         SetNavPaneTransparent(true); // 去掉 NavigationView 自带的内容层灰色底，否则导航栏下方会多出一块灰面板
         Vm.SetThemeMode("image");

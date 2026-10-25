@@ -5,8 +5,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 
 namespace Easy4K;
 
-/// <summary>关于页面：由设置页进入，展示版本、组件与免责声明。
-/// 正文直接复用 <see cref="MainWindow.AboutText"/>，与旧「关于」弹窗保持同一份内容。</summary>
+/// <summary>关于页面：由设置页进入，展示品牌信息、项目说明、版权许可与赞助。</summary>
 public sealed partial class AboutPage : Page
 {
     /// <summary>标题右侧的版本号（取程序集版本，与标题栏一致）</summary>
@@ -24,11 +23,16 @@ public sealed partial class AboutPage : Page
         InitializeComponent();
 
         var text = App.MainWindow?.AboutText ?? "";
-        // AboutText 首行是「Easy4K vX - 一键视频超分补帧工具」，页面上方已单独显示，正文去掉这行；
-        // 段落间原本是空行（\n\n），页面上按行高收紧后显得间隔过大，压成单换行
-        var firstBreak = text.IndexOf('\n');
-        var body = firstBreak >= 0 ? text[(firstBreak + 1)..].TrimStart() : text;
+        var copyrightMarker = "========== 版权信息 ==========";
+        var copyrightIndex = text.IndexOf(copyrightMarker, StringComparison.Ordinal);
+        var body = copyrightIndex >= 0 ? text[..copyrightIndex].TrimEnd() : text;
+        var firstBreak = body.IndexOf('\n');
+        if (firstBreak >= 0) body = body[(firstBreak + 1)..].TrimStart();
         AboutTextBlock.Text = body.Replace("\n\n", "\n");
+        CopyrightTextBlock.Text =
+            $"Copyright © 2025-{DateTime.Now.Year} Wells,Jiang. All rights reserved.\n" +
+            "Easy4K 源代码依据 GPL-3.0 发布。\n" +
+            "Easy4K 名称、图标及 SFDP 帧去重算法的版权归 Wells,Jiang 所有；Siamese NET AI 模型依据 CC BY-NC 4.0 开源；第三方组件依各自许可使用。";
 
         // 右上角 logo：浅色用黑版、深色用白版。构造期先发起解码，主题解析出来后再确认一次
         ApplyLogo();

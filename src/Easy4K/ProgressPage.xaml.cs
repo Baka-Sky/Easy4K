@@ -63,6 +63,10 @@ public sealed partial class ProgressPage : Page
     private const int MaxLogLines = 200;
     /// <summary>单行展示上限：外部工具的 stderr 偶尔会吐一整屏，超长单行会让 TextBox 排版卡死</summary>
     private const int MaxLogLineChars = 1200;
+    /// <summary>日志刷新节流：整段文本重建会重排整个 TextBox，高频输出时每批都重建会让日志区不停抖动，
+    /// 这里先累积，最多 250ms 真正刷一次。</summary>
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _logFlushTimer;
+    private bool _logDirty;
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -77,6 +81,13 @@ public sealed partial class ProgressPage : Page
             if (CommandLogBox.Text.Length > 0) DispatcherQueue.TryEnqueue(ScrollLogToBottom);
         }
         catch { }
+        if (_logFlushTimer is null)
+        {
+            _logFlushTimer = DispatcherQueue.CreateTimer();
+            _logFlushTimer.Interval = TimeSpan.FromMilliseconds(250);
+            _logFlushTimer.IsRepeating = false;
+            _logFlushTimer.Tick += (_, _) => FlushLog();
+        }
         if (!_subscribed)
         {
             Vm.ProgressChanged += OnProgress;
@@ -92,6 +103,7 @@ public sealed partial class ProgressPage : Page
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
+        _logFlushTimer?.Stop();
         if (!_subscribed) return;
         Vm.ProgressChanged -= OnProgress;
         Vm.CleanRequested -= OnCleanRequested;
@@ -169,9 +181,9 @@ public sealed partial class ProgressPage : Page
         PauseBtn.IsEnabled = Vm.CanPause;
     }
 
-    /// <summary>批量日志到达 → 追加进行缓冲，整段文本只重建一次并滚到底。
-    /// 原先每行一次：split 200 行 + join + TextBox.Text 全量重排 + 额外一次滚动的 TryEnqueue，
-    /// 日志一密就把 UI 线程占满（低主频 CPU 上表现为界面"死锁"）。</summary>
+    /// <summary>批量日志到达 → 先攒进缓冲，由节流定时器合并成一次文本重建并滚到底。
+    /// 全文重建会重排整个 TextBox，日志一密就每次重建一次会让日志区不停抖动；
+    /// 同时整段替换也避免了逐行追加带来的重复 join/重排。</summary>
     private void OnLogEntriesAdded(IReadOnlyList<LogEntry> entries)
     {
         DispatcherQueue.TryEnqueue(() =>
@@ -180,11 +192,28 @@ public sealed partial class ProgressPage : Page
             {
                 foreach (var e in entries) _logLines.Add(TrimLogLine(e.LogText));
                 TrimLogLines();
-                CommandLogBox.Text = string.Join("\r\n", _logLines);
-                ScrollLogToBottom();
+                _logDirty = true;
+                if (_logFlushTimer is { IsRunning: false })
+                {
+                    _logFlushTimer.Interval = TimeSpan.FromMilliseconds(250);
+                    _logFlushTimer.Start();
+                }
             }
             catch { }
         });
+    }
+
+    /// <summary>定时器到点：把累积的日志一次性写进日志框。</summary>
+    private void FlushLog()
+    {
+        if (!_logDirty) return;
+        _logDirty = false;
+        try
+        {
+            CommandLogBox.Text = string.Join("\r\n", _logLines);
+            ScrollLogToBottom();
+        }
+        catch { }
     }
 
     /// <summary>单行过长时截断展示（完整内容仍在 Logger 的完整日志里，导出/报告不受影响）</summary>
