@@ -397,8 +397,8 @@ public sealed partial class MainWindow : Window
         if (RootFrame.Content is FrameworkElement startupPage) HookPageLocalization(startupPage);
         DispatcherQueue.TryEnqueue(ApplyLocalization);
 
-        // 启动后异步检查更新（服务器版本高于 config 里的本地版本时弹窗提示）
-        _ = CheckUpdateAsync();
+        // 启动后异步检查微软商店更新（商店有更高版本时弹窗，确认后跳转商店）
+        _ = CheckStoreUpdateAsync();
 
         // 首次进入主界面：先询问是否同意上传遥测数据（仅第一次启动；已有选择则静默跳过）
         RootFrame.Loaded += async (_, _) =>
@@ -1534,9 +1534,11 @@ public sealed partial class MainWindow : Window
         // 未选图时整窗只剩这层系统亚克力，不会出现"空背景"
         _acrylic ??= new DesktopAcrylicBackdrop();
         SystemBackdrop = _acrylic;
+        // 先设透明资源、再切主题：主题切换会让模板重新解析 ThemeResource，
+        // 顺序反了就会解析到旧的灰底，内容区留下一块灰面板
+        SetNavPaneTransparent(true); // 去掉 NavigationView 自带的内容层灰色底，否则导航栏下方会多出一块灰面板
         ApplyRequestedTheme(ElementTheme.Dark); // 图片主题固定深色，避免亮图下白字看不清
         ShowThemeBackdrop(false);   // 图片/亚克力层要在根布局之下才看得见
-        SetNavPaneTransparent(true); // 去掉 NavigationView 自带的内容层灰色底，否则导航栏下方会多出一块灰面板
         Vm.SetThemeMode("image");
         ApplyBackdropOpacity();
         ApplyBackdropImage();
@@ -1579,12 +1581,52 @@ public sealed partial class MainWindow : Window
             "NavigationViewContentBackground",
             "NavigationViewTopPaneBackground",
             "NavigationViewDefaultPaneBackground",
-            "NavigationViewExpandedPaneBackground"
+            "NavigationViewExpandedPaneBackground",
+            "NavigationViewContentGridBorderThickness"
         };
         foreach (var key in keys)
         {
-            if (on) RootNav.Resources[key] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            if (on) RootNav.Resources[key] = key.EndsWith("Thickness", StringComparison.Ordinal)
+                ? new Thickness(0)
+                : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
             else RootNav.Resources.Remove(key);
+        }
+
+        // 运行期切主题时，模板里已经解析过的 ThemeResource 不会因为往 Resources 里补键就重新求值，
+        // 内容区仍保留那层半透明灰（LayerFillColorDefaultBrush）。这里从内容页往上，
+        // 把 NavigationView 内部内容层的背景直接压成透明；离开图片主题时清掉本地值恢复模板笔刷。
+        DependencyObject? cur = RootFrame;
+        while (cur is not null && !ReferenceEquals(cur, RootNav))
+        {
+            if (cur is FrameworkElement fe)
+            {
+                if (on) SetTransparentBackground(fe);
+                else ClearBackground(fe);
+            }
+            cur = VisualTreeHelper.GetParent(cur);
+        }
+    }
+
+    private static void SetTransparentBackground(FrameworkElement element)
+    {
+        var brush = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        switch (element)
+        {
+            case Panel panel: panel.Background = brush; break;
+            case Border border: border.Background = brush; break;
+            case ContentPresenter presenter: presenter.Background = brush; break;
+            case Control control: control.Background = brush; break;
+        }
+    }
+
+    private static void ClearBackground(FrameworkElement element)
+    {
+        switch (element)
+        {
+            case Panel panel: panel.ClearValue(Panel.BackgroundProperty); break;
+            case Border border: border.ClearValue(Border.BackgroundProperty); break;
+            case ContentPresenter presenter: presenter.ClearValue(ContentPresenter.BackgroundProperty); break;
+            case Control control: control.ClearValue(Control.BackgroundProperty); break;
         }
     }
 
@@ -1605,15 +1647,11 @@ public sealed partial class MainWindow : Window
         BackdropOverlay.Visibility = Visibility.Collapsed;
     }
 
-    // ===================== 版本检查 / 更新提示 =====================
+    // ===================== 版本检查 / 更新提示（微软商店） =====================
 
-    private const string UpdateBase = "https://update.baka233.top/Easy/";
-    private const string UpdateVersionUrl = UpdateBase + "Version.txt";
-    private const string UpdateLogUrl = UpdateBase + "Log.txt";
-    private const string UpdateAppUrl = UpdateBase + "App.txt";
-
-    /// <summary>启动后异步检查更新：服务器版本高于本地版本（config 的 Version）时弹窗提示。</summary>
-    private async Task CheckUpdateAsync()
+    /// <summary>启动后异步检查微软商店更新：商店里已有新版本时弹窗提示，确认后跳转商店。
+    /// 只有带包标识（从商店安装 / MSIX 安装）时商店接口可用；开发用的未打包版本直接跳过。</summary>
+    private async Task CheckStoreUpdateAsync()
     {
         try
         {
@@ -1621,100 +1659,79 @@ public sealed partial class MainWindow : Window
             if (Environment.GetCommandLineArgs().Any(a => a.Equals("--selftest", StringComparison.OrdinalIgnoreCase)))
                 return;
 
-            var server = await FetchTextAsync(UpdateVersionUrl);
-            if (string.IsNullOrWhiteSpace(server)) return; // 网络失败/无版本信息 → 静默
+            if (!TryGetInstalledVersion(out var installed))
+            {
+                Vm.Logger.Info("未打包运行（无包标识），跳过微软商店更新检查");
+                return;
+            }
 
-            if (!IsNewerVersion(server, Vm.Version)) return; // 本地已是最新
+            var context = Windows.Services.Store.StoreContext.GetDefault();
+            var updates = await context.GetAppAndOptionalStorePackageUpdatesAsync();
+            if (updates.Count == 0)
+            {
+                Vm.Logger.Info("微软商店：当前已是最新版本");
+                return;
+            }
 
-            var log = await FetchTextAsync(UpdateLogUrl) ?? "（无法获取更新日志）";
-            await ShowUpdateDialogAsync(server, log);
+            await ShowStoreUpdateDialogAsync(context, installed, updates[0].Package.Id.Version);
         }
         catch (Exception ex)
         {
-            Vm.Logger.Warn($"检查更新失败: {ex.Message}");
+            Vm.Logger.Warn($"检查微软商店更新失败: {ex.Message}");
         }
     }
 
-    /// <summary>获取远程文本内容（5 秒超时，失败返回 null，不抛异常）</summary>
-    private static async Task<string?> FetchTextAsync(string url)
+    /// <summary>取当前已安装包的版本；未打包运行时没有包标识，返回 false。</summary>
+    private static bool TryGetInstalledVersion(out Version version)
     {
         try
         {
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-            return (await client.GetStringAsync(url)).Trim();
+            var v = Windows.ApplicationModel.Package.Current.Id.Version;
+            version = new Version(v.Major, v.Minor, v.Build, v.Revision);
+            return true;
         }
         catch
         {
-            return null;
+            version = new Version(0, 0);
+            return false;
         }
     }
 
-    /// <summary>版本号比较：server 高于 local 返回 true（支持 x.y.z 数字比较，解析失败按字符串比较）</summary>
-    private static bool IsNewerVersion(string server, string local)
+    /// <summary>商店有新版本时的提示：确认后打开本应用的商店页面（取不到商品 ID 时退到商店的"下载和更新"页）。</summary>
+    private async Task ShowStoreUpdateDialogAsync(
+        Windows.Services.Store.StoreContext context, Version installed,
+        Windows.ApplicationModel.PackageVersion available)
     {
-        if (System.Version.TryParse(server, out var s) && System.Version.TryParse(local, out var l))
-            return s > l;
-        return string.Compare(server, local, StringComparison.Ordinal) > 0;
-    }
-
-    /// <summary>更新弹窗：多行只读滚动日志 + 是/否。点"是"→ 打开 App.txt 里的更新链接。</summary>
-    private async Task ShowUpdateDialogAsync(string serverVersion, string log)
-    {
-        // 日志区用 ScrollViewer + TextBlock（与检测弹窗一致）：多行完整显示、可滚动、可选中复制
-        var logBox = new ScrollViewer
-        {
-            MaxHeight = 300,
-            MinWidth = 480,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Content = new TextBlock
-            {
-                Text = log,
-                TextWrapping = TextWrapping.Wrap,
-                IsTextSelectionEnabled = true,
-                FontFamily = new FontFamily("Consolas"),
-                FontSize = 13
-            }
-        };
-
+        var storeVersion = $"{available.Major}.{available.Minor}.{available.Build}.{available.Revision}";
         var dlg = new ContentDialog
         {
             Title = "发现新版本",
-            Content = new StackPanel
-            {
-                Spacing = 8,
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = $"当前版本: v{Vm.Version}\n目标版本: v{serverVersion}\n\n以下是新版本更新信息:",
-                        TextWrapping = TextWrapping.Wrap
-                    },
-                    logBox
-                }
-            },
-            PrimaryButtonText = "是",
-            CloseButtonText = "否",
+            Content = $"微软商店已有新版本。\n\n当前版本: v{installed}\n商店版本: v{storeVersion}\n\n前往微软商店即可更新。",
+            PrimaryButtonText = "前往微软商店",
+            CloseButtonText = "稍后",
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootFrame.XamlRoot
         };
-
         if (await dlg.ShowLocalizedAsync() != ContentDialogResult.Primary) return;
 
-        // 是 → 获取更新链接并用默认浏览器打开
-        var url = await FetchTextAsync(UpdateAppUrl);
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            Vm.Logger.Warn("未能获取更新链接");
-            return;
-        }
+        var uri = new Uri("ms-windows-store://downloadsandupdates");
         try
         {
-            Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+            var product = await context.GetStoreProductForCurrentAppAsync();
+            var storeId = product.Product?.StoreId;
+            if (!string.IsNullOrWhiteSpace(storeId))
+                uri = new Uri($"ms-windows-store://pdp/?productid={storeId}");
+        }
+        catch { /* 取不到商品 ID 就用商店的"下载和更新"页 */ }
+
+        try
+        {
+            if (!await Windows.System.Launcher.LaunchUriAsync(uri))
+                Vm.Logger.Warn("打开微软商店失败：系统未处理商店链接");
         }
         catch (Exception ex)
         {
-            Vm.Logger.Warn($"打开更新链接失败: {ex.Message}");
+            Vm.Logger.Warn($"打开微软商店失败: {ex.Message}");
         }
     }
 }
