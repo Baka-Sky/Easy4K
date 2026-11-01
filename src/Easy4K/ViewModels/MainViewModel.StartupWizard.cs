@@ -6,8 +6,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Easy4K.Models;
-using Easy4K.Services;
-using Easy4K.Services.CommandBuilders;
+using Easy4K.LuminolEngine;
+using Easy4K.LuminolEngine.CommandBuilders;
 
 namespace Easy4K.ViewModels;
 
@@ -53,8 +53,9 @@ public partial class MainViewModel
     /// 安装版的安装目录只读，不能往 exe 旁的 Res 里写）</summary>
     public static string ResDir => Path.Combine(AppPaths.WritableRoot, "Res");
 
-    /// <summary>1 秒处理前测试视频路径</summary>
-    public static string StartupTestVideoPath => Path.Combine(ResDir, "Easy4K_test_1s.mp4");
+    /// <summary>1 秒处理前测试视频路径（v2：带一个硬切镜头，用于顺带验证「转场优化」）
+    /// 文件名带版本号，避免旧版生成的单镜头测试视频被继续复用。</summary>
+    public static string StartupTestVideoPath => Path.Combine(ResDir, "Easy4K_test_1s_v2.mp4");
 
     // ===================== 报告目录 =====================
     /// <summary>读取报告输出目录的绝对路径（相对路径基于可写根目录，同 Output/Temp 的解析方式）</summary>
@@ -66,7 +67,8 @@ public partial class MainViewModel
     }
 
     // ===================== 处理前测试 =====================
-    /// <summary>确保 Res 里有 1 秒测试视频（缺则用 ffmpeg 生成：testsrc2 彩条 + 440Hz 正弦音，便于验证含音频链路）。</summary>
+    /// <summary>确保 Res 里有 1 秒测试视频（缺则用 ffmpeg 生成：前半 testsrc2、后半 smptebars，
+    /// 中间是一个硬切镜头，用来顺带验证「转场优化」；音轨为 440Hz 正弦，便于验证音频链路）。</summary>
     public async Task<bool> EnsureStartupTestVideoAsync()
     {
         try
@@ -75,7 +77,7 @@ public partial class MainViewModel
             Directory.CreateDirectory(ResDir);
             if (!Tools.FFmpegExists) { _logger.Warn("处理前测试: FFmpeg 未就绪，无法生成测试视频"); return false; }
 
-            _logger.Info("处理前测试: 正在生成 1 秒测试视频...");
+            _logger.Info("处理前测试: 正在生成 1 秒测试视频（含 1 个转场，用于验证转场优化）...");
             var psi = new ProcessStartInfo
             {
                 FileName = Tools.FFmpegExe,
@@ -85,9 +87,14 @@ public partial class MainViewModel
             };
             psi.ArgumentList.Add("-y");
             psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("lavfi");
-            psi.ArgumentList.Add("-i"); psi.ArgumentList.Add("testsrc2=size=640x360:rate=30:duration=1");
+            psi.ArgumentList.Add("-i"); psi.ArgumentList.Add("testsrc2=size=640x360:rate=30:duration=0.5");
+            psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("lavfi");
+            psi.ArgumentList.Add("-i"); psi.ArgumentList.Add("smptebars=size=640x360:rate=30:duration=0.5");
             psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("lavfi");
             psi.ArgumentList.Add("-i"); psi.ArgumentList.Add("sine=frequency=440:sample_rate=48000:duration=1");
+            psi.ArgumentList.Add("-filter_complex"); psi.ArgumentList.Add("[0:v][1:v]concat=n=2:v=1:a=0[v]");
+            psi.ArgumentList.Add("-map"); psi.ArgumentList.Add("[v]");
+            psi.ArgumentList.Add("-map"); psi.ArgumentList.Add("2:a");
             psi.ArgumentList.Add("-shortest");
             psi.ArgumentList.Add("-c:v"); psi.ArgumentList.Add("libx264");
             psi.ArgumentList.Add("-pix_fmt"); psi.ArgumentList.Add("yuv420p");
@@ -184,6 +191,9 @@ public partial class MainViewModel
                 };
 
                 _logger.Info($"处理前测试选项: 超分 {ctx.SrModel}×{ctx.SrScale} / 补帧模型 {ctx.IfModel}×{ctx.IfMultiplier}");
+                _logger.Info(_app.SceneGuardEnabled
+                    ? "转场优化：已开启（补帧前会跑 PySceneDetect 转场检测）"
+                    : "转场优化：已关闭");
 
                 // 复用正式处理的进度/预览管线，阶段文案统一显示"测试中..."
                 _cts = new CancellationTokenSource();

@@ -1,4 +1,5 @@
 using Easy4K.Models;
+using Easy4K.LuminolEngine;
 using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -95,6 +96,7 @@ public sealed partial class ProgressPage : Page
             Vm.Logger.EntriesAdded += OnLogEntriesAdded;
             Vm.Logger.Cleared += OnLogCleared;
             Vm.PropertyChanged += OnVmPropertyChanged;
+            Loc.LanguageChanged += OnLanguageChanged;
             _subscribed = true;
         }
         SelfTestSkipBtn.Visibility = Vm.IsStartupSelfTest ? Visibility.Visible : Visibility.Collapsed;
@@ -110,6 +112,7 @@ public sealed partial class ProgressPage : Page
         Vm.Logger.EntriesAdded -= OnLogEntriesAdded;
         Vm.Logger.Cleared -= OnLogCleared;
         Vm.PropertyChanged -= OnVmPropertyChanged;
+        Loc.LanguageChanged -= OnLanguageChanged;
         _subscribed = false;
     }
 
@@ -177,9 +180,31 @@ public sealed partial class ProgressPage : Page
 
     private void UpdatePauseButton()
     {
-        PauseBtn.Content = Vm.IsPaused ? "继续" : "暂停";
+        PauseBtn.Content = Loc.Tr(Vm.IsPaused ? "继续" : "暂停");
         PauseBtn.IsEnabled = Vm.CanPause;
     }
+
+    /// <summary>三联预览当前的帧号（切语言时按这些值重新拼标签）。</summary>
+    private int _verdictIndex, _compareIndex, _filterIndex;
+
+    private void OnLanguageChanged() => DispatcherQueue.TryEnqueue(() =>
+    {
+        UpdatePauseButton();
+        RefreshFrameLabels();
+    });
+
+    /// <summary>按当前语言重写三联标签；带帧号时拼上「· 第 N 帧」。</summary>
+    private void RefreshFrameLabels()
+    {
+        VerdictLabel.Text = FrameLabel("判决帧", _verdictIndex);
+        CompareLabel.Text = FrameLabel("对比帧", _compareIndex);
+        PreviewCaption.Text = FrameLabel("筛选帧", _filterIndex);
+    }
+
+    private static string FrameLabel(string source, int index)
+        => index > 0
+            ? $"{Loc.Tr(source)} · {string.Format(Loc.Tr("第 {0} 帧"), index)}"
+            : Loc.Tr(source);
 
     /// <summary>批量日志到达 → 先攒进缓冲，由节流定时器合并成一次文本重建并滚到底。
     /// 全文重建会重排整个 TextBox，日志一密就每次重建一次会让日志区不停抖动；
@@ -271,9 +296,10 @@ public sealed partial class ProgressPage : Page
             if (p.FrameCompareMode)
             {
                 // 标签带上帧号：左右两图停在哪儿一目了然，中间与右侧则会一路前移
-                VerdictLabel.Text = p.VerdictFrameIndex > 0 ? $"判决帧 · 第 {p.VerdictFrameIndex} 帧" : "判决帧";
-                CompareLabel.Text = p.CompareFrameIndex > 0 ? $"对比帧 · 第 {p.CompareFrameIndex} 帧" : "对比帧";
-                PreviewCaption.Text = p.Current > 0 ? $"筛选帧 · 第 {p.Current} 帧" : "筛选帧";
+                _verdictIndex = p.VerdictFrameIndex;
+                _compareIndex = p.CompareFrameIndex;
+                _filterIndex = (int)p.Current;
+                RefreshFrameLabels();
             }
 
             // 左：判决帧（只在判出重复时更新，其余时间保持不动）
@@ -318,9 +344,8 @@ public sealed partial class ProgressPage : Page
             CompareImage.Source = null;
             _lastVerdictPath = "";
             _lastComparePath = "";
-            VerdictLabel.Text = "判决帧";
-            CompareLabel.Text = "对比帧";
-            PreviewCaption.Text = "筛选帧";
+            _verdictIndex = _compareIndex = _filterIndex = 0;
+            RefreshFrameLabels();
         }
     }
 

@@ -1,6 +1,6 @@
 using System.IO;
 using System.Runtime.InteropServices;
-using Easy4K.Services;
+using Easy4K.LuminolEngine;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -40,6 +40,19 @@ public sealed partial class SplashWindow : Window
     {
         try { Application.Current.Exit(); }
         catch { Close(); }
+    }
+
+    /// <summary>鼠标移入：给关闭按钮加半透明深色圆底，避免白 ✕ 压在亮图上看不清</summary>
+    private void OnClosePointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        CloseButton.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+            Windows.UI.Color.FromArgb(0x99, 0, 0, 0));
+    }
+
+    /// <summary>鼠标移出：恢复全透明，不遮挡启动图</summary>
+    private void OnClosePointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        CloseButton.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
     }
 
     /// <summary>启动检测失败：直接在启动画面上弹窗（不进主界面）；关闭后由调用方退出程序。

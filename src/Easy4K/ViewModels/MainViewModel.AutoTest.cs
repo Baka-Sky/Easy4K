@@ -8,8 +8,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Easy4K.Models;
-using Easy4K.Services;
-using Easy4K.Services.CommandBuilders;
+using Easy4K.LuminolEngine;
+using Easy4K.LuminolEngine.CommandBuilders;
 
 namespace Easy4K.ViewModels;
 
@@ -453,6 +453,8 @@ public partial class MainViewModel
 
         AudioSrEnabled = false;
         KeepSubtitles = false;
+        EmbedMetadata = false;
+        EmbedCover = false;
     }
 
     /// <summary>API 模式全组合测试：不直接用 orchestrator，而是每例先把选项写进 ViewModel，
@@ -515,8 +517,9 @@ public partial class MainViewModel
                 _logger.Info($"---- [{_autoTestIndex}/{_autoTestCount}] {c.Name} ----");
                 ProgressDetail = $"API 自动测试 {_autoTestIndex}/{_autoTestCount}：{c.Name}";
 
-                ApplyCaseToViewModel(c, temp, outp);
                 await SetInputVideoAsync(StartupTestVideoPath);
+                // 视频检测完成后再写选项：检测前 Video 为 null 会把「字幕/元数据/封面」三项清掉
+                ApplyCaseToViewModel(c, temp, outp);
                 await Task.Delay(400);   // 等视频检测完成
 
                 var sw = Stopwatch.StartNew();
@@ -599,6 +602,15 @@ public partial class MainViewModel
         public string DedupMode { get; set; } = "performance";
         public bool Turbo { get; set; }
         public int TurboSegments { get; set; } = 2;
+        public bool KeepSubtitles { get; set; }
+        public bool EmbedMetadata { get; set; }
+        public bool EmbedCover { get; set; }
+        /// <summary>音频超分（AudioSR，替换音轨）</summary>
+        public bool AudioSr { get; set; }
+        /// <summary>AudioSR 精度：fp16 / fp32</summary>
+        public string AudioSrPrecision { get; set; } = "fp32";
+        /// <summary>转场优化（PySceneDetect）</summary>
+        public bool SceneGuard { get; set; }
         /// <summary>子进程把结果写到这个路径</summary>
         public string ResultPath { get; set; } = "";
     }
@@ -626,8 +638,9 @@ public partial class MainViewModel
             HeadlessAutoTest = true;
             SuppressCompletionDialog = true;
 
-            ApplySpecToViewModel(spec);
             await SetInputVideoAsync(spec.Input);
+            // 视频检测完成后再写选项：检测前 Video 为 null 会把「字幕/元数据/封面」三项清掉
+            ApplySpecToViewModel(spec);
             await Task.Delay(500);   // 等视频检测完成
 
             var sw = Stopwatch.StartNew();
@@ -693,8 +706,12 @@ public partial class MainViewModel
         TurboMode = s.Turbo;
         TurboSegments = Math.Clamp(s.TurboSegments, 1, 5);
 
-        AudioSrEnabled = false;
-        KeepSubtitles = false;
+        AudioSrEnabled = s.AudioSr;
+        AudioSrPrecision = string.Equals(s.AudioSrPrecision, "fp16", StringComparison.OrdinalIgnoreCase) ? "fp16" : "fp32";
+        SceneGuardEnabled = s.SceneGuard;
+        KeepSubtitles = s.KeepSubtitles;
+        EmbedMetadata = s.EmbedMetadata;
+        EmbedCover = s.EmbedCover;
     }
 
     /// <summary>父进程：逐例拉起一个 --api-case 子进程（跑完关闭再启动下一例），汇总结果写桌面报告。</summary>

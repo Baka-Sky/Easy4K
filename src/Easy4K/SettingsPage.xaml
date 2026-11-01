@@ -10,6 +10,8 @@
     <Page.Resources>
         <ResourceDictionary>
             <Style x:Key="CardBorder" TargetType="Border">
+                <!-- Tag=Card：玻璃主题（亚克力/图片/跟随系统）下由代码换成半透明底色 -->
+                <Setter Property="Tag" Value="Card"/>
                 <Setter Property="Background" Value="{ThemeResource CardBgBrush}"/>
                 <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
                 <Setter Property="BorderThickness" Value="1"/>
@@ -40,11 +42,22 @@
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel Spacing="6">
                         <TextBlock Text="外观" Style="{StaticResource SectionTitle}"/>
-                        <RadioButton x:Name="ThemeLightRb" Content="浅色主题" GroupName="Theme" Checked="OnThemeChanged"/>
-                        <RadioButton x:Name="ThemeDarkRb" Content="深色主题" GroupName="Theme" Checked="OnThemeChanged"/>
-                        <RadioButton x:Name="ThemeSystemRb" Content="跟随系统" GroupName="Theme" Checked="OnThemeChanged"/>
-                        <RadioButton x:Name="ThemeAcrylicRb" Content="亚克力" GroupName="Theme" Checked="OnThemeChanged"/>
-                        <RadioButton x:Name="ThemeImageRb" Content="图片背景（背景图 + 亚克力覆盖）" GroupName="Theme" Checked="OnThemeChanged"/>
+                        <!-- 文案用 TextBlock 承载：部分语言（如英语）比中文长，需要换行而不是被裁掉 -->
+                        <RadioButton x:Name="ThemeLightRb" GroupName="Theme" Checked="OnThemeChanged">
+                            <TextBlock Text="浅色主题" TextWrapping="Wrap"/>
+                        </RadioButton>
+                        <RadioButton x:Name="ThemeDarkRb" GroupName="Theme" Checked="OnThemeChanged">
+                            <TextBlock Text="深色主题" TextWrapping="Wrap"/>
+                        </RadioButton>
+                        <RadioButton x:Name="ThemeSystemRb" GroupName="Theme" Checked="OnThemeChanged">
+                            <TextBlock Text="跟随系统" TextWrapping="Wrap"/>
+                        </RadioButton>
+                        <RadioButton x:Name="ThemeAcrylicRb" GroupName="Theme" Checked="OnThemeChanged">
+                            <TextBlock Text="亚克力" TextWrapping="Wrap"/>
+                        </RadioButton>
+                        <RadioButton x:Name="ThemeImageRb" GroupName="Theme" Checked="OnThemeChanged">
+                            <TextBlock Text="图片背景（背景图 + 亚克力覆盖）" TextWrapping="Wrap"/>
+                        </RadioButton>
 
                         <!-- 选中"图片背景"后才出现（排版同主页的目录选择：80 / * / Auto） -->
                         <Grid x:Name="BgImageRow" ColumnSpacing="8" Visibility="Collapsed" Margin="28,0,0,2">
@@ -94,6 +107,18 @@
                             </ComboBox>
                             <TextBlock Grid.Column="2" VerticalAlignment="Center" FontSize="12" Opacity="0.6"
                                        Text="在窗口最大化时生效（普通窗口保持100%），整体等比放大界面"/>
+                        </Grid>
+
+                        <!-- 语言：暂时隐藏（词表与切换逻辑保留），恢复时把 Collapsed 去掉即可 -->
+                        <Grid ColumnSpacing="8" Margin="0,6,0,0" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="语言" Style="{StaticResource FieldLabel}"/>
+                            <ComboBox x:Name="LanguageCombo" Grid.Column="1" MinWidth="160" VerticalAlignment="Center"
+                                      SelectionChanged="OnLanguageChanged" Style="{StaticResource GlassComboBox}"/>
                         </Grid>
                     </StackPanel>
                 </Border>

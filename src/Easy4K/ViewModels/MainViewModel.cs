@@ -5,8 +5,8 @@ using System.Text;
 using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Easy4K.Models;
-using Easy4K.Services;
-using Easy4K.Services.CommandBuilders;
+using Easy4K.LuminolEngine;
+using Easy4K.LuminolEngine.CommandBuilders;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
@@ -101,16 +101,30 @@ public partial class MainViewModel : ObservableObject
         _lowerQualityForVram = app.LowerQualityForVram;
         _useGpuAcceleration = app.UseGpuAcceleration;
         _useCpuProcessing = app.UseCpuProcessing;
+        _tryOldFfmpegOnCrash = app.TryOldFfmpegOnCrash;
+        _sceneGuardEnabled = app.SceneGuardEnabled;
         _noReport = !app.ReportEnabled;
         _reportAutoOpen = app.ReportAutoOpen;
         _skipStartupSelfTest = !app.StartupSelfTest;
         _threadCount = Math.Clamp(app.ThreadCount, 1, 32);
+        // 四段线程：解码/编码分开。旧配置没有新字段时，编码沿用 ThreadCount、解码保持 1（等价旧的 1:N:N）
+        _srEncodeThreads = Math.Clamp(app.SrEncodeThreads > 0 ? app.SrEncodeThreads : app.ThreadCount, 1, 32);
+        _srDecodeThreads = Math.Clamp(app.SrDecodeThreads > 0 ? app.SrDecodeThreads : 1, 1, 32);
+        _ifEncodeThreads = Math.Clamp(app.IfEncodeThreads > 0 ? app.IfEncodeThreads : app.ThreadCount, 1, 32);
+        _ifDecodeThreads = Math.Clamp(app.IfDecodeThreads > 0 ? app.IfDecodeThreads : 1, 1, 32);
+        _pipelineGpuIndex = Math.Clamp(app.PipelineGpuIndex, 0, 8);
+        PipelineGpuOptions = BuildPipelineGpuOptions();
         // 编码质量（高级页）：CRF / CQ-QP / 保留字幕
         _crf = Math.Clamp(app.Crf, 0, 51);
         _hwQuality = Math.Clamp(app.HwQuality, 0, 51);
         _hwQualityMode = app.HwQualityMode ?? "";
-        _keepSubtitles = app.KeepSubtitles;
+        // 这三项取决于视频本身有没有字幕/元数据/封面：启动时还没选视频，一律不勾，
+        // 避免出现「选项已禁用却显示打勾」的误导状态（选中带对应内容的视频后用户再勾）
+        _keepSubtitles = false;
+        _embedMetadata = false;
+        _embedCover = false;
         _hdrSaturation = Math.Clamp(app.HdrSaturation, 0, 200);
+        _hdrAiStrength = Math.Clamp(app.HdrAiStrength, 50, 150);
         _hdrContrast = Math.Clamp(app.HdrContrast, 0, 200);
         _suppressRedWarning = app.SuppressRedWarning;
         _backgroundImage = app.BackgroundImage ?? "";
@@ -128,13 +142,13 @@ public partial class MainViewModel : ObservableObject
         RefreshSfImageModels();
 
         _gpu = _env.Gpu;
-        // 启动时检测：非 RTX 显卡自动禁用 HDR 转换
-        _isHdrEnabled = _gpu.SupportsHdr && Tools.NvEncExists;
+        // HDR 可用：NVIDIA RTX 走 NVEncC 的 NGX TrueHDR；其它显卡有 AI 模型时走 HDRTVNet++ 重建
+        _isHdrEnabled = (_gpu.SupportsHdr && Tools.NvEncExists) || Tools.HdrAiExists;
         if (!_isHdrEnabled)
         {
             _sdrToHdr = false;
             if (!_gpu.IsRtx)
-                _logger?.Warn($"当前显卡 {_gpu.Name} 非 RTX 系列，HDR 转换已自动禁用");
+                _logger?.Warn($"当前显卡 {_gpu.Name} 非 RTX 系列，且未安装 AI HDR 模型，HDR 转换已自动禁用");
             else if (!Tools.NvEncExists)
                 _logger?.Warn("NVEncC64 未安装，HDR 转换已禁用");
         }
@@ -197,8 +211,11 @@ public partial class MainViewModel : ObservableObject
         _turboMode = _app.TurboMode;
         _turboBlockFrames = Math.Clamp(_app.TurboBlockFrames, 32, 4000);
         _turboSegments = Math.Clamp(_app.TurboSegments, 1, 5);
-        // 涡轮模式下线程固定 1:1:1（记住用户原本的线程数，关闭涡轮时恢复）
-        _threadsBeforeTurbo = _threadCount;
+        // 涡轮模式下线程固定 1:1:1（记住用户原本的四段线程数，关闭涡轮时恢复）
+        _srDecBeforeTurbo = _srDecodeThreads;
+        _srEncBeforeTurbo = _srEncodeThreads;
+        _ifDecBeforeTurbo = _ifDecodeThreads;
+        _ifEncBeforeTurbo = _ifEncodeThreads;
         if (_turboMode) _threadCount = 1;
         _autoRemoteOnStartup = _app.AutoRemoteOnStartup;
         _preventAutoSleep = _app.PreventAutoSleep;
@@ -351,7 +368,7 @@ public partial class MainViewModel : ObservableObject
             RefreshSrModels();
     }
 
-    /// <summary>当前算法支持的倍率档（升序）。RealSR 只有 4x、waifu2x 只有 2x/4x。</summary>
+    /// <summary>当前算法支持的倍率档（升序）。RealSR 只有 4x、waifu2x 只有 2x。</summary>
     private IReadOnlyList<int> SupportedSrScales() =>
         (SrCatalog.At(SrEngineIndex)?.Variants.SelectMany(v => v.Scales) ?? Enumerable.Empty<int>())
         .Distinct().OrderBy(x => x).ToList();
@@ -438,6 +455,12 @@ public partial class MainViewModel : ObservableObject
     // ===================== HDR 设置 =====================
     [ObservableProperty] private int _hdrSaturation = 200;
     [ObservableProperty] private int _hdrContrast = 200;
+    /// <summary>AI HDR 亮度强度（50~150%，100 = 模型原始映射）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HdrAiStrengthText))]
+    private int _hdrAiStrength = 100;
+
+    public string HdrAiStrengthText => $"{HdrAiStrength}%";
 
     // HDR 是否可用（非 RTX 自动禁用）
     [ObservableProperty] private bool _isHdrEnabled = true;
@@ -557,13 +580,25 @@ public partial class MainViewModel : ObservableObject
         // 反而拖慢整体；开启期间线程数锁定，关闭后恢复用户自己的设置。
         if (value)
         {
-            if (ThreadCount > 1) _threadsBeforeTurbo = ThreadCount;
-            ThreadCount = 1;
+            // 记住开启前的四段线程，关闭涡轮时原样恢复
+            _srDecBeforeTurbo = SrDecodeThreads;
+            _srEncBeforeTurbo = SrEncodeThreads;
+            _ifDecBeforeTurbo = IfDecodeThreads;
+            _ifEncBeforeTurbo = IfEncodeThreads;
+            _threadAutoLink = true;
+            SrDecodeThreads = 1; SrEncodeThreads = 1;
+            IfDecodeThreads = 1; IfEncodeThreads = 1;
+            _threadAutoLink = false;
         }
-        else if (ThreadCount <= 1)
+        else if (Math.Max(SrEncodeThreads, IfEncodeThreads) <= 1)
         {
-            // 关闭涡轮：恢复开启前的线程数，不把用户原来的 1:8:8 悄悄改成 1:1:1
-            ThreadCount = Math.Clamp(_threadsBeforeTurbo, 1, 32);
+            // 关闭涡轮：恢复开启前的线程数，不把用户原来的设置悄悄改成 1:1:1
+            _threadAutoLink = true;
+            SrDecodeThreads = Math.Clamp(_srDecBeforeTurbo, 1, 32);
+            SrEncodeThreads = Math.Clamp(_srEncBeforeTurbo, 1, 32);
+            IfDecodeThreads = Math.Clamp(_ifDecBeforeTurbo, 1, 32);
+            IfEncodeThreads = Math.Clamp(_ifEncBeforeTurbo, 1, 32);
+            _threadAutoLink = false;
         }
 
         _settings.Save(_app, _pathConfig);
@@ -633,6 +668,17 @@ public partial class MainViewModel : ObservableObject
     public Microsoft.UI.Xaml.Visibility SdrToHdrVis
         => SdrToHdr ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
 
+    /// <summary>走 AI 重建（HDRTVNet++）而不是 NVEncC 的 NGX TrueHDR</summary>
+    public bool HdrAiPath => !(Gpu.SupportsHdr && Tools.NvEncExists);
+
+    /// <summary>主管线 HDR 参数里的「AI 强度」只在 AI 路径出现</summary>
+    public Microsoft.UI.Xaml.Visibility HdrAiStrengthVis
+        => SdrToHdr && HdrAiPath ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+    /// <summary>单文件视频 HDR 的「AI 强度」</summary>
+    public Microsoft.UI.Xaml.Visibility SfHdrAiVis
+        => SfIsVideoHdr && HdrAiPath ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+
     // ===================== 运行状态 =====================
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStart))]
@@ -662,6 +708,14 @@ public partial class MainViewModel : ObservableObject
     /// <summary>使用 CPU 处理所有模型（超分/补帧 NCNN -g -1），速度慢</summary>
     [ObservableProperty]
     private bool _useCpuProcessing;
+
+    /// <summary>崩溃时尝试使用老版本处理架构（拆帧/合并用老版 FFmpeg，HDR 用老版 NVEncC）</summary>
+    [ObservableProperty]
+    private bool _tryOldFfmpegOnCrash;
+
+    /// <summary>转场保护：PySceneDetect 检测剪切点，转场处不插值（消除补帧鬼影）</summary>
+    [ObservableProperty]
+    private bool _sceneGuardEnabled;
 
     /// <summary>勾选=处理完成后不生成 HTML 配置文件(报告)（反相存入配置 ReportEnabled，与向导第4/5步同一开关）</summary>
     [ObservableProperty]
@@ -699,15 +753,16 @@ public partial class MainViewModel : ObservableObject
         ? "预览区：处理开始后实时显示最新帧"
         : "图片预览已关闭";
 
-    /// <summary>用户自定义线程数（滑块 1-32），命令 -j 1:{n}:{n}</summary>
+    /// <summary>旧版统一线程数（滑块 1-32），保留用于兼容旧配置；实际命令由四段线程控制</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ThreadLabel))]
+    [NotifyPropertyChangedFor(nameof(SrThreadLabel))]
+    [NotifyPropertyChangedFor(nameof(IfThreadLabel))]
     [NotifyPropertyChangedFor(nameof(ThreadWarnText))]
     [NotifyPropertyChangedFor(nameof(ThreadWarnVis))]
     private int _threadCount = 2;
 
-    /// <summary>开启涡轮前的线程数（关闭涡轮时恢复，避免用户的 1:8:8 被永久改成 1:1:1）</summary>
-    private int _threadsBeforeTurbo = 2;
+    /// <summary>开启涡轮前的线程数（关闭涡轮时恢复，避免用户的设置被永久改成 1:1:1）</summary>
+    private int _srDecBeforeTurbo = 1, _srEncBeforeTurbo = 2, _ifDecBeforeTurbo = 1, _ifEncBeforeTurbo = 2;
 
     partial void OnUseSafeFrameRateChanged(bool value)
     {
@@ -744,6 +799,24 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    partial void OnTryOldFfmpegOnCrashChanged(bool value)
+    {
+        _app.TryOldFfmpegOnCrash = value;
+        _settings.Save(_app, _pathConfig);
+        _logger.Info(value
+            ? "已勾选「崩溃时尝试使用老版本处理架构」：FFmpeg（拆帧/合并/HDR/音频嵌入）和 NVEncC（HDR）失败时自动改用老版本重试"
+            : "已取消：拆帧/合并/HDR/音频嵌入只使用当前版本工具（失败后拆帧/合并仍会回退 CPU）");
+    }
+
+    partial void OnSceneGuardEnabledChanged(bool value)
+    {
+        _app.SceneGuardEnabled = value;
+        _settings.Save(_app, _pathConfig);
+        _logger.Info(value
+            ? "已开启转场保护：补帧前用 PySceneDetect 检测镜头切换，转场处不插值"
+            : "已关闭转场保护：转场帧照常插值（可能出现跨镜头鬼影）");
+    }
+
     partial void OnNoReportChanged(bool value)
     {
         _app.ReportEnabled = !value; // 不生成报告 = 关掉 ReportEnabled；向导开关与此共享同一字段
@@ -766,6 +839,152 @@ public partial class MainViewModel : ObservableObject
         _settings.Save(_app, _pathConfig);
     }
 
+    // ===================== 四段线程（超分 / 补帧 各自的解码、编码） =====================
+
+    /// <summary>超分解码线程（-j 的 load 段）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SrThreadLabel))]
+    [NotifyPropertyChangedFor(nameof(ThreadRatioText))]
+    [NotifyPropertyChangedFor(nameof(SrDecodeThreadsSlide))]
+    [NotifyPropertyChangedFor(nameof(SrDecodeText))]
+    private int _srDecodeThreads = 1;
+    /// <summary>超分推理+编码线程（-j 的 proc:save 段）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SrThreadLabel))]
+    [NotifyPropertyChangedFor(nameof(ThreadRatioText))]
+    [NotifyPropertyChangedFor(nameof(ThreadWarnText))]
+    [NotifyPropertyChangedFor(nameof(ThreadWarnVis))]
+    [NotifyPropertyChangedFor(nameof(SrEncodeThreadsSlide))]
+    [NotifyPropertyChangedFor(nameof(SrEncodeText))]
+    private int _srEncodeThreads = 2;
+    /// <summary>补帧解码线程</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IfThreadLabel))]
+    [NotifyPropertyChangedFor(nameof(ThreadRatioText))]
+    [NotifyPropertyChangedFor(nameof(IfDecodeThreadsSlide))]
+    [NotifyPropertyChangedFor(nameof(IfDecodeText))]
+    private int _ifDecodeThreads = 1;
+    /// <summary>补帧推理+编码线程</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IfThreadLabel))]
+    [NotifyPropertyChangedFor(nameof(ThreadRatioText))]
+    [NotifyPropertyChangedFor(nameof(ThreadWarnText))]
+    [NotifyPropertyChangedFor(nameof(ThreadWarnVis))]
+    [NotifyPropertyChangedFor(nameof(IfEncodeThreadsSlide))]
+    [NotifyPropertyChangedFor(nameof(IfEncodeText))]
+    private int _ifEncodeThreads = 2;
+    /// <summary>流水线 Vulkan 设备序号（0=自动，1/2=指定设备）</summary>
+    [ObservableProperty] private int _pipelineGpuIndex;
+
+    /// <summary>「流水线 GPU」下拉项：自动 + 系统枚举到的每块显卡（带显卡名字）</summary>
+    public IReadOnlyList<string> PipelineGpuOptions { get; }
+
+    /// <summary>滑块绑定用 double 代理（WinUI Slider.Value 是 double，x:Bind 不能直接绑 int）</summary>
+    public double SrDecodeThreadsSlide { get => SrDecodeThreads; set => SrDecodeThreads = Math.Clamp((int)Math.Round(value), 1, 32); }
+    public double SrEncodeThreadsSlide { get => SrEncodeThreads; set => SrEncodeThreads = Math.Clamp((int)Math.Round(value), 1, 32); }
+    public double IfDecodeThreadsSlide { get => IfDecodeThreads; set => IfDecodeThreads = Math.Clamp((int)Math.Round(value), 1, 32); }
+    public double IfEncodeThreadsSlide { get => IfEncodeThreads; set => IfEncodeThreads = Math.Clamp((int)Math.Round(value), 1, 32); }
+
+    public string SrDecodeText => SrDecodeThreads.ToString();
+    public string SrEncodeText => SrEncodeThreads.ToString();
+    public string IfDecodeText => IfDecodeThreads.ToString();
+    public string IfEncodeText => IfEncodeThreads.ToString();
+
+    private bool _threadAutoLink;
+
+    partial void OnSrEncodeThreadsChanged(int value)
+    {
+        var v = Math.Clamp(value, 1, 32);
+        if (v != value) { SrEncodeThreads = v; return; }
+        _app.SrEncodeThreads = v;
+        // 编码 → 解码：每增加 2 个编码线程就加 1 个解码线程（解码 = 编码 ÷ 2，不足 1 取 1）；
+        // 程序自动回写触发的事件不再反向联动
+        if (!_threadAutoLink)
+        {
+            _threadAutoLink = true;
+            SrDecodeThreads = Math.Max(1, v / 2);
+            _threadAutoLink = false;
+        }
+        _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnSrDecodeThreadsChanged(int value)
+    {
+        var v = Math.Clamp(value, 1, 32);
+        if (v != value) { SrDecodeThreads = v; return; }
+        _app.SrDecodeThreads = v;
+        // 只手动调解码时不联动编码（编码保持不变）
+        _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnIfEncodeThreadsChanged(int value)
+    {
+        var v = Math.Clamp(value, 1, 32);
+        if (v != value) { IfEncodeThreads = v; return; }
+        _app.IfEncodeThreads = v;
+        if (!_threadAutoLink)
+        {
+            _threadAutoLink = true;
+            IfDecodeThreads = Math.Max(1, v / 2);
+            _threadAutoLink = false;
+        }
+        _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnIfDecodeThreadsChanged(int value)
+    {
+        var v = Math.Clamp(value, 1, 32);
+        if (v != value) { IfDecodeThreads = v; return; }
+        _app.IfDecodeThreads = v;
+        // 只手动调解码时不联动编码
+        _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnPipelineGpuIndexChanged(int value)
+    {
+        var v = Math.Clamp(value, 0, 8);
+        if (v != value) { PipelineGpuIndex = v; return; }
+        _app.PipelineGpuIndex = v;
+        _settings.Save(_app, _pathConfig);
+    }
+
+    /// <summary>下拉项：第 0 项「自动（设备 0）」即 -g 0；之后按 DXGI 枚举顺序列出每块显卡名字，
+    /// 选中哪项就把该项下标作为 -g 传给 ncnn（下标 1 = 第二块卡）。</summary>
+    private static IReadOnlyList<string> BuildPipelineGpuOptions()
+    {
+        var names = DxgiMemoryQuery.ReadAdapterNames();
+        var list = new List<string>
+        {
+            names.Count > 0 ? $"自动（设备 0：{names[0]}）" : "自动（默认设备 0）"
+        };
+        for (var i = 1; i < names.Count; i++) list.Add($"设备 {i}：{names[i]}");
+        if (names.Count == 0)
+        {
+            // 枚举失败（极少数驱动）时保留手动指定入口
+            list.Add("设备 1");
+            list.Add("设备 2");
+        }
+        return list;
+    }
+
+    /// <summary>超分线程串（解码:推理:编码），如 1:2:2</summary>
+    public string SrThreadLabel => $"{SrDecodeThreads}:{SrEncodeThreads}:{SrEncodeThreads}";
+
+    /// <summary>补帧线程串（解码:推理:编码），如 1:2:2</summary>
+    public string IfThreadLabel => $"{IfDecodeThreads}:{IfEncodeThreads}:{IfEncodeThreads}";
+
+    /// <summary>倍率提示：两路当前的 -j 线程串（解码:推理:编码）</summary>
+    public string ThreadRatioText => $"线程倍率　超分 {SrThreadLabel}　·　补帧 {IfThreadLabel}";
+
+    /// <summary>超过 1:8:8 时的警告文案</summary>
+    public string ThreadWarnText => Math.Max(SrEncodeThreads, IfEncodeThreads) > 8
+        ? "警告：编码线程超过 8，高并发提交可能引发 Vulkan 设备丢失或显存溢出，请谨慎使用"
+        : "";
+
+    /// <summary>警告可见性（超过 1:8:8 才显示）</summary>
+    public Microsoft.UI.Xaml.Visibility ThreadWarnVis
+        => Math.Max(SrEncodeThreads, IfEncodeThreads) > 8 ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+
     partial void OnHdrSaturationChanged(int value)
     {
         _app.HdrSaturation = Math.Clamp(value, 0, 200);
@@ -778,17 +997,13 @@ public partial class MainViewModel : ObservableObject
         _settings.Save(_app, _pathConfig);
     }
 
-    /// <summary>滑块当前值对应的 -j 线程串（如 1:8:8）</summary>
-    public string ThreadLabel => $"1:{ThreadCount}:{ThreadCount}";
-
-    /// <summary>超过 1:8:8 时的警告文案</summary>
-    public string ThreadWarnText => ThreadCount > 8
-        ? "警告：线程超过 1:8:8，高并发提交可能引发 Vulkan 设备丢失或显存溢出，请谨慎使用"
-        : "";
-
-    /// <summary>警告可见性（超过 1:8:8 才显示）</summary>
-    public Microsoft.UI.Xaml.Visibility ThreadWarnVis
-        => ThreadCount > 8 ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+    partial void OnHdrAiStrengthChanged(int value)
+    {
+        var v = Math.Clamp(value, 50, 150);
+        if (v != value) HdrAiStrength = v;
+        _app.HdrAiStrength = v;
+        _settings.Save(_app, _pathConfig);
+    }
 
     // ===================== 编码质量（高级页） =====================
 
@@ -851,6 +1066,36 @@ public partial class MainViewModel : ObservableObject
     /// <summary>字幕复选框是否可用（有字幕才能勾；勾选项在没字幕时自动取消）</summary>
     public bool KeepSubtitlesEnabled => HasSubtitles;
 
+    /// <summary>嵌入原视频元数据（标题/艺人/注释等格式标签，仅检测到元数据时可勾）</summary>
+    [ObservableProperty] private bool _embedMetadata;
+
+    partial void OnEmbedMetadataChanged(bool value)
+    {
+        _app.EmbedMetadata = value;
+        _settings.Save(_app, _pathConfig);
+    }
+
+    /// <summary>嵌入原视频封面（仅检测到封面图时可勾）</summary>
+    [ObservableProperty] private bool _embedCover;
+
+    partial void OnEmbedCoverChanged(bool value)
+    {
+        _app.EmbedCover = value;
+        _settings.Save(_app, _pathConfig);
+    }
+
+    /// <summary>当前输入视频是否带用户元数据：没有就禁用「嵌入原视频元数据」</summary>
+    public bool HasMetadata => Video?.HasMetadata == true;
+
+    /// <summary>当前输入视频是否带封面图：没有就禁用「嵌入原视频封面」</summary>
+    public bool HasCover => Video?.HasCover == true;
+
+    /// <summary>元数据复选框是否可用</summary>
+    public bool EmbedMetadataEnabled => HasMetadata;
+
+    /// <summary>封面复选框是否可用</summary>
+    public bool EmbedCoverEnabled => HasCover;
+
     /// <summary>安全帧率降级状态（供 ProgressPage 显示降级横幅）</summary>
     [ObservableProperty]
     private bool _isDegraded;
@@ -870,12 +1115,17 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ProgressText))]
     private double _progressPercent;
-    public string ProgressText => ProgressPercent > 0 ? $"{ProgressPercent:0.#}%" : "";
+    /// <summary>进度百分比文字：从 0% 起就显示（不再等进度 > 0 才出现）</summary>
+    public string ProgressText => $"{ProgressPercent:0.#}%";
     [ObservableProperty] private string _progressDetail = "";
     /// <summary>预计剩余时间 / 预计完成时刻。进度百分比是"本阶段"的，所以按本阶段已用时间线性外推。</summary>
     [ObservableProperty] private string _etaText = "";
     private ProcessStage _etaStage = ProcessStage.Idle;
     private DateTime _etaStageStarted = DateTime.Now;
+    /// <summary>阶段时间线（阶段文字 + 起止 + 耗时），失败报告会整段带出去</summary>
+    private readonly List<string> _stageTimeline = new();
+    /// <summary>最近一次进度推送里的阶段文字（阶段切换时用来补全时间线）</summary>
+    private string _lastStageText = "";
     [ObservableProperty] private ProcessStage _stage = ProcessStage.Idle;
 
     /// <summary>最新产出帧路径（预览图实时刷新）</summary>
@@ -903,12 +1153,26 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(StartBlockReasonVis))]
     [NotifyPropertyChangedFor(nameof(HasSubtitles))]
     [NotifyPropertyChangedFor(nameof(KeepSubtitlesEnabled))]
+    [NotifyPropertyChangedFor(nameof(HasMetadata))]
+    [NotifyPropertyChangedFor(nameof(HasCover))]
+    [NotifyPropertyChangedFor(nameof(EmbedMetadataEnabled))]
+    [NotifyPropertyChangedFor(nameof(EmbedCoverEnabled))]
     private VideoInfo? _video;
 
-    /// <summary>换视频后重算「保留内嵌字幕」：新视频没有字幕流就把勾去掉，避免勾着一个不可能生效的选项。</summary>
+    /// <summary>换视频后重算「保留内嵌字幕 / 嵌入元数据 / 嵌入封面」：新视频没有对应内容就把勾去掉，
+    /// 避免勾着一个不可能生效的选项；清空视频（检测中/清空输入）时也一律取消勾选。</summary>
     partial void OnVideoChanged(VideoInfo? value)
     {
-        if (KeepSubtitles && value?.HasSubtitles != true) KeepSubtitles = false;
+        if (value is null)
+        {
+            KeepSubtitles = false;
+            EmbedMetadata = false;
+            EmbedCover = false;
+            return;
+        }
+        if (KeepSubtitles && value.HasSubtitles != true) KeepSubtitles = false;
+        if (EmbedMetadata && value.HasMetadata != true) EmbedMetadata = false;
+        if (EmbedCover && value.HasCover != true) EmbedCover = false;
     }
 
     [ObservableProperty]
@@ -952,23 +1216,31 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _warnings = "";
 
     // ===================== 派生属性 =====================
-    /// <summary>主页「输入视频信息」：分多行展示编码/画面/时长/色彩/音频/容器等详细参数。</summary>
+    /// <summary>主页「输入视频信息」：一行一项，未选视频时显示占位提示。</summary>
     public string VideoInfoText
     {
         get
         {
-            if (Video is null || !Video.IsValid) return "未检测";
+            if (Video is null || !Video.IsValid)
+                return "尚未选择视频\n选择后自动检测编码 / 画面 / 时长 / 色彩 / 音频 / 字幕 / 容器 / 元数据 / 封面";
+
             var v = Video;
             var videoBitRate = v.VideoBitRate > 0 ? v.VideoBitRate : v.BitRate;
-            var subs = v.HasSubtitles ? $"{v.SubtitleCount} 条" : "无";
+            var res = string.IsNullOrEmpty(v.AspectText) ? v.ResolutionText : $"{v.ResolutionText} ({v.AspectText})";
+            var colorParts = new List<string> { v.ColorText };
+            if (!string.IsNullOrEmpty(v.ColorRangeText)) colorParts.Add(v.ColorRangeText);
+            if (!string.IsNullOrEmpty(v.ScanText)) colorParts.Add(v.ScanText);
 
             return
-                $"编码：{v.CodecText}\n" +
-                $"画面：{v.ResolutionText} · {v.FpsText} · {v.FrameRateKindText} · 总帧数 {v.TotalFrames}\n" +
-                $"时长：{v.DurationText} · 大小 {v.FileSizeText} · 码率 {videoBitRate / 1000} kbps\n" +
-                $"色彩：{v.ColorText}\n" +
+                $"编码：{v.CodecText} · {v.VideoStreamText}\n" +
+                $"画面：{res} · {v.FpsText} · {v.FrameRateKindText}\n" +
+                $"帧数：总 {v.TotalFrames} 帧\n" +
+                $"时长：{v.DurationText} · {v.FileSizeText} · 视频 {videoBitRate / 1000} kbps\n" +
+                $"色彩：{string.Join(" · ", colorParts)}\n" +
                 $"音频：{v.AudioText}\n" +
-                $"容器：{v.ContainerText} · 字幕 {subs}";
+                $"字幕：{v.SubtitleDetailText} · 章节 {v.ChapterCount} · 附件 {v.AttachmentCount}\n" +
+                $"容器：{v.ContainerText} · 元数据 {v.MetadataText} · 封面 {v.CoverText}" +
+                (string.IsNullOrEmpty(v.EncoderTag) ? "" : $"\n编码器：{v.EncoderTag}");
         }
     }
 
@@ -976,7 +1248,7 @@ public partial class MainViewModel : ObservableObject
     {
         get
         {
-            if (Video is null || !Video.IsValid) return "未检测";
+            if (Video is null || !Video.IsValid) return "选择视频后自动计算";
             var w = SuperResolution ? Video.Width * SrScale : Video.Width;
             var h = SuperResolution ? Video.Height * SrScale : Video.Height;
             return $"{w} x {h} ({VideoInfo.ResolutionName(w, h)})";
@@ -987,7 +1259,7 @@ public partial class MainViewModel : ObservableObject
     {
         get
         {
-            if (Video is null || !Video.IsValid) return "未检测";
+            if (Video is null || !Video.IsValid) return "选择视频后自动计算";
             if (!Interpolation) return $"{Video.FrameRate:0.00} fps";
             if (TargetFpsActive)
                 return $"目标 {TargetFps:0.##} fps ≈ {EffectiveRatio:0.###}×（共 {ExpectedIfFrames} 帧，源 {Video.FrameRate:0.##} fps）";
@@ -1001,7 +1273,7 @@ public partial class MainViewModel : ObservableObject
     {
         get
         {
-            if (Video is null || !Video.IsValid || string.IsNullOrEmpty(InputVideo)) return "未计算";
+            if (Video is null || !Video.IsValid || string.IsNullOrEmpty(InputVideo)) return "选择视频后自动生成";
             var w = SuperResolution ? Video.Width * SrScale : Video.Width;
             var h = SuperResolution ? Video.Height * SrScale : Video.Height;
             return OutputNamer.Build(InputVideo, SuperResolution, Interpolation, SdrToHdr, w, h, EffectiveOutFps, MergeAudio);
@@ -1010,8 +1282,8 @@ public partial class MainViewModel : ObservableObject
 
     /// <summary>输入+输出均配置完整才可启动：输出目录与临时目录非空，且（有外部帧文件夹 或 已检测到有效输入视频文件）。
     /// 临时目录缓存不符不再禁用按钮——改为点击启动时弹窗引导（清理/更换/取消），避免"按钮灰了但不知道为什么"。</summary>
-    public bool CanStart => Services.RemoteControl.RemoteSession.IsActive
-        ? Services.RemoteControl.RemoteSession.Current!.CanStart
+    public bool CanStart => LuminolEngine.RemoteControl.RemoteSession.IsActive
+        ? LuminolEngine.RemoteControl.RemoteSession.Current!.CanStart
         : (!IsProcessing
             && !SfRunning
             && !string.IsNullOrWhiteSpace(OutputRoot)
@@ -1024,7 +1296,7 @@ public partial class MainViewModel : ObservableObject
         get
         {
             // 遥控远端时，能否开始由远端决定
-            if (Services.RemoteControl.RemoteSession.IsActive) return Services.RemoteControl.RemoteSession.Current!.CanStartReason;
+            if (LuminolEngine.RemoteControl.RemoteSession.IsActive) return LuminolEngine.RemoteControl.RemoteSession.Current!.CanStartReason;
             if (IsProcessing) return "";
             if (string.IsNullOrWhiteSpace(TempRoot)) return "请先选择临时目录";
             if (string.IsNullOrWhiteSpace(OutputRoot)) return "请先选择输出目录";
@@ -1129,9 +1401,9 @@ public partial class MainViewModel : ObservableObject
     public async Task SetInputVideoAsync(string path)
     {
         // 遥控远端时：路径是远端电脑上的文件，交给远端探测（本地 ffprobe 看不到）
-        if (Services.RemoteControl.RemoteSession.IsActive)
+        if (LuminolEngine.RemoteControl.RemoteSession.IsActive)
         {
-            await Services.RemoteControl.RemoteSession.Current!.SetInputAsync(path?.Trim() ?? "");
+            await LuminolEngine.RemoteControl.RemoteSession.Current!.SetInputAsync(path?.Trim() ?? "");
             return;
         }
         InputVideo = path?.Trim() ?? "";
@@ -1143,7 +1415,7 @@ public partial class MainViewModel : ObservableObject
     public async Task DetectVideoAsync(string path)
     {
         // 遥控远端：远端路径本地 ffprobe 看不到，检测交给远端（SetInputAsync 里已做）
-        if (Services.RemoteControl.RemoteSession.IsActive) return;
+        if (LuminolEngine.RemoteControl.RemoteSession.IsActive) return;
         path = path?.Trim() ?? "";
         Video = null;
         OnPropertyChanged(nameof(VideoInfoText));
@@ -1198,9 +1470,9 @@ public partial class MainViewModel : ObservableObject
     public void SetManualVideoInfo(int width, int height, long totalFrames, double fps)
     {
         // 遥控远端：这些参数属于远端电脑上的帧文件夹，必须发到远端（远端算完会回灌回来同步显示）
-        if (Services.RemoteControl.RemoteSession.IsActive)
+        if (LuminolEngine.RemoteControl.RemoteSession.IsActive)
         {
-            _ = Services.RemoteControl.RemoteSession.Current!.SetManualVideoInfoAsync(width, height, totalFrames, fps);
+            _ = LuminolEngine.RemoteControl.RemoteSession.Current!.SetManualVideoInfoAsync(width, height, totalFrames, fps);
             return;
         }
         Video = new VideoInfo
@@ -1227,7 +1499,7 @@ public partial class MainViewModel : ObservableObject
     partial void OnTempRootChanged(string value)
     {
         // 遥控远端时这里显示的是**对方电脑**上的路径，不能写进本机配置（否则断开后本机就指向了不存在的目录）
-        if (Services.RemoteControl.RemoteSession.IsActive) return;
+        if (LuminolEngine.RemoteControl.RemoteSession.IsActive) return;
         if (!string.IsNullOrWhiteSpace(value))
         {
             _app.TempRoot = value;
@@ -1252,7 +1524,7 @@ public partial class MainViewModel : ObservableObject
     partial void OnOutputRootChanged(string value)
     {
         // 遥控远端时这里显示的是**对方电脑**上的路径，不能写进本机配置
-        if (Services.RemoteControl.RemoteSession.IsActive) return;
+        if (LuminolEngine.RemoteControl.RemoteSession.IsActive) return;
         if (!string.IsNullOrWhiteSpace(value))
         {
             _app.OutputRoot = value;
@@ -1265,10 +1537,10 @@ public partial class MainViewModel : ObservableObject
     public async Task ImportFrameFolderAsync(string dir)
     {
         // 遥控远端：帧文件夹在对方电脑上，目录校验与 PNG 张数统计都只能由远端做
-        if (Services.RemoteControl.RemoteSession.IsActive)
+        if (LuminolEngine.RemoteControl.RemoteSession.IsActive)
         {
             if (string.IsNullOrWhiteSpace(dir)) return;
-            await Services.RemoteControl.RemoteSession.Current!.SetFramesDirAsync(dir);
+            await LuminolEngine.RemoteControl.RemoteSession.Current!.SetFramesDirAsync(dir);
             return;
         }
         if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
@@ -1350,15 +1622,17 @@ public partial class MainViewModel : ObservableObject
     // 与主管线完全隔离：不读写帧目录与 cache.json，只读 Tools、只写输出目录；
     // 与主管线互斥（共用同一个 ProcessRunner），跑的时候主管线按钮禁用。
 
-    /// <summary>单文件类型：0 = 图片，1 = 音频</summary>
+    /// <summary>单文件类型：0 = 图片，1 = 音频，2 = 视频音频超分，3 = 视频 HDR</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SfIsImage))]
     [NotifyPropertyChangedFor(nameof(SfIsAudio))]
+    [NotifyPropertyChangedFor(nameof(SfIsVideoAudio))]
     [NotifyPropertyChangedFor(nameof(SfIsVideoHdr))]
     [NotifyPropertyChangedFor(nameof(SfOutputText))]
     [NotifyPropertyChangedFor(nameof(SfImageRowVis))]
     [NotifyPropertyChangedFor(nameof(SfAudioRowVis))]
     [NotifyPropertyChangedFor(nameof(SfHdrRowVis))]
+    [NotifyPropertyChangedFor(nameof(SfHdrAiVis))]
     [NotifyPropertyChangedFor(nameof(SfStartButtonText))]
     [NotifyPropertyChangedFor(nameof(CanStartSingle))]
     private int _sfKindIndex;
@@ -1419,17 +1693,19 @@ public partial class MainViewModel : ObservableObject
 
     public bool SfIsImage => SfKindIndex == 0;
     public bool SfIsAudio => SfKindIndex == 1;
+    /// <summary>单文件视频音频超分：把视频里的音轨做 AudioSR，再原样封装回视频（视频流不重编码）</summary>
+    public bool SfIsVideoAudio => SfKindIndex == 2;
     /// <summary>单文件 HDR：把一个视频整体做 SDR→HDR（NVEncC --vpp-ngx-truehdr）</summary>
-    public bool SfIsVideoHdr => SfKindIndex == 2;
+    public bool SfIsVideoHdr => SfKindIndex == 3;
     public Microsoft.UI.Xaml.Visibility SfImageRowVis
         => SfIsImage ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
     public Microsoft.UI.Xaml.Visibility SfAudioRowVis
-        => SfIsAudio ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+        => SfIsAudio || SfIsVideoAudio ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
     public Microsoft.UI.Xaml.Visibility SfHdrRowVis
         => SfIsVideoHdr ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
 
     /// <summary>单文件卡片主按钮文案：按类型区分，避免视频 HDR 也写着"开始超分"</summary>
-    public string SfStartButtonText => SfIsVideoHdr ? "开始HDR转换" : "开始超分";
+    public string SfStartButtonText => SfIsVideoHdr ? "开始HDR转换" : SfIsVideoAudio ? "开始音频超分" : "开始超分";
 
     /// <summary>单文件超分是否可以开始：文件存在、主管线空闲、图片模式还要有模型</summary>
     public bool CanStartSingle
@@ -1458,6 +1734,7 @@ public partial class MainViewModel : ObservableObject
             if (string.IsNullOrEmpty(input)) return "输出：选择文件后自动命名";
             var name = SfIsImage ? SfImageFileName(input)
                 : SfIsVideoHdr ? SfVideoHdrFileName(input)
+                : SfIsVideoAudio ? SfVideoAudioFileName(input)
                 : SfAudioFileName(input);
             return $"输出：{Path.Combine(SfOutputDir(input), name).Replace('\\', '/')}";
         }
@@ -1485,6 +1762,15 @@ public partial class MainViewModel : ObservableObject
     /// <summary>视频 HDR 输出文件名：{原名}_HDR.mkv（统一 MKV，NVEncC 直接封装）</summary>
     private static string SfVideoHdrFileName(string input)
         => $"{Path.GetFileNameWithoutExtension(input)}_HDR.mkv";
+
+    /// <summary>视频音频超分输出名：来源是 MP4/MOV 就继续用 .mp4（音轨 AAC），其余用 .mkv（PCM 24bit 48kHz）。
+    /// 视频流一律 -c:v copy，不重新编码。</summary>
+    private static string SfVideoAudioFileName(string input)
+    {
+        var ext = Path.GetExtension(input).ToLowerInvariant();
+        var mp4 = ext is ".mp4" or ".mov" or ".m4v";
+        return $"{Path.GetFileNameWithoutExtension(input)}_AudioSR_音频超分{(mp4 ? ".mp4" : ".mkv")}";
+    }
 
     /// <summary>重建单文件模式的图片模型列表：与主管线共用 SrCatalog，按倍率筛、只列已部署引擎。
     /// 列表按算法顺序铺开（同一算法的模型自然连在一起）。</summary>
@@ -1526,20 +1812,31 @@ public partial class MainViewModel : ObservableObject
         }
 
         SfRunning = true;
+        // 单文件任务同样重开一段阶段时间线，失败报告里只记本次的
+        _stageTimeline.Clear();
+        _lastStageText = "";
+        _etaStage = ProcessStage.Idle;
+        _etaStageStarted = DateTime.Now;
         // 单文件超分不产生帧序列，预览区没有内容可显示：直接关掉并禁用开关
         ShowPreview = false;
         PreviewBlocked = true;
         _sfCts = new CancellationTokenSource();
         var ct = _sfCts.Token;
         // 单文件也走「进行中」页：开始即显示导航并切过去，否则跑起来看不到进度与日志
-        Stage = SfIsImage ? ProcessStage.SuperRes : SfIsAudio ? ProcessStage.AudioSr : ProcessStage.HdrConverting;
+        Stage = SfIsImage ? ProcessStage.SuperRes
+            : (SfIsAudio || SfIsVideoAudio) ? ProcessStage.AudioSr
+            : ProcessStage.HdrConverting;
         ProgressPercent = 0;
-        ProgressDetail = SfIsImage ? "图片超分中（单文件）" : SfIsAudio ? "音频超分中（单文件）" : "HDR 转换中（单文件）";
+        ProgressDetail = SfIsImage ? "图片超分中（单文件）"
+            : SfIsVideoAudio ? "视频音频超分中（单文件）"
+            : SfIsAudio ? "音频超分中（单文件）"
+            : "HDR 转换中（单文件）";
         ProcessingStarted?.Invoke();
         try
         {
             if (SfIsImage) await RunSingleImageAsync(input, ct);
             else if (SfIsVideoHdr) await RunSingleVideoHdrAsync(input, ct);
+            else if (SfIsVideoAudio) await RunSingleVideoAudioAsync(input, ct);
             else await RunSingleAudioAsync(input, ct);
         }
         catch (OperationCanceledException)
@@ -1551,6 +1848,7 @@ public partial class MainViewModel : ObservableObject
         {
             SfStatus = "失败，详见「进行中」页日志";
             _logger.Error($"单文件超分异常：{ex.Message}");
+            WriteSingleFileFailureReport(SfIsImage ? "图片超分异常" : SfIsVideoHdr ? "HDR 重建异常" : "音频超分异常", ex.Message, ex);
         }
         finally
         {
@@ -1578,6 +1876,7 @@ public partial class MainViewModel : ObservableObject
         {
             SfStatus = "没有可用的超分模型（请检查 Tools 里的模型目录）";
             _logger.Error("单文件超分：图片模型列表为空");
+            WriteSingleFileFailureReport("图片超分", "没有可用的超分模型");
             return;
         }
         var srExe = SrCommandBuilder.ExeFor(Tools, SfImageModel);
@@ -1585,6 +1884,7 @@ public partial class MainViewModel : ObservableObject
         {
             SfStatus = $"模型 {SfImageModel} 对应的超分引擎没有部署（{Path.GetFileName(srExe)}）";
             _logger.Error($"单文件超分：找不到 {SfImageModel} 对应的引擎 exe");
+            WriteSingleFileFailureReport("图片超分", $"引擎未部署：{srExe}");
             return;
         }
         var outPath = Path.Combine(SfOutputDir(input), SfImageFileName(input));
@@ -1594,9 +1894,10 @@ public partial class MainViewModel : ObservableObject
         SfStatus = "图片超分中…";
         _logger.Info($"单文件超分（图片）开始：{Path.GetFileName(input)} → {Path.GetFileName(outPath)}"
             + $"（模型 {SfImageModel}，×{SfImageScale}）");
-        // 高级性能选项与主管线保持一致：处理线程 -j、降低画质 -u、CPU 处理 -g -1 在单文件模式同样生效
-        var jThreads = $"1:{Math.Clamp(ThreadCount, 1, 32)}:{Math.Clamp(ThreadCount, 1, 32)}";
-        var args = SrCommandBuilder.Build(SfImageModel, SfImageScale, input, outPath, jThreads, LowerQualityForVram, useCpu: UseCpuProcessing);
+        // 高级性能选项与主管线保持一致：四段线程 -j、降低画质 -u、CPU 处理 -g -1、流水线 GPU 在单文件模式同样生效
+        var jThreads = $"{Math.Clamp(SrDecodeThreads, 1, 32)}:{Math.Clamp(SrEncodeThreads, 1, 32)}:{Math.Clamp(SrEncodeThreads, 1, 32)}";
+        var args = SrCommandBuilder.Build(SfImageModel, SfImageScale, input, outPath, jThreads, LowerQualityForVram, useCpu: UseCpuProcessing,
+            gpuIndex: Math.Clamp(PipelineGpuIndex, 0, 8));
         _logger.Command($"{Path.GetFileName(srExe)} {args}");
         var exit = await _runner.RunAsync(srExe, args, ct: ct);
 
@@ -1610,30 +1911,69 @@ public partial class MainViewModel : ObservableObject
         {
             SfStatus = "图片超分失败，详见「进行中」页日志";
             _logger.Error($"单文件超分（图片）失败（退出码 {exit}）");
+            WriteSingleFileFailureReport("图片超分失败", $"退出码 {exit}");
         }
     }
 
-    /// <summary>单个视频 HDR 转换：NVEncC --vpp-ngx-truehdr 一条命令完成解码 → 色调映射 → 硬件编码，
-    /// 直接产出 HDR10 的 MKV（不拆帧、不补帧、不超分）。</summary>
+    /// <summary>单个视频 HDR 转换：
+    /// NVIDIA RTX 用 NVEncC --vpp-ngx-truehdr 一条命令完成解码 → 色调映射 → 硬件编码；
+    /// 其它显卡用 HDRTVNet++ ONNX + DirectML 做 AI 重建后编码为 HDR10。</summary>
     private async Task RunSingleVideoHdrAsync(string input, CancellationToken ct)
     {
-        if (!Tools.NvEncExists)
-        {
-            SfStatus = "NVEncC64 未安装，无法做 HDR 转换";
-            _logger.Error($"单文件 HDR：找不到 {Tools.NvEncExe}");
-            return;
-        }
-        if (!Gpu.SupportsHdr)
-        {
-            SfStatus = "当前显卡不是 RTX 20/30/40/50 系列，无法做 HDR 转换";
-            _logger.Error("单文件 HDR：NVEncC 的 NGX TrueHDR 需要 NVIDIA RTX 20/30/40/50 系列");
-            return;
-        }
-
         var dir = SfOutputDir(input);
         if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
         var output = Path.Combine(dir, SfVideoHdrFileName(input));
 
+        if (Gpu.SupportsHdr && Tools.NvEncExists)
+        {
+            await RunSingleVideoHdrNvAsync(input, output, ct);
+            return;
+        }
+
+        if (HdrAiConverter.IsAvailable(Tools))
+        {
+            _logger.Info($"单文件 AI HDR 开始：{Path.GetFileName(input)}（HDRTVNet++ / DirectML）");
+            SfStatus = "HDR 重建中… 0%";
+            var total = 0L;
+            var ok = await HdrAiConverter.ConvertAsync(Tools, input, output, HdrAiStrength, (done, count) =>
+            {
+                if (count > 0) total = count;
+                _dispatcherQueue.TryEnqueue(() =>
+                {
+                    SfStatus = total > 0
+                        ? $"HDR 重建中… {done * 100 / total}%"
+                        : $"HDR 重建中… 已处理 {done} 帧";
+                    if (total > 0) ProgressPercent = done * 100.0 / total;
+                });
+            }, _logger, ct);
+
+            if (!ok)
+            {
+                // 用户点停止：按「已停止」处理，不写 ERROR 报告
+                if (ct.IsCancellationRequested)
+                {
+                    SfStatus = "已停止";
+                    _logger.Warn("单文件 AI HDR 已停止（用户中止）");
+                    return;
+                }
+                SfStatus = "HDR 重建失败，详见「进行中」页日志";
+                _logger.Error("单文件 AI HDR 失败");
+                WriteSingleFileFailureReport("HDR 重建失败");
+                return;
+            }
+            ProgressPercent = 100;
+            SfStatus = $"完成：{output}";
+            _logger.Success($"单文件 AI HDR 完成: {output}");
+            return;
+        }
+
+        SfStatus = "当前显卡不支持 N 卡 HDR，且未安装 AI HDR 模型";
+        _logger.Error("单文件 HDR：既没有可用的 RTX + NVEncC，也没有 Tools/HDRTVNet 模型");
+        WriteSingleFileFailureReport("HDR 转换无法开始", "既没有可用的 RTX + NVEncC，也没有 AI HDR 模型");
+    }
+
+    private async Task RunSingleVideoHdrNvAsync(string input, string output, CancellationToken ct)
+    {
         var args = NvEncCommandBuilder.Build(input, output, HdrSaturation, HdrContrast);
         _logger.Info($"单文件 HDR 开始：{Path.GetFileName(input)}（饱和度 {HdrSaturation} / 对比度 {HdrContrast}）");
         _logger.Command($"NVEncC64 {args}");
@@ -1654,10 +1994,31 @@ public partial class MainViewModel : ObservableObject
             });
         }, ct: ct);
 
+        // 崩溃时尝试使用老版本处理架构：新版 NVEncC 失败 → 老版本重试一次
+        if (exit != 0 && _app.TryOldFfmpegOnCrash && Tools.NvEncOldExists)
+        {
+            _logger.Warn("单文件 HDR：新版 NVEncC 失败，改用老版本 NVEncC 重试");
+            SfStatus = "HDR 转换中（老版本）… 0%";
+            exit = await _runner.RunAsync(Tools.NvEncOldExe, args, onLine: line =>
+            {
+                var m = SfHdrPercentRe.Match(line);
+                if (!m.Success) return;
+                var pct = m.Groups[1].Value;
+                var pctValue = double.TryParse(pct, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var p) ? p : 0;
+                _dispatcherQueue.TryEnqueue(() =>
+                {
+                    SfStatus = $"HDR 转换中（老版本）… {pct}%";
+                    ProgressPercent = pctValue;
+                });
+            }, ct: ct);
+        }
+
         if (exit != 0 || !File.Exists(output))
         {
             SfStatus = $"HDR 转换失败（退出码 {exit}），详见「进行中」页日志";
             _logger.Error($"单文件 HDR 失败（退出码 {exit}）");
+            WriteSingleFileFailureReport("HDR 转换失败", $"退出码 {exit}");
             return;
         }
         ProgressPercent = 100;
@@ -1668,85 +2029,11 @@ public partial class MainViewModel : ObservableObject
     /// <summary>单个音频文件超分：ffmpeg 转 48kWAV → audiosr_onnx.py → 把结果复制到输出目录</summary>
     private async Task RunSingleAudioAsync(string input, CancellationToken ct)
     {
-        // CPU 处理模式下只能用 FP32（FP16 权重包只能在 GPU 上跑），这里再兜一道
-        var precision = (UseCpuProcessing || string.Equals(SfAudioPrecision, "fp32", StringComparison.OrdinalIgnoreCase)) ? "fp32" : "fp16";
-        var packText = precision == "fp16" ? "FP16 低精度性能模式" : "FP32 高精度完美模式";
-
-        if (!Tools.AudioSrScriptExists)
-        {
-            SfStatus = "AudioSR 驱动脚本缺失";
-            _logger.Error($"单文件超分：未找到驱动脚本 {Tools.AudioSrScript}");
-            return;
-        }
-        if (!Tools.AudioSrPackExists(precision))
-        {
-            SfStatus = $"{packText} 的权重包不完整";
-            _logger.Error($"单文件超分：{packText} 的权重包不完整（{Tools.AudioSrModelsFor(precision)}）");
-            return;
-        }
-
         var work = Path.Combine(TempRoot, "single_file");
-        var inWav = Path.Combine(work, "audiosr_in_48k.wav");
-        var outWav = Path.Combine(work, "audiosr_out_48k.wav");
-        Directory.CreateDirectory(work);
         try
         {
-            SfStatus = "音频转 48kHz WAV…";
-            _logger.Info($"单文件超分（音频）开始：{Path.GetFileName(input)}（{packText}）");
-            var convArgs = FFmpegCommandBuilder.ToWav48k(input, inWav);
-            _logger.Command($"ffmpeg {convArgs}");
-            var convExit = await _runner.RunAsync(Tools.FFmpegExe, convArgs, ct: ct);
-            if (convExit != 0 || !File.Exists(inWav))
-            {
-                SfStatus = "音频转码失败（文件可能不是有效音频）";
-                _logger.Error("单文件超分：音频转 48kHz WAV 失败");
-                return;
-            }
-
-            var py = File.Exists(Tools.PortablePythonExe) ? Tools.PortablePythonExe : "python";
-            var args = AudioSrCommandBuilder.Build(Tools.AudioSrScript, inWav, outWav,
-                Tools.AudioSrModelsFor(precision), UseCpuProcessing);
-            _logger.Command($"python {args}");
-            SfStatus = "音频超分中… 0%";
-            // 后端由脚本打印，出现后补进状态文字（如「音频超分中… 42%（CUDA）」）
-            var backendTag = "";
-            var exit = await _runner.RunAsync(py, args, onLine: line =>
-            {
-                // 回调在后台线程：改属性必须调度回 UI 线程
-                var m = SfPercentRe.Match(line);
-                if (m.Success)
-                {
-                    var pct = m.Groups[1].Value;
-                    var tag = backendTag;
-                    _dispatcherQueue.TryEnqueue(() =>
-                    {
-                        SfStatus = $"音频超分中… {pct}%{tag}";
-                        if (int.TryParse(pct, out var v)) ProgressPercent = v;
-                    });
-                }
-                else if (line.Contains("后端 CUDA", StringComparison.OrdinalIgnoreCase))
-                {
-                    backendTag = "（CUDA）";
-                    _logger.Success("单文件音频超分推理后端：CUDA（NVIDIA GPU）");
-                }
-                else if (line.Contains("后端 DirectML", StringComparison.OrdinalIgnoreCase))
-                {
-                    backendTag = "（DirectML）";
-                    _logger.Success("单文件音频超分推理后端：DirectML（GPU）");
-                }
-                else if (line.Contains("后端 CPU", StringComparison.OrdinalIgnoreCase))
-                {
-                    backendTag = "（CPU）";
-                    _logger.Warn("单文件音频超分推理后端：CPU（显卡后端不可用或权重包只允许 CPU），速度明显慢于显卡");
-                }
-            }, ct: ct);
-
-            if (exit != 0 || !File.Exists(outWav))
-            {
-                SfStatus = "音频超分失败，详见「进行中」页日志";
-                _logger.Error($"单文件超分（音频）失败（退出码 {exit}）");
-                return;
-            }
+            var outWav = await RunSingleAudioSrCoreAsync(input, work, "音频", ct);
+            if (outWav is null) return;
 
             var final = Path.Combine(SfOutputDir(input), SfAudioFileName(input));
             var outDir = Path.GetDirectoryName(final);
@@ -1760,6 +2047,138 @@ public partial class MainViewModel : ObservableObject
         {
             try { if (Directory.Exists(work)) Directory.Delete(work, true); } catch { }
         }
+    }
+
+    /// <summary>视频音频超分：把视频里的音轨做 AudioSR，再把结果封装回原视频（视频流 -c:v copy 不重编码）。
+    /// MP4/MOV 输出 .mp4 + AAC；其它容器输出 .mkv + PCM 24bit 48kHz（并保留内嵌字幕）。</summary>
+    private async Task RunSingleVideoAudioAsync(string input, CancellationToken ct)
+    {
+        var work = Path.Combine(TempRoot, "single_file_video");
+        try
+        {
+            var outWav = await RunSingleAudioSrCoreAsync(input, work, "视频音频", ct);
+            if (outWav is null) return;
+
+            var final = Path.Combine(SfOutputDir(input), SfVideoAudioFileName(input));
+            var outDir = Path.GetDirectoryName(final);
+            if (!string.IsNullOrEmpty(outDir)) Directory.CreateDirectory(outDir);
+
+            var mp4 = final.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase);
+            var args = mp4
+                ? $"-y -i \"{input}\" -i \"{outWav}\" -map 0:v:0 -map 1:a:0 -map_metadata 0 " +
+                  $"-c:v copy -c:a aac -b:a 320k -movflags +faststart \"{final}\""
+                : $"-y -i \"{input}\" -i \"{outWav}\" -map 0:v:0 -map 1:a:0 -map 0:s? -map_metadata 0 " +
+                  $"-c:v copy -c:a pcm_s24le -c:s copy \"{final}\"";
+
+            SfStatus = "音频超分完成，封装回视频…";
+            _logger.Info($"单文件视频音频超分：把 48kHz 音轨封装回视频（视频流不重编码）→ {Path.GetFileName(final)}");
+            _logger.Command($"ffmpeg {args}");
+            var exit = await _runner.RunAsync(Tools.FFmpegExe, args, ct: ct);
+            if (exit != 0 || !File.Exists(final))
+            {
+                SfStatus = "封装回视频失败，详见「进行中」页日志";
+                _logger.Error($"单文件视频音频超分：封装失败（退出码 {exit}）");
+                WriteSingleFileFailureReport("视频音频超分封装失败", $"退出码 {exit}");
+                return;
+            }
+
+            var mb = new FileInfo(final).Length / 1024.0 / 1024.0;
+            SfStatus = $"完成：{final}";
+            _logger.Success($"单文件视频音频超分完成：{final}（{mb:F1} MB，视频流未重编码，音轨 48kHz）");
+        }
+        finally
+        {
+            try { if (Directory.Exists(work)) Directory.Delete(work, true); } catch { }
+        }
+    }
+
+    /// <summary>单文件 AudioSR 公共流程（音频文件 / 视频音轨通用）：
+    /// 转 48kHz WAV → audiosr_onnx.py → 返回超分后的 WAV 路径；失败返回 null（状态与报告已写好）。</summary>
+    private async Task<string?> RunSingleAudioSrCoreAsync(string input, string work, string label, CancellationToken ct)
+    {
+        // CPU 处理模式下只能用 FP32（FP16 权重包只能在 GPU 上跑），这里再兜一道
+        var precision = (UseCpuProcessing || string.Equals(SfAudioPrecision, "fp32", StringComparison.OrdinalIgnoreCase)) ? "fp32" : "fp16";
+        var packText = precision == "fp16" ? "FP16 低精度性能模式" : "FP32 高精度完美模式";
+
+        if (!Tools.AudioSrScriptExists)
+        {
+            SfStatus = "AudioSR 驱动脚本缺失";
+            _logger.Error($"单文件{label}超分：未找到驱动脚本 {Tools.AudioSrScript}");
+            WriteSingleFileFailureReport($"{label}超分", "AudioSR 驱动脚本缺失");
+            return null;
+        }
+        if (!Tools.AudioSrPackExists(precision))
+        {
+            SfStatus = $"{packText} 的权重包不完整";
+            _logger.Error($"单文件{label}超分：{packText} 的权重包不完整（{Tools.AudioSrModelsFor(precision)}）");
+            WriteSingleFileFailureReport($"{label}超分", $"{packText} 的权重包不完整");
+            return null;
+        }
+
+        var inWav = Path.Combine(work, "audiosr_in_48k.wav");
+        var outWav = Path.Combine(work, "audiosr_out_48k.wav");
+        Directory.CreateDirectory(work);
+
+        SfStatus = "音轨转 48kHz WAV…";
+        _logger.Info($"单文件{label}超分开始：{Path.GetFileName(input)}（{packText}）");
+        var convArgs = FFmpegCommandBuilder.ToWav48k(input, inWav);
+        _logger.Command($"ffmpeg {convArgs}");
+        var convExit = await _runner.RunAsync(Tools.FFmpegExe, convArgs, ct: ct);
+        if (convExit != 0 || !File.Exists(inWav) || new FileInfo(inWav).Length < 1024)
+        {
+            SfStatus = $"{label}没有可用的音轨（可能不含音频流）";
+            _logger.Error($"单文件{label}超分：读取音轨失败（退出码 {convExit}）");
+            WriteSingleFileFailureReport($"{label}转码失败", $"退出码 {convExit}");
+            return null;
+        }
+
+        var py = File.Exists(Tools.PortablePythonExe) ? Tools.PortablePythonExe : "python";
+        var args = AudioSrCommandBuilder.Build(Tools.AudioSrScript, inWav, outWav,
+            Tools.AudioSrModelsFor(precision), UseCpuProcessing);
+        _logger.Command($"python {args}");
+        SfStatus = "音频超分中… 0%";
+        // 后端由脚本打印，出现后补进状态文字（如「音频超分中… 42%（CUDA）」）
+        var backendTag = "";
+        var exit = await _runner.RunAsync(py, args, onLine: line =>
+        {
+            // 回调在后台线程：改属性必须调度回 UI 线程
+            var m = SfPercentRe.Match(line);
+            if (m.Success)
+            {
+                var pct = m.Groups[1].Value;
+                var tag = backendTag;
+                _dispatcherQueue.TryEnqueue(() =>
+                {
+                    SfStatus = $"音频超分中… {pct}%{tag}";
+                    if (int.TryParse(pct, out var v)) ProgressPercent = v;
+                });
+            }
+            else if (line.Contains("后端 CUDA", StringComparison.OrdinalIgnoreCase))
+            {
+                backendTag = "（CUDA）";
+                _logger.Success("单文件音频超分推理后端：CUDA（NVIDIA GPU）");
+            }
+            else if (line.Contains("后端 DirectML", StringComparison.OrdinalIgnoreCase))
+            {
+                backendTag = "（DirectML）";
+                _logger.Success("单文件音频超分推理后端：DirectML（GPU）");
+            }
+            else if (line.Contains("后端 CPU", StringComparison.OrdinalIgnoreCase))
+            {
+                backendTag = "（CPU）";
+                _logger.Warn("单文件音频超分推理后端：CPU（显卡后端不可用或权重包只允许 CPU），速度明显慢于显卡");
+            }
+        }, ct: ct);
+
+        if (exit != 0 || !File.Exists(outWav))
+        {
+            SfStatus = "音频超分失败，详见「进行中」页日志";
+            _logger.Error($"单文件{label}超分失败（退出码 {exit}）");
+            WriteSingleFileFailureReport("音频超分失败", $"退出码 {exit}");
+            return null;
+        }
+        ProgressPercent = 100;
+        return outWav;
     }
 
     // ===================== 勾选联动 =====================
@@ -1848,7 +2267,7 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnSrScaleChanged(int value)
     {
-        // 当前算法不支持这个倍率（如 RealSR 只有 4x、waifu2x 只有 2x/4x）→ 退回它最接近的档位。
+        // 当前算法不支持这个倍率（如 RealSR 只有 4x、waifu2x 只有 2x）→ 退回它最接近的档位。
         // 否则模型列表会变空，下拉框看起来像坏了。赋新值会再进一次本方法，届时已合法，不会死循环。
         var supported = SupportedSrScales();
         if (supported.Count > 0 && !supported.Contains(value))
@@ -1877,14 +2296,19 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnSdrToHdrChanged(bool value)
     {
-        if (value && !Gpu.SupportsHdr)
+        if (value && !IsHdrEnabled)
         {
-            _logger.Warn($"当前显卡 {Gpu.Name} 不支持 SDR→HDR（需要 NVIDIA RTX 20/30/40/50 系列），HDR 选项将被忽略");
+            _logger.Warn($"当前显卡 {Gpu.Name} 不支持 NVEncC 的 SDR→HDR，且未安装 AI HDR 模型，HDR 选项将被忽略");
+        }
+        else if (value && !Gpu.SupportsHdr)
+        {
+            _logger.Info($"当前显卡 {Gpu.Name} 非 RTX：SDR→HDR 将使用 AI 模型（HDRTVNet++）重建");
         }
         else if (value && !Tools.NvEncExists)
         {
             _logger.Warn("NVEncC64 未安装，HDR 转换无法执行，将仅输出 SDR");
         }
+        OnPropertyChanged(nameof(HdrAiStrengthVis));
         PersistStepFlags();
     }
 
@@ -2085,9 +2509,9 @@ public partial class MainViewModel : ObservableObject
     public async Task StartAsync()
     {
         // 遥控远端：把当前配置推给远端并让它开始处理，本机不做任何处理
-        if (Services.RemoteControl.RemoteSession.IsActive)
+        if (LuminolEngine.RemoteControl.RemoteSession.IsActive)
         {
-            try { await Services.RemoteControl.RemoteSession.Current!.StartAsync(); }
+            try { await LuminolEngine.RemoteControl.RemoteSession.Current!.StartAsync(); }
             catch (Exception ex) { _logger.Error($"远端启动失败：{ex.Message}"); }
             return;
         }
@@ -2153,6 +2577,10 @@ public partial class MainViewModel : ObservableObject
         IsDegraded = false;
         DegradeNotice = "";
         _startTime = DateTime.Now;
+        _stageTimeline.Clear();
+        _lastStageText = "";
+        _etaStage = ProcessStage.Idle;
+        _etaStageStarted = DateTime.Now;
         _monitor.Start(250); // 250ms 采样，CPU/GPU 更实时
         ProcessingStarted?.Invoke();
 
@@ -2227,7 +2655,10 @@ public partial class MainViewModel : ObservableObject
                 AudioSr = AudioSrEnabled,
                 AudioSrPrecision = AudioSrPrecision == "fp16" && UseCpuProcessing ? "fp32" : AudioSrPrecision,
                 // 保留内嵌字幕：只有原视频确实有字幕流时才映射（没字幕还勾着也不会报错，但没必要带上无用参数）
-                KeepSubtitles = KeepSubtitles && HasSubtitles
+                KeepSubtitles = KeepSubtitles && HasSubtitles,
+                // 元数据 / 封面：同样只在原视频确实带的时候才写回，没带就当作未勾选
+                EmbedMetadata = EmbedMetadata && HasMetadata,
+                EmbedCover = EmbedCover && HasCover
             },
             SrModel = SrModel,
             SrScale = SrScale,
@@ -2237,6 +2668,7 @@ public partial class MainViewModel : ObservableObject
             // HDR 参数（滑块 0-200，NVEncC 最高 200）
             HdrSaturation = Math.Clamp(HdrSaturation, 0, 200),
             HdrContrast = Math.Clamp(HdrContrast, 0, 200),
+            HdrAiStrength = Math.Clamp(HdrAiStrength, 50, 150),
             Gpu = Gpu,
             Settings = _app,
             Tools = Tools,
@@ -2324,37 +2756,51 @@ public partial class MainViewModel : ObservableObject
                    $"-c:a copy -c:s copy -nostats -progress pipe:1 \"{outPath}\"";
 
         _logger.Info($"检测到动态帧率（VFR）：启动前自动转换为静态帧率 {fpsArg} fps（音轨/字幕原样复制）");
-        _logger.Command($"ffmpeg {args}");
         ProgressPercent = 0;
         ProgressDetail = "正在转换为静态帧率（CFR）...";
 
         // ffmpeg -progress 输出 key=value：out_time_us / out_time_ms 实际都是微秒
         var durationSec = video.Duration.TotalSeconds;
         var lastPct = 0.0;
-        var exit = await _runner.RunAsync(Tools.FFmpegExe, args, onLine: line =>
+        async Task<int> RunCfrAsync(string exe)
         {
-            if (!line.StartsWith("out_time_us=", StringComparison.Ordinal) &&
-                !line.StartsWith("out_time_ms=", StringComparison.Ordinal)) return;
-            var idx = line.IndexOf('=');
-            if (idx < 0) return;
-            if (!double.TryParse(line[(idx + 1)..], NumberStyles.Any, CultureInfo.InvariantCulture, out var us)) return;
-            if (us <= 0 || durationSec <= 0) return;
-
-            var pct = Math.Clamp(us / 1_000_000.0 / durationSec * 100, 0, 99.9);
-            if (pct - lastPct < 0.5) return;
-            lastPct = pct;
-            _dispatcherQueue.TryEnqueue(() =>
+            _logger.Command($"ffmpeg {args}");
+            lastPct = 0.0;
+            return await _runner.RunAsync(exe, args, onLine: line =>
             {
-                ProgressPercent = pct;
-                ProgressDetail = $"正在转换为静态帧率（CFR）{pct:0.#}%";
-            });
-        }, ct: ct);
+                if (!line.StartsWith("out_time_us=", StringComparison.Ordinal) &&
+                    !line.StartsWith("out_time_ms=", StringComparison.Ordinal)) return;
+                var idx = line.IndexOf('=');
+                if (idx < 0) return;
+                if (!double.TryParse(line[(idx + 1)..], NumberStyles.Any, CultureInfo.InvariantCulture, out var us)) return;
+                if (us <= 0 || durationSec <= 0) return;
+
+                var pct = Math.Clamp(us / 1_000_000.0 / durationSec * 100, 0, 99.9);
+                if (pct - lastPct < 0.5) return;
+                lastPct = pct;
+                _dispatcherQueue.TryEnqueue(() =>
+                {
+                    ProgressPercent = pct;
+                    ProgressDetail = $"正在转换为静态帧率（CFR）{pct:0.#}%";
+                });
+            }, ct: ct);
+        }
+
+        var exit = await RunCfrAsync(Tools.FFmpegExe);
+
+        // 与流水线内其它阶段同一套兜底：新版 FFmpeg 崩了用老版本再试一次（勾选「崩溃时尝试使用老版本处理架构」时）
+        if (exit != 0 && !ct.IsCancellationRequested && _app.TryOldFfmpegOnCrash && Tools.FFmpegOldExists)
+        {
+            _logger.Warn("新版 FFmpeg 转换动态帧率失败，改用老版本 FFmpeg 重试");
+            ProgressDetail = "正在转换为静态帧率（CFR，老版本 FFmpeg）...";
+            exit = await RunCfrAsync(Tools.FFmpegOldExe);
+        }
 
         if (ct.IsCancellationRequested) return null;
 
         if (exit != 0 || !File.Exists(outPath) || new FileInfo(outPath).Length == 0)
         {
-            _logger.Error($"动态帧率转换失败（ffmpeg 退出码 {exit}）");
+            _logger.Error($"动态帧率转换失败（ffmpeg 退出码 {exit}，新版与老版本均未成功）");
             return null;
         }
 
@@ -2380,13 +2826,67 @@ public partial class MainViewModel : ObservableObject
         return Math.Round(fps, 3);
     }
 
+    /// <summary>把当前还没结束的阶段补进时间线（失败/中止时用，标出未正常结束）。
+    /// 优先用编排器记录的 LastStageText：阶段失败时它已经被 Fail() 更新成失败原因，
+    /// 比进度推送里的阶段文字更准（有些阶段一开始就失败，根本来不及推进度）。</summary>
+    private void AppendCurrentStageToTimeline()
+    {
+        var text = _orchestratorAssigned.LastStageText;
+        if (string.IsNullOrWhiteSpace(text)) text = _lastStageText;
+        if (string.IsNullOrWhiteSpace(text)) return;
+        var dur = DateTime.Now - _etaStageStarted;
+        _stageTimeline.Add($"{_etaStageStarted:HH:mm:ss} → {DateTime.Now:HH:mm:ss}  "
+            + $"{text}（{dur.TotalSeconds:0.0}s，未正常结束）");
+    }
+
     /// <summary>把本次失败的完整现场写到桌面，并用底部通知条给出入口。
     /// 报告内容不做精简：外部进程全量 stdout/stderr、完整日志、异常堆栈、处理参数全部落盘。</summary>
     private void WriteFailureReport(Exception? ex, ProcessingContext ctx)
     {
+        AppendCurrentStageToTimeline();
         var path = CrashReportService.Write(
             Version, ctx, _orchestratorAssigned.LastStageText, _runner.LastExitCode,
-            ex, _runner.LastStdout, _runner.LastStderr, _logger.Snapshot(), _runner.History);
+            ex, _runner.LastStdout, _runner.LastStderr, _logger.Snapshot(), _runner.History, _stageTimeline);
+
+        if (string.IsNullOrEmpty(path))
+        {
+            _dispatcherQueue.TryEnqueue(() =>
+                App.MainWindow?.ShowNotice("处理失败", "完整报错写到桌面失败，请查看「进行中」页日志。"));
+            return;
+        }
+
+        var name = Path.GetFileName(path);
+        _logger.Warn($"完整失败报告已保存到桌面：{path}");
+        _dispatcherQueue.TryEnqueue(() =>
+            App.MainWindow?.ShowNotice("处理失败", $"完整报错已保存到桌面：{name}", "打开报告",
+                () => CrashReportService.Open(path)));
+    }
+
+    /// <summary>单文件任务失败 → 与主管线一致的完整 ERROR 报告（桌面 txt + 通知条入口）。
+    /// 报告内容不做精简：外部进程全量 stdout/stderr、完整日志、异常堆栈、参数与运行环境。</summary>
+    private void WriteSingleFileFailureReport(string stage, string? reason = null, Exception? ex = null)
+    {
+        var input = SfInput.Trim().Trim('"');
+        var ctx = new ProcessingContext
+        {
+            InputVideo = input,
+            OutputRoot = string.IsNullOrEmpty(input) ? OutputRoot : SfOutputDir(input),
+            Gpu = Gpu,
+            Settings = _app,
+            Tools = Tools,
+            Options = new ProcessingOptions
+            {
+                SdrToHdr = SfIsVideoHdr,
+                SuperResolution = SfIsImage,
+                AudioSr = SfIsAudio
+            }
+        };
+
+        var text = string.IsNullOrWhiteSpace(reason) ? stage : $"{stage}：{reason}";
+        AppendCurrentStageToTimeline();
+        var path = CrashReportService.Write(
+            Version, ctx, text, _runner.LastExitCode,
+            ex, _runner.LastStdout, _runner.LastStderr, _logger.Snapshot(), _runner.History, _stageTimeline);
 
         if (string.IsNullOrEmpty(path))
         {
@@ -2489,9 +2989,17 @@ public partial class MainViewModel : ObservableObject
             // 阶段切换时重新计时。进度太小（<2%）或刚起步（<3 秒）时估算抖动过大，先不显示。
             if (p.Stage != _etaStage)
             {
+                // 阶段切换：把上一阶段（文字 + 起止时间 + 耗时）记进时间线，失败报告会整段带出去
+                if (_etaStage != ProcessStage.Idle && !string.IsNullOrEmpty(_lastStageText))
+                {
+                    var dur = DateTime.Now - _etaStageStarted;
+                    _stageTimeline.Add($"{_etaStageStarted:HH:mm:ss} → {DateTime.Now:HH:mm:ss}  "
+                        + $"{_lastStageText}（{dur.TotalSeconds:0.0}s）  stage={_etaStage}");
+                }
                 _etaStage = p.Stage;
                 _etaStageStarted = DateTime.Now;
             }
+            if (!string.IsNullOrWhiteSpace(p.StageText)) _lastStageText = p.StageText;
             EtaText = BuildEtaText(p.Percent, p.Stage);
             // 合并/HDR/音频/审查阶段不产生新帧：自动关闭预览并禁用预览开关，避免预览停在旧画面；
             // 单文件超分（图片/音频）同样不产生帧序列，全程禁用预览开关
@@ -2527,10 +3035,10 @@ public partial class MainViewModel : ObservableObject
     public void Stop()
     {
         // 遥控远端：停止指令发给远端
-        if (Services.RemoteControl.RemoteSession.IsActive)
+        if (LuminolEngine.RemoteControl.RemoteSession.IsActive)
         {
             _logger.Warn("正在停止远端处理...");
-            _ = Services.RemoteControl.RemoteSession.Current!.StopAsync();
+            _ = LuminolEngine.RemoteControl.RemoteSession.Current!.StopAsync();
             return;
         }
         _cts?.Cancel();
@@ -3057,7 +3565,7 @@ public partial class MainViewModel : ObservableObject
     public void PauseProcessing()
     {
         // 遥控远端：挂起/继续都由远端执行
-        if (Services.RemoteControl.RemoteSession.IsActive)
+        if (LuminolEngine.RemoteControl.RemoteSession.IsActive)
         {
             _ = PauseOrResumeRemoteAsync();
             return;
@@ -3071,7 +3579,7 @@ public partial class MainViewModel : ObservableObject
     /// <summary>继续被暂停的处理</summary>
     public void ResumeProcessing()
     {
-        if (Services.RemoteControl.RemoteSession.IsActive)
+        if (LuminolEngine.RemoteControl.RemoteSession.IsActive)
         {
             _ = PauseOrResumeRemoteAsync();
             return;
@@ -3086,7 +3594,7 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
-            var paused = await Services.RemoteControl.RemoteSession.Current!.PauseOrResumeAsync();
+            var paused = await LuminolEngine.RemoteControl.RemoteSession.Current!.PauseOrResumeAsync();
             IsPaused = paused;
             _logger.Info(paused ? "远端处理已暂停" : "远端处理已继续");
         }
@@ -3204,6 +3712,8 @@ public partial class MainViewModel : ObservableObject
             sb.Append($"[{r.Status}] {r.Name}");
             if (!string.IsNullOrEmpty(r.Extra)) sb.Append($"  ({r.Extra})");
             sb.AppendLine();
+            foreach (var line in r.Lines)
+                sb.AppendLine($"        · {line}");
             if (!string.IsNullOrEmpty(r.Hint)) sb.AppendLine($"        → {r.Hint}");
         }
         sb.AppendLine("====================");

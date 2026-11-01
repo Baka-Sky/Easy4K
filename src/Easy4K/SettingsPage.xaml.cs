@@ -1,4 +1,4 @@
-using Easy4K.Services;
+using Easy4K.LuminolEngine;
 using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -19,6 +19,7 @@ public sealed partial class SettingsPage : Page
     public SettingsPage()
     {
         InitializeComponent();
+        LanguageCombo.ItemsSource = Loc.Languages.Select(language => language.Name).ToArray();
         SyncCurrentValues();
     }
 
@@ -26,6 +27,7 @@ public sealed partial class SettingsPage : Page
     private void SyncCurrentValues()
     {
         _syncing = true;
+        LanguageCombo.SelectedItem = Loc.CurrentName;
         switch (Vm.SavedTheme)
         {
             case "light": ThemeLightRb.IsChecked = true; break;
@@ -36,6 +38,12 @@ public sealed partial class SettingsPage : Page
         }
         _syncing = false;
         UpdateBgImageRowVisibility();
+    }
+
+    private void OnLanguageChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncing || LanguageCombo.SelectedIndex < 0) return;
+        Vm.SetLanguage(Loc.Languages[LanguageCombo.SelectedIndex].Code);
     }
 
     // ===================== 外观 =====================

@@ -11,6 +11,8 @@
         <ResourceDictionary>
             <!-- 与主界面保持一致的卡片样式 -->
             <Style x:Key="CardBorder" TargetType="Border">
+                <!-- Tag=Card：玻璃主题（亚克力/图片/跟随系统）下由代码换成半透明底色 -->
+                <Setter Property="Tag" Value="Card"/>
                 <Setter Property="Background" Value="{ThemeResource CardBgBrush}"/>
                 <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
                 <Setter Property="BorderThickness" Value="1"/>
@@ -127,6 +129,19 @@
                     </Grid>
                 </Border>
 
+                <!-- 转场优化：PySceneDetect 检测镜头切换，转场处不插值（消除补帧鬼影） -->
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="转场优化" Style="{StaticResource SectionTitle}"/>
+                        <ToggleSwitch x:Name="SceneGuardSwitch" OnContent="已开启" OffContent="已关闭"
+                                      IsOn="{x:Bind Vm.SceneGuardEnabled, Mode=TwoWay}" FontSize="12"/>
+                        <TextBlock TextWrapping="Wrap" FontSize="11" Opacity="0.6"
+                                   Text="补帧前用 PySceneDetect 扫描镜头切换点，转场处不生成插值帧（保持上一帧），消除跨镜头混合产生的鬼影；帧数、帧率、时长都不变。对 RIFE 与各 PyTorch 补帧模型、帧去重回填、涡轮与分段处理同样生效。"/>
+                        <TextBlock TextWrapping="Wrap" FontSize="11" Opacity="0.45"
+                                   Text="代价是处理前多解码一遍源视频（低分辨率扫描，远快于超分/补帧）。缺少 Tools\SceneDetect 或 python-torch 时自动跳过，不影响出片。"/>
+                    </StackPanel>
+                </Border>
+
                 <!-- 涡轮模式：把 CPU 侧（拆帧/去重判决/回填）与 GPU 侧（超分/补帧）按块同时开工，音频链路再独立并行 -->
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel Spacing="6">
@@ -208,23 +223,75 @@
                 <Border Style="{StaticResource CardBorder}" BorderBrush="Orange" Background="{ThemeResource WarnBgBrush}">
                     <StackPanel Spacing="2">
                         <TextBlock Text="高级性能选项" Style="{StaticResource SectionTitle}"/>
-                        <Grid ColumnSpacing="8">
+                        <TextBlock Text="解析线程（解码 / 推理+编码）" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}" Margin="0,2,0,0"/>
+                        <Grid ColumnSpacing="10">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <Slider Grid.Column="0" Minimum="1" Maximum="32" StepFrequency="1" TickFrequency="1"
-                                    Value="{x:Bind Vm.ThreadCount, Mode=TwoWay}"
-                                    IsEnabled="{x:Bind Vm.ThreadsEditable, Mode=OneWay}"
-                                    ValueChanged="OnThreadSliderValueChanged"
-                                    HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
-                            <TextBlock Grid.Column="1" Text="{x:Bind Vm.ThreadLabel, Mode=OneWay}"
-                                       VerticalAlignment="Center" FontSize="12" MinWidth="70" TextAlignment="Right"/>
+                            <TextBlock Grid.Column="0" Text="超分" VerticalAlignment="Center" FontSize="12" MinWidth="36"/>
+                            <StackPanel Grid.Column="1">
+                                <Grid>
+                                    <TextBlock Text="解码" FontSize="11" Opacity="0.75"/>
+                                    <TextBlock Text="{x:Bind Vm.SrDecodeText, Mode=OneWay}" HorizontalAlignment="Right"
+                                               FontSize="11" FontWeight="SemiBold"/>
+                                </Grid>
+                                <Slider Minimum="1" Maximum="32" StepFrequency="1" SnapsTo="StepValues"
+                                        IsEnabled="{x:Bind Vm.ThreadsEditable, Mode=OneWay}"
+                                        Value="{x:Bind Vm.SrDecodeThreadsSlide, Mode=TwoWay}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <Grid>
+                                    <TextBlock Text="编码" FontSize="11" Opacity="0.75"/>
+                                    <TextBlock Text="{x:Bind Vm.SrEncodeText, Mode=OneWay}" HorizontalAlignment="Right"
+                                               FontSize="11" FontWeight="SemiBold"/>
+                                </Grid>
+                                <Slider Minimum="1" Maximum="32" StepFrequency="1" SnapsTo="StepValues"
+                                        IsEnabled="{x:Bind Vm.ThreadsEditable, Mode=OneWay}"
+                                        Value="{x:Bind Vm.SrEncodeThreadsSlide, Mode=TwoWay}"/>
+                            </StackPanel>
                         </Grid>
-                        <TextBlock Text="{x:Bind Vm.ThreadHintText, Mode=OneWay}"
-                                   FontSize="11" Opacity="0.6" TextWrapping="Wrap"/>
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="补帧" VerticalAlignment="Center" FontSize="12" MinWidth="36"/>
+                            <StackPanel Grid.Column="1">
+                                <Grid>
+                                    <TextBlock Text="解码" FontSize="11" Opacity="0.75"/>
+                                    <TextBlock Text="{x:Bind Vm.IfDecodeText, Mode=OneWay}" HorizontalAlignment="Right"
+                                               FontSize="11" FontWeight="SemiBold"/>
+                                </Grid>
+                                <Slider Minimum="1" Maximum="32" StepFrequency="1" SnapsTo="StepValues"
+                                        IsEnabled="{x:Bind Vm.ThreadsEditable, Mode=OneWay}"
+                                        Value="{x:Bind Vm.IfDecodeThreadsSlide, Mode=TwoWay}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <Grid>
+                                    <TextBlock Text="编码" FontSize="11" Opacity="0.75"/>
+                                    <TextBlock Text="{x:Bind Vm.IfEncodeText, Mode=OneWay}" HorizontalAlignment="Right"
+                                               FontSize="11" FontWeight="SemiBold"/>
+                                </Grid>
+                                <Slider Minimum="1" Maximum="32" StepFrequency="1" SnapsTo="StepValues"
+                                        IsEnabled="{x:Bind Vm.ThreadsEditable, Mode=OneWay}"
+                                        Value="{x:Bind Vm.IfEncodeThreadsSlide, Mode=TwoWay}"/>
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock FontSize="11" Opacity="0.6" TextWrapping="Wrap"
+                                   Text="只调「解码」时「编码」不动；调「编码」时「解码」自动跟随：每增加 2 个编码线程 +1 个解码线程（解码 = 编码÷2，不足 1 取 1）。"/>
+                        <TextBlock Text="{x:Bind Vm.ThreadRatioText, Mode=OneWay}" FontSize="11"
+                                   FontFamily="{StaticResource AppFontMediumFamily}" Opacity="0.85"/>
                         <TextBlock Text="{x:Bind Vm.ThreadWarnText, Mode=OneWay}" Foreground="Orange"
                                    FontSize="11" TextWrapping="Wrap" Visibility="{x:Bind Vm.ThreadWarnVis, Mode=OneWay}"/>
+
+                        <ComboBox x:Name="PipelineGpuCb" Header="流水线 GPU" Margin="0,6,0,0" HorizontalAlignment="Stretch"
+                                  ItemsSource="{x:Bind Vm.PipelineGpuOptions}"
+                                  SelectedIndex="{x:Bind Vm.PipelineGpuIndex, Mode=TwoWay}"/>
+                        <TextBlock x:Name="PipelineGpuHint" FontSize="11" Opacity="0.6" TextWrapping="Wrap"
+                                   Text="「自动」= 设备 0（跟着系统默认走，核显机器可能落到核显）；下拉里按系统枚举顺序列出每块显卡（显卡名），选哪项就强制用哪块。"/>
 
                         <!-- 编码质量：CPU 编码的 CRF、硬件编码的 CQ/QP（互斥，编码器由显卡自动选择） -->
                         <Grid ColumnSpacing="8" Margin="0,6,0,0">
@@ -266,6 +333,8 @@
                                   Checked="OnUseCpuProcessingChecked"
                                   Unchecked="OnUseCpuProcessingUnchecked"
                                   FontSize="12"/>
+                        <CheckBox x:Name="OldFfmpegCb" Content="崩溃时尝试使用老版本处理架构（FFmpeg 拆帧/合并/HDR/音频嵌入与 NVEncC 失败时自动切老版本重试，进度标注「(老版本)」；仍失败再用 CPU 标注「(CPU处理)」）"
+                                  IsChecked="{x:Bind Vm.TryOldFfmpegOnCrash, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="NoReportCb" Content="不生成配置文件（处理完成后不再生成 HTML 报告文件）"
                                   IsChecked="{x:Bind Vm.NoReport, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="ReportAutoOpenCb" Content="报告生成后自动用浏览器打开（关掉后报告照常生成，但不再弹浏览器）"

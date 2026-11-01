@@ -1,4 +1,5 @@
 using System.IO;
+using Easy4K.LuminolEngine;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -29,18 +30,46 @@ public sealed partial class AboutPage : Page
         var firstBreak = body.IndexOf('\n');
         if (firstBreak >= 0) body = body[(firstBreak + 1)..].TrimStart();
         AboutTextBlock.Text = body.Replace("\n\n", "\n");
-        CopyrightTextBlock.Text =
-            $"Copyright © 2025-{DateTime.Now.Year} Wells,Jiang. All rights reserved.\n" +
-            "Easy4K 源代码依据 GPL-3.0 发布。\n" +
-            "Easy4K 名称、图标及 SFDP 帧去重算法的版权归 Wells,Jiang 所有；Siamese NET AI 模型依据 CC BY-NC 4.0 开源；第三方组件依各自许可使用。";
+        RefreshCopyright();
 
         // 右上角 logo：浅色用黑版、深色用白版。构造期先发起解码，主题解析出来后再确认一次
         ApplyLogo();
-        ActualThemeChanged += (_, _) => ApplyLogo();
-        Loaded += (_, _) => ApplyLogo();
+        ApplyLinkColors();
+        ActualThemeChanged += (_, _) => { ApplyLogo(); ApplyLinkColors(); };
+        Loaded += (_, _) => { ApplyLogo(); ApplyLinkColors(); };
+
+        // 版权文字是代码拼出来的，页面静态文案由窗口统一本地化，这里只负责自己这部分
+        Loc.LanguageChanged += OnLanguageChanged;
+        Unloaded += (_, _) => Loc.LanguageChanged -= OnLanguageChanged;
 
         // 赞助二维码（固定图片，进页面就解码好）
         _ = LoadSponsorQrAsync();
+    }
+
+    /// <summary>两个链接按钮的配色显式跟随主题（WinUI 默认强调色在深浅色下几乎不变，看起来像"没换颜色"）。
+    /// 直接写本地 Foreground：主题切换时重新赋值，保证亮色下深蓝、暗色下亮蓝。</summary>
+    private void ApplyLinkColors()
+    {
+        var dark = CurrentThemeIsDark();
+        var color = dark
+            ? Windows.UI.Color.FromArgb(0xFF, 0x6C, 0xB8, 0xF6)
+            : Windows.UI.Color.FromArgb(0xFF, 0x0F, 0x6C, 0xBD);
+        var brush = new Microsoft.UI.Xaml.Media.SolidColorBrush(color);
+        ProjectLink.Foreground = brush;
+        ModelLink.Foreground = brush;
+    }
+
+    private void OnLanguageChanged() =>
+        DispatcherQueue.TryEnqueue(RefreshCopyright);
+
+    /// <summary>版权段落按当前语言重写（年份随当前时间变化，所以每次重新拼）。</summary>
+    private void RefreshCopyright()
+    {
+        CopyrightTextBlock.Text =
+            $"Copyright © 2025-{DateTime.Now.Year} Wells,Jiang. All rights reserved.\n" +
+            Loc.Tr("Easy4K 源代码依据 GPL-3.0 发布。") + "\n" +
+            Loc.Tr("Easy4K 名称、图标及 SFDP 帧去重算法的版权归 Wells,Jiang 所有；Siamese NET AI 模型依据 CC BY-NC 4.0 开源；第三方组件依各自许可使用。") + "\n" +
+            Loc.Tr("SDR→HDR 的 AI 重建模型基于 HDRTVNet++（MIT License，Copyright © 2023 Hoven Li）。");
     }
 
     private async Task LoadSponsorQrAsync()

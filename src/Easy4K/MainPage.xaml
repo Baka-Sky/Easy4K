@@ -15,6 +15,8 @@
             <!-- 主题画笔（CardBgBrush/CardBorderBrush/WarnBgBrush）与玻璃样式已上移至 App.xaml -->
 
             <Style x:Key="CardBorder" TargetType="Border">
+                <!-- Tag=Card：玻璃主题（亚克力/图片/跟随系统）下由代码换成半透明底色 -->
+                <Setter Property="Tag" Value="Card"/>
                 <Setter Property="Background" Value="{ThemeResource CardBgBrush}"/>
                 <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
                 <Setter Property="BorderThickness" Value="1"/>
@@ -41,12 +43,13 @@
         <ScrollViewer Padding="0,8,0,0" VerticalScrollBarVisibility="Auto">
             <StackPanel Spacing="10">
 
-                <!-- 顶部问候（按当前时段变化）+ 页面/模式标识 -->
-                <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,2,0,4">
-                    <TextBlock x:Name="GreetingText" FontSize="20" FontWeight="Bold"/>
-                    <TextBlock Text="主页 标准模式" FontSize="13" Opacity="0.6"
-                               VerticalAlignment="Bottom" Margin="0,0,0,3"/>
-                </StackPanel>
+                <!-- 顶部问候（按当前时段变化，居中）+ 左侧页面/模式标识 -->
+                <Grid Margin="0,2,0,4">
+                    <TextBlock Text="标准" FontSize="20" FontWeight="Bold"
+                               HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="GreetingText" FontSize="20" FontWeight="Bold"
+                               HorizontalAlignment="Center"/>
+                </Grid>
 
                 <!-- 路径 -->
                 <Border Style="{StaticResource CardBorder}">
@@ -111,7 +114,7 @@
                         <StackPanel Spacing="4">
                             <TextBlock Text="输入视频信息 (自动检测)" Style="{StaticResource SectionTitle}"/>
                             <TextBlock Text="{x:Bind Vm.VideoInfoText, Mode=OneWay}" TextWrapping="Wrap"
-                                       FontSize="13" LineHeight="19"/>
+                                       FontSize="12.5" LineHeight="19"/>
                             <TextBlock Text="输出分辨率" FontWeight="SemiBold" FontSize="13" Margin="0,6,0,0"/>
                             <TextBlock Text="{x:Bind Vm.OutputResolutionText, Mode=OneWay}" FontSize="13"/>
                             <TextBlock Text="目标帧率" FontWeight="SemiBold" FontSize="13" Margin="0,4,0,0"/>
@@ -130,7 +133,12 @@
                             <!-- 只在检测到字幕流时可勾：没有字幕时禁用以免造成"勾了但没用"的误解 -->
                             <CheckBox Content="保留原视频内嵌字幕" IsChecked="{x:Bind Vm.KeepSubtitles, Mode=TwoWay}"
                                       IsEnabled="{x:Bind Vm.KeepSubtitlesEnabled, Mode=OneWay}" FontSize="12"/>
-                            <TextBlock Text="仅在原视频确实带字幕流时可勾；成片是从帧序列重建的，字幕会从原文件复制过来。"
+                            <!-- 元数据 / 封面同理：原视频没检测到就禁用 -->
+                            <CheckBox Content="嵌入原视频元数据" IsChecked="{x:Bind Vm.EmbedMetadata, Mode=TwoWay}"
+                                      IsEnabled="{x:Bind Vm.EmbedMetadataEnabled, Mode=OneWay}" FontSize="12"/>
+                            <CheckBox Content="嵌入原视频封面" IsChecked="{x:Bind Vm.EmbedCover, Mode=TwoWay}"
+                                      IsEnabled="{x:Bind Vm.EmbedCoverEnabled, Mode=OneWay}" FontSize="12"/>
+                            <TextBlock Text="仅在原视频确实带字幕流 / 元数据 / 封面时可勾；成片是从帧序列重建的，这些信息会从原文件写回。"
                                        FontSize="11" Opacity="0.6" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>
@@ -267,12 +275,13 @@
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="类型" Style="{StaticResource FieldLabel}"/>
-                            <ComboBox x:Name="SfKindCombo" Grid.Column="1" SelectedIndex="{x:Bind Vm.SfKindIndex, Mode=TwoWay}" MinWidth="110" Style="{StaticResource GlassComboBox}">
+                            <ComboBox x:Name="SfKindCombo" Grid.Column="1" SelectedIndex="{x:Bind Vm.SfKindIndex, Mode=TwoWay}" MinWidth="130" Style="{StaticResource GlassComboBox}">
                                 <x:String>图片</x:String>
                                 <x:String>音频</x:String>
+                                <x:String>视频音频超分</x:String>
                                 <x:String>视频 HDR</x:String>
                             </ComboBox>
-                            <TextBlock Grid.Column="2" Text="只处理这一个文件，不拆帧/不补帧/不合并" VerticalAlignment="Center" Opacity="0.6" FontSize="11"/>
+                            <TextBlock Grid.Column="2" Text="只处理这一个文件，不拆帧/不补帧/不走完整流水线" VerticalAlignment="Center" Opacity="0.6" FontSize="11"/>
                         </Grid>
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
@@ -328,7 +337,20 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="HDR 参数" Style="{StaticResource FieldLabel}"/>
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="11" Opacity="0.6" TextWrapping="Wrap"
-                                       Text="沿用下方「HDR 参数」的饱和度/对比度；需要 NVIDIA RTX 20/30/40/50 系列 + NVEncC，输出 HDR10 的 MKV。"/>
+                                       Text="RTX 显卡用 NVEncC（饱和度/对比度生效）；其它显卡用 AI 模型（HDRTVNet++）按画面重建高光，输出 HDR10 的 MKV，速度取决于显卡。"/>
+                        </Grid>
+                        <!-- AI 路径的亮度强度（非 RTX 才出现） -->
+                        <Grid ColumnSpacing="8" Visibility="{x:Bind Vm.SfHdrAiVis, Mode=OneWay}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="80"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="AI 强度" Style="{StaticResource FieldLabel}"/>
+                            <Slider Grid.Column="1" Minimum="50" Maximum="150" StepFrequency="1"
+                                    Value="{x:Bind Vm.HdrAiStrength, Mode=TwoWay}" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind Vm.HdrAiStrengthText, Mode=OneWay}"
+                                       MinWidth="40" TextAlignment="Right" VerticalAlignment="Center" FontSize="13"/>
                         </Grid>
                         <TextBlock Text="{x:Bind Vm.SfOutputText, Mode=OneWay}" Opacity="0.6" FontSize="11" TextTrimming="CharacterEllipsis"/>
                         <Grid ColumnSpacing="8">
@@ -366,6 +388,22 @@
                                        SmallChange="1" LargeChange="10" FontSize="12" Style="{StaticResource GlassNumberBox}"/>
                         </Grid>
                         <TextBlock Text="范围 0 ~ 200（NVEncC 最高 200，默认 200）" FontSize="11" Opacity="0.6"/>
+                        <!-- AI 路径（非 RTX）没有 NVEncC 的饱和度/对比度，改为整体亮度强度 -->
+                        <Grid ColumnSpacing="12" Visibility="{x:Bind Vm.HdrAiStrengthVis, Mode=OneWay}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="AI 强度" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
+                            <Slider Grid.Column="1" Minimum="50" Maximum="150" StepFrequency="1"
+                                    Value="{x:Bind Vm.HdrAiStrength, Mode=TwoWay}" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind Vm.HdrAiStrengthText, Mode=OneWay}"
+                                       MinWidth="40" TextAlignment="Right" VerticalAlignment="Center" FontSize="12"/>
+                        </Grid>
+                        <TextBlock Text="AI 强度：100% = 模型原始映射；调高整体更亮（仅对非 RTX 的 AI 重建生效）"
+                                   FontSize="11" Opacity="0.6" TextWrapping="Wrap"
+                                   Visibility="{x:Bind Vm.HdrAiStrengthVis, Mode=OneWay}"/>
                     </StackPanel>
                 </Border>
 

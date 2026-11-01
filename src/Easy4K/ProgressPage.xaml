@@ -13,6 +13,8 @@
             <!-- 主题画笔（CardBgBrush/CardBorderBrush）与玻璃样式已上移至 App.xaml -->
 
             <Style x:Key="CardBorder" TargetType="Border">
+                <!-- Tag=Card：玻璃主题（亚克力/图片/跟随系统）下由代码换成半透明底色 -->
+                <Setter Property="Tag" Value="Card"/>
                 <Setter Property="Background" Value="{ThemeResource CardBgBrush}"/>
                 <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
                 <Setter Property="BorderThickness" Value="1"/>
@@ -33,7 +35,7 @@
         <!-- 降级横幅（安全帧率降级时显示） -->
         <Border Grid.Row="0" x:Name="DegradeBanner" CornerRadius="6" Background="#40FF6600" Padding="10,6" Margin="0,0,0,4"
                 Visibility="{x:Bind Vm.IsDegraded, Mode=OneWay}">
-            <TextBlock Text="{x:Bind Vm.DegradeNotice, Mode=OneWay}" FontWeight="SemiBold" FontSize="12" Foreground="#FFFF8800"/>
+            <TextBlock Text="{x:Bind Vm.DegradeNotice, Mode=OneWay}" FontWeight="SemiBold" FontSize="12" Foreground="{ThemeResource WarnTextBrush}"/>
         </Border>
 
         <!-- 顶部：总进度 -->

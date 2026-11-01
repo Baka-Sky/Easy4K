@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using Easy4K.Models;
-using Easy4K.Services;
+using Easy4K.LuminolEngine;
 using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 
@@ -84,7 +84,7 @@ public partial class App : Application
             app = orphanTask.Settings;
             settingsSvc.SuppressWrites = true;
         }
-        // 多语言：功能暂时隐藏，固定简体中文（词表 Loc/strings.json 与 Loc 服务都保留，
+        // 多语言入口暂时隐藏：固定简体中文（词表 Loc/strings.json 与 Loc 服务都保留，
         // 需要恢复"按配置切换语言"时把下面一行换回 Loc.Set(app.Language, notify: false) 即可）
         Loc.Set("zh-CN", notify: false);
         var tools = ToolPathResolver.Resolve(app, toolCfg);

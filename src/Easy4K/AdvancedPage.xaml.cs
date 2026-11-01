@@ -1,4 +1,4 @@
-using Easy4K.Services;
+using Easy4K.LuminolEngine;
 using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -496,6 +496,10 @@ public sealed partial class AdvancedPage : Page
         SafeFrameRateCb.IsEnabled = enabled;
         LowerQualityCb.IsEnabled = enabled;
         GpuAccelerationCb.IsEnabled = enabled;
+        // CPU 模式下 -g -1 固定走 CPU，GPU 选择没有意义：一起置灰
+        PipelineGpuCb.IsEnabled = enabled;
+        PipelineGpuHint.Opacity = enabled ? 0.6 : 0.25;
+        CpuProcessingCb.IsEnabled = true;
 
         // CPU 模式下合并一律走 libx265，CQ/QP 完全不生效：先把两个开关弹回未勾选（写回配置），
         // 再连同右侧数值一起置灰，避免「勾着却是灰的」这种看着别扭的状态。

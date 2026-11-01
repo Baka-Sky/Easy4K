@@ -10,6 +10,8 @@
 
     <Page.Resources>
         <Style x:Key="CardBorder" TargetType="Border">
+            <!-- Tag=Card：玻璃主题（亚克力/图片/跟随系统）下由代码换成半透明底色 -->
+            <Setter Property="Tag" Value="Card"/>
             <Setter Property="Background" Value="{ThemeResource CardBgBrush}"/>
             <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>

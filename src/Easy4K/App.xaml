@@ -24,11 +24,18 @@
                     <SolidColorBrush x:Key="ButtonBgBrush" Color="#8CF5F5F5"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FFC8C8C8"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="#20FFB300"/>
+                    <!-- 警示文字：浅色下用深橙，深色下用亮橙，保证两种主题都能读清 -->
+                    <SolidColorBrush x:Key="WarnTextBrush" Color="#FF9A5B00"/>
                     <!-- 占位文字用不透明灰：系统默认的半透明占位色会让文字走灰度抗锯齿，看起来发虚 -->
                     <SolidColorBrush x:Key="InputPlaceholderBrush" Color="#FF6E6E6E"/>
                     <!-- 下拉框正文用不透明色：WinUI 默认的 TextFillColorPrimaryBrush 带 89% alpha，
                          半透明文字同样拿不到 ClearType，细笔画的英文模型名会发虚 -->
                     <SolidColorBrush x:Key="ComboTextBrush" Color="#FF1B1B1B"/>
+                    <!-- 链接按钮：显式给出随主题切换的配色（默认强调色在深浅色下几乎不变，看起来像"没更新"） -->
+                    <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="#FF0F6CBD"/>
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="#FF115EA3"/>
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="#FF0C3B5E"/>
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundDisabled" Color="#FFBDBDBD"/>
                     <!-- 字族必须写进主题字典：WinUI 的内置样式用 {ThemeResource ContentControlThemeFontFamily} 取，
                          而 ThemeResource 优先查主题字典，只在普通资源里覆盖对控件不生效。 -->
                     <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
@@ -40,8 +47,13 @@
                     <SolidColorBrush x:Key="ButtonBgBrush" Color="#8C2A2A2A"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FF444444"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="#30FFB300"/>
+                    <SolidColorBrush x:Key="WarnTextBrush" Color="#FFFFB05A"/>
                     <SolidColorBrush x:Key="InputPlaceholderBrush" Color="#FFA8A8A8"/>
                     <SolidColorBrush x:Key="ComboTextBrush" Color="#FFF2F2F2"/>
+                    <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="#FF6CB8F6"/>
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="#FF8FD0FF"/>
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="#FF4F9BD1"/>
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundDisabled" Color="#FF5C5C5C"/>
                     <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="HighContrast">
@@ -51,8 +63,13 @@
                     <SolidColorBrush x:Key="ButtonBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
                     <SolidColorBrush x:Key="WarnBgBrush" Color="{ThemeResource SystemColorWindowColor}"/>
+                    <SolidColorBrush x:Key="WarnTextBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
                     <SolidColorBrush x:Key="InputPlaceholderBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
                     <SolidColorBrush x:Key="ComboTextBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
+                    <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="{ThemeResource SystemColorWindowTextColor}"/>
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}"/>
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="{ThemeResource SystemColorHighlightColor}"/>
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundDisabled" Color="{ThemeResource SystemColorGrayTextColor}"/>
                     <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>

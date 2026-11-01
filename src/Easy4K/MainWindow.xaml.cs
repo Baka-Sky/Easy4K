@@ -2,8 +2,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using Easy4K.Models;
-using Easy4K.Services;
-using Easy4K.Services.RemoteControl;
+using Easy4K.LuminolEngine;
+using Easy4K.LuminolEngine.RemoteControl;
 using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -354,12 +354,19 @@ public sealed partial class MainWindow : Window
             default:
                 ApplyRequestedTheme(ElementTheme.Default);
                 ShowThemeBackdrop(true);
+                SetGlassCards(true); // 跟随系统也算玻璃主题，卡片透出背景
                 break;
         }
 
         // 系统标题栏按钮（— □ ✕）颜色跟着实际主题走：浅色黑字、深色白字。
         // ActualThemeChanged 能同时覆盖手动切主题与系统深浅色变化两条路径。
-        RootLayout.ActualThemeChanged += (_, _) => UpdateTitleBarColors();
+        RootLayout.ActualThemeChanged += (_, _) =>
+        {
+            UpdateTitleBarColors();
+            RefreshCardGlass(); // 玻璃主题下跟随系统深浅色换对应的半透明底色
+            // 说明文字的透明度被折进了 Foreground（本地实色），主题切换要重新折算，否则浅色主题下仍是浅色字
+            Loc.RefoldOpacities();
+        };
         // 布局完成后、以及跨显示器 DPI 变化后，重新对齐标题栏高度/徽标尺寸
         void SyncTitleBar()
         {
@@ -372,6 +379,7 @@ public sealed partial class MainWindow : Window
         RootLayout.Loaded += (_, _) =>
         {
             try { RootLayout.XamlRoot.Changed += (_, _) => SyncTitleBar(); } catch { }
+            RefreshCardGlass(); // 首屏构造期还没有可视树，加载完成后补一次
         };
 
         // 导航：默认选中第 1 项（主页）；随窗口宽度在顶栏/左侧最小化之间自适应
@@ -387,6 +395,7 @@ public sealed partial class MainWindow : Window
         {
             if (e.Content is FrameworkElement page) HookPageLocalization(page);
             DispatcherQueue.TryEnqueue(ApplyLocalization);
+            DispatcherQueue.TryEnqueue(RefreshCardGlass); // 新页面的卡片也要按当前主题换成玻璃/不透明
 #if DEBUG
             // 切页 = 界面重建，刷新左下角的 UI 时间
             DispatcherQueue.TryEnqueue(MarkUiUpdated);
@@ -454,6 +463,8 @@ public sealed partial class MainWindow : Window
     {
         Loc.LocalizeNavView(RootNav); // 顶栏导航项：窄窗口下不在可视树里，按数据翻译
         if (Content is DependencyObject root) Loc.LocalizeTree(root);
+        // 下拉列表 / ToolTip / Flyout 挂在弹出层，不在常规可视树里，单独刷一遍
+        Loc.LocalizeOpenPopups(RootFrame.XamlRoot);
         // 本地化会整树重写文本，遥控横幅是运行时文案，翻译后重新写回
         if (RemoteSession.IsActive) RefreshRemoteBannerText();
     }
@@ -465,11 +476,13 @@ public sealed partial class MainWindow : Window
         if (page.IsLoaded)
         {
             Loc.LocalizeTree(page);
+            RefreshCardGlass();
             return;
         }
         page.Loaded += (s, _) =>
         {
             if (s is DependencyObject loaded) Loc.LocalizeTree(loaded);
+            RefreshCardGlass();
         };
     }
 
@@ -519,10 +532,28 @@ public sealed partial class MainWindow : Window
 
     // ===================== 导航 =====================
 
+    /// <summary>顶部导航项的顺序（决定左右滑动的方向）。</summary>
+    private static readonly Type[] NavOrder = { typeof(MainPage), typeof(AdvancedPage), typeof(ProgressPage) };
+
+    /// <summary>统一页面切换动画：左右滑入（与顶部导航按钮的顺序一致），而不是默认的向上浮入。
+    /// 往导航栏右侧的页面切换 → 从右边滑入；往左 → 从左边滑入；设置/关于/遥控页固定从右滑入。</summary>
+    private void NavigatePage(Type pageType)
+    {
+        var current = RootFrame.CurrentSourcePageType;
+        if (current == pageType) return;
+
+        var from = Array.IndexOf(NavOrder, current);
+        var to = Array.IndexOf(NavOrder, pageType);
+        var effect = from >= 0 && to >= 0 && to < from
+            ? SlideNavigationTransitionEffect.FromLeft
+            : SlideNavigationTransitionEffect.FromRight;
+
+        RootFrame.Navigate(pageType, null, new SlideNavigationTransitionInfo { Effect = effect });
+    }
+
     public void NavigateToHome()
     {
-        if (RootFrame.CurrentSourcePageType != typeof(MainPage))
-            RootFrame.Navigate(typeof(MainPage));
+        NavigatePage(typeof(MainPage));
         SyncNavSelection("ez"); // 主页 = EZ Mode，导航高亮同步回来
         // 未启动处理时不显示进度条；处理中手动回主页才显示全局进度
         ThinProgressBar.Visibility = Vm.IsProcessing ? Visibility.Visible : Visibility.Collapsed;
@@ -531,8 +562,7 @@ public sealed partial class MainWindow : Window
     public void NavigateToProgress()
     {
         ProgressNavItem.Visibility = Visibility.Visible; // 「进行中」只在处理期间存在，进页面前确保可见
-        if (RootFrame.CurrentSourcePageType != typeof(ProgressPage))
-            RootFrame.Navigate(typeof(ProgressPage));
+        NavigatePage(typeof(ProgressPage));
         SyncNavSelection("progress"); // 导航高亮移到「进行中」
         ThinProgressBar.Visibility = Visibility.Collapsed;
     }
@@ -548,16 +578,14 @@ public sealed partial class MainWindow : Window
     /// <summary>进入设置页（齿轮项不在 MenuItems 里，导航走这里统一处理）。</summary>
     public void NavigateToSettings()
     {
-        if (RootFrame.CurrentSourcePageType != typeof(SettingsPage))
-            RootFrame.Navigate(typeof(SettingsPage));
+        NavigatePage(typeof(SettingsPage));
         ThinProgressBar.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>进入关于页面（由设置页进入，页面内可返回设置）。</summary>
     public void NavigateToAbout()
     {
-        if (RootFrame.CurrentSourcePageType != typeof(AboutPage))
-            RootFrame.Navigate(typeof(AboutPage));
+        NavigatePage(typeof(AboutPage));
         ThinProgressBar.Visibility = Visibility.Collapsed;
     }
 
@@ -583,12 +611,9 @@ public sealed partial class MainWindow : Window
         if (args.SelectedItem is not NavigationViewItem item) return;
 
         var tag = item.Tag as string;
-        if (tag == "ez" && RootFrame.CurrentSourcePageType != typeof(MainPage))
-            RootFrame.Navigate(typeof(MainPage));
-        else if (tag == "adv" && RootFrame.CurrentSourcePageType != typeof(AdvancedPage))
-            RootFrame.Navigate(typeof(AdvancedPage));
-        else if (tag == "progress" && RootFrame.CurrentSourcePageType != typeof(ProgressPage))
-            RootFrame.Navigate(typeof(ProgressPage));
+        if (tag == "ez") NavigatePage(typeof(MainPage));
+        else if (tag == "adv") NavigatePage(typeof(AdvancedPage));
+        else if (tag == "progress") NavigatePage(typeof(ProgressPage));
 
         ThinProgressBar.Visibility = Vm.IsProcessing && RootFrame.CurrentSourcePageType != typeof(ProgressPage)
             ? Visibility.Visible
@@ -762,8 +787,7 @@ public sealed partial class MainWindow : Window
     /// <summary>由设置页「遥控另一台 Easy4K」调用：在主窗口内切到遥控页（不新开窗口）。</summary>
     public void NavigateToRemoteClient()
     {
-        if (RootFrame.CurrentSourcePageType != typeof(Views.Remote.RemoteClientPage))
-            RootFrame.Navigate(typeof(Views.Remote.RemoteClientPage));
+        NavigatePage(typeof(Views.Remote.RemoteClientPage));
         ThinProgressBar.Visibility = Visibility.Collapsed;
     }
 
@@ -1221,8 +1245,9 @@ public sealed partial class MainWindow : Window
         "1. 选择输入视频\n2. 自动检测分辨率/帧率\n3. 勾选要执行的处理（超分/补帧/合并/音频/HDR）\n" +
         "4. 选择模型与倍率（超分倍率会自动过滤可用模型）\n5. 点击开始处理\n\n" +
         "处理流程：拆帧 → 帧去重 → 超分 → 补帧 → 合并视频 → SDR→HDR → 音频超分 → 嵌入音频\n\n" +
-        "【高级】页可开启两项额外能力（默认关闭）：\n" +
+        "【高级】页可开启的额外能力：\n" +
         "· 帧去重：超分/补帧前剔除与上一帧重复的画面，处理完按索引表回填，成品时长、帧率与音频不变；\n" +
+        "· 转场优化（默认关闭）：PySceneDetect 检测镜头切换，转场处不插值，消除补帧鬼影；\n" +
         "· 音频超分：AudioSR 把音轨升到 48kHz 高带宽，勾选「将原音频合并进新视频」时替换视频音轨，\n" +
         "  未勾选则单独输出一份 48kHz WAV。";
 
@@ -1230,9 +1255,10 @@ public sealed partial class MainWindow : Window
     public string AboutText =>
         $"Easy4K v{Vm.Version} - 一键视频超分补帧工具\n\n基于 WinUI 3 / Windows App SDK\n\n" +
         "本软件完全免费，无任何收费内容。\n\n" +
-        "附加能力（「高级」页，默认关闭，均提供 FP16 性能模式与 FP32 完美模式）：\n" +
-        "· 帧去重：自研 SFDP 孪生网络 ONNX 模型，整帧 128×128 分块算相似度，DirectML / CPU 自动降级；\n" +
-        "· 音频超分：AudioSR，48kHz 高带宽重建。\n\n" +
+        "附加能力（「高级」页）：帧去重（自研 SFDP 孪生网络 ONNX，DirectML / CPU 自动降级）、\n" +
+        "  转场优化（PySceneDetect 检测镜头切换，转场处不插值）、音频超分（AudioSR，48kHz 高带宽重建）。\n" +
+        "性能选项：四段解析线程（解码 / 编码分开）、流水线 GPU 指定（核显机器可强制独显）、\n" +
+        "  涡轮多段并行、崩溃时自动回退老版本 FFmpeg / NVEncC。\n\n" +
         "========== 免责声明 ==========\n\n" +
         "1. 本软件以\"现状\"（AS-IS）提供，开发者不对其正确性、可靠性、完整性及适用性作任何明示或暗示保证。\n\n" +
         "2. 使用本软件及所调用第三方组件（FFmpeg / ncnn / PyTorch / AudioSR / NVEncC 等）产生的一切后果，包括但不限于：\n" +
@@ -1254,11 +1280,13 @@ public sealed partial class MainWindow : Window
         "GIMM-VFI（S-Lab License 1.0，仅限非商业用途）、softmax-splatting 算子（仅限学术用途）\n" +
         "音频超分：AudioSR（MIT）、AudioSR ONNX 权重（MIT）、ONNX Runtime + DirectML（MIT）、\n" +
         "CUDA / cuDNN（NVIDIA 专有许可）\n" +
+        "HDR 重建：HDRTVNet++（MIT License，Copyright © 2023 Hoven Li），SDR→HDR 的 AGCM+LE ONNX 权重\n" +
         "运行环境：Python（PSF）、PyTorch（BSD-3-Clause）、CuPy（MIT）、NumPy / SciPy（BSD-3-Clause）、\n" +
         "OpenCV（Apache-2.0）、timm（Apache-2.0）、WAFT（BSD-3-Clause，随包附带源码）、\n" +
         "omegaconf / einops / loguru / yacs / easydict / tqdm / tensorboard / sympy / mpmath（MIT / Apache-2.0 / BSD-3-Clause）\n" +
         "模型分发：Hugging Face Hub / huggingface_hub（Apache-2.0，部分模型权重的下载与缓存）\n" +
         "多媒体：FFmpeg（GPL v3，含 libx264 / libx265 / libvpx / libaom）、NVEncC（MIT）\n" +
+        "转场检测：PySceneDetect（BSD-3-Clause）\n" +
         "界面字体：HarmonyOS Sans SC（Regular / Medium / Bold 三个字面，Huawei Device Co., Ltd.，HarmonyOS Sans 字体许可）；\n" +
         "Segoe UI、Segoe Fluent Icons / Segoe MDL2 Assets、Consolas（微软，随 Windows 提供，不随包分发）\n\n" +
         "以上为摘要，完整清单、版本与许可原文见程序目录《Easy4K 软件安装声明》与各组件随附的 LICENSE 文件。\n\n" +
@@ -1498,6 +1526,7 @@ public sealed partial class MainWindow : Window
         // 不设 ZoomHost 时切换主题后弹窗里的文字颜色不会跟着变。
         ApplyRequestedTheme(theme);
         ShowThemeBackdrop(true);
+        SetGlassCards(theme == ElementTheme.Default); // 浅色/深色用不透明卡片保证文字清晰，跟随系统算玻璃主题
         Vm.SetThemeMode(theme switch
         {
             ElementTheme.Light => "light",
@@ -1516,10 +1545,11 @@ public sealed partial class MainWindow : Window
         _acrylic ??= new DesktopAcrylicBackdrop();
         SystemBackdrop = _acrylic;
         HideBackdropLayers();
-        SetNavPaneTransparent(false);
+        SetNavPaneTransparent(true);
         // 亚克力颜色跟随系统主题，内容也切回跟随系统保持一致
         ApplyRequestedTheme(ElementTheme.Default);
         ShowThemeBackdrop(false);   // 隐藏底色层，露出亚克力
+        SetGlassCards(true);        // 亚克力主题：卡片半透明，透出毛玻璃
         Vm.SetThemeMode("acrylic");
         // 系统关闭"透明度效果"时所有亚克力/云母材质都会回退为纯色背景
         if (!new Windows.UI.ViewManagement.UISettings().AdvancedEffectsEnabled)
@@ -1539,6 +1569,7 @@ public sealed partial class MainWindow : Window
         SetNavPaneTransparent(true); // 去掉 NavigationView 自带的内容层灰色底，否则导航栏下方会多出一块灰面板
         ApplyRequestedTheme(ElementTheme.Dark); // 图片主题固定深色，避免亮图下白字看不清
         ShowThemeBackdrop(false);   // 图片/亚克力层要在根布局之下才看得见
+        SetGlassCards(true);        // 图片主题：卡片半透明，图片与亚克力遮罩透出来
         Vm.SetThemeMode("image");
         ApplyBackdropOpacity();
         ApplyBackdropImage();
@@ -1570,12 +1601,15 @@ public sealed partial class MainWindow : Window
         BackdropOverlay.Visibility = Visibility.Visible;
     }
 
-    /// <summary>图片背景主题下把 NavigationView 自带的内容层/窗格底色改成透明。
-    /// 官方模板在顶部模式下会给内容区铺一层 LayerFillColorDefaultBrush（半透明灰），
-    /// 叠在背景图上就是导航栏下方那块"多余灰面板"；清掉后图片才能整片透出来。
-    /// 只在图片主题生效，其它主题保持 WinUI 默认观感。</summary>
+    private bool _transparentNavPane;
+
+    /// <summary>亚克力和图片主题清除导航内容层底色，普通主题恢复默认背景。</summary>
     private void SetNavPaneTransparent(bool on)
     {
+        _transparentNavPane = on;
+        if (on) RootNav.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        else RootNav.ClearValue(Control.BackgroundProperty);
+
         string[] keys =
         {
             "NavigationViewContentBackground",
@@ -1647,10 +1681,67 @@ public sealed partial class MainWindow : Window
         BackdropOverlay.Visibility = Visibility.Collapsed;
     }
 
+    // ===================== 玻璃主题的卡片底色 =====================
+
+    /// <summary>浅色玻璃卡片：40% 白（亚克力/图片/跟随系统下透出背景材质）</summary>
+    private static readonly SolidColorBrush GlassCardLightBrush =
+        new(Windows.UI.Color.FromArgb(0x66, 0xF5, 0xF5, 0xF5));
+
+    /// <summary>深色玻璃卡片：40% 深灰</summary>
+    private static readonly SolidColorBrush GlassCardDarkBrush =
+        new(Windows.UI.Color.FromArgb(0x66, 0x2A, 0x2A, 0x2A));
+
+    /// <summary>当前是否处于玻璃主题（卡片半透明）</summary>
+    private bool _glassCards;
+
+    /// <summary>按主题决定卡片底色：玻璃主题用半透明（透出亚克力/图片），
+    /// 普通浅色/深色保持不透明（卡片内文字才能拿到 ClearType）。</summary>
+    private void SetGlassCards(bool on)
+    {
+        _glassCards = on;
+        RefreshCardGlass();
+    }
+
+    /// <summary>把当前页面的卡片（CardBorder 样式，Tag=Card）刷成玻璃或不透明。
+    /// 卡片底色写在 Page 资源的样式里，运行期换主题时 ThemeResource 已经解析过，
+    /// 这里直接落本地值；离开玻璃主题时清掉本地值恢复样式里的不透明画笔。</summary>
+    private void RefreshCardGlass()
+    {
+        // 启动时导航模板尚未加载，页面加载后补清一次内容层背景。
+        if (_transparentNavPane) SetNavPaneTransparent(true);
+        if (RootFrame.Content is not DependencyObject page) return;
+        var dark = RootLayout.ActualTheme == ElementTheme.Dark;
+        ApplyCardGlass(page, dark);
+    }
+
+    private void ApplyCardGlass(DependencyObject node, bool dark)
+    {
+        var count = VisualTreeHelper.GetChildrenCount(node);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(node, i);
+            if (child is Border { Tag: "Card" } card)
+            {
+                if (_glassCards) card.Background = dark ? GlassCardDarkBrush : GlassCardLightBrush;
+                else card.ClearValue(Border.BackgroundProperty);
+            }
+            ApplyCardGlass(child, dark);
+        }
+    }
+
     // ===================== 版本检查 / 更新提示（微软商店） =====================
 
+    /// <summary>Easy4K 在微软商店的商品 ID（用于打开商店详情页）。</summary>
+    private const string StoreProductId = "9N67FBZQ4SGD";
+
+    /// <summary>商店商品接口：返回商品详情，其中 Payload.Notes 就是「此版本的新增功能」。</summary>
+    private const string StoreProductUrl =
+        "https://storeedgefd.dsx.mp.microsoft.com/v9.0/products/" + StoreProductId +
+        "?market=CN&locale=zh-CN&deviceFamily=Windows.Desktop";
+
     /// <summary>启动后异步检查微软商店更新：商店里已有新版本时弹窗提示，确认后跳转商店。
-    /// 只有带包标识（从商店安装 / MSIX 安装）时商店接口可用；开发用的未打包版本直接跳过。</summary>
+    /// 只有带包标识（从商店安装 / MSIX 安装）时商店接口可用；开发用的未打包版本直接跳过。
+    /// 调试可用环境变量 EASY4K_FAKE_STORE_VERSION 伪装一个商店版本，直接验证更新弹窗。</summary>
     private async Task CheckStoreUpdateAsync()
     {
         try
@@ -1658,6 +1749,20 @@ public sealed partial class MainWindow : Window
             // 自测/自动化模式不弹更新提示，避免弹窗卡住自动化流程
             if (Environment.GetCommandLineArgs().Any(a => a.Equals("--selftest", StringComparison.OrdinalIgnoreCase)))
                 return;
+
+            // 调试伪装：未打包的开发版没有包标识、商店接口用不了，
+            // 这里按环境变量给一个"商店版本"，仅用于验证更新提示的界面与跳转。
+            var fake = Environment.GetEnvironmentVariable("EASY4K_FAKE_STORE_VERSION");
+            if (!string.IsNullOrWhiteSpace(fake))
+            {
+                if (TryParseVersion(fake, out var fakeVersion) &&
+                    TryParseVersion(Vm.Version, out var localVersion) &&
+                    fakeVersion > localVersion)
+                {
+                    await ShowStoreUpdateDialogAsync(null, localVersion, fakeVersion);
+                }
+                return;
+            }
 
             if (!TryGetInstalledVersion(out var installed))
             {
@@ -1673,7 +1778,9 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            await ShowStoreUpdateDialogAsync(context, installed, updates[0].Package.Id.Version);
+            var package = updates[0].Package.Id.Version;
+            await ShowStoreUpdateDialogAsync(context, installed,
+                new Version(package.Major, package.Minor, package.Build, package.Revision));
         }
         catch (Exception ex)
         {
@@ -1697,32 +1804,125 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>商店有新版本时的提示：确认后打开本应用的商店页面（取不到商品 ID 时退到商店的"下载和更新"页）。</summary>
-    private async Task ShowStoreUpdateDialogAsync(
-        Windows.Services.Store.StoreContext context, Version installed,
-        Windows.ApplicationModel.PackageVersion available)
+    /// <summary>宽松解析版本号：允许只写主版本（如 "1" → 1.0），其余不足两位时补 .0。</summary>
+    private static bool TryParseVersion(string? text, out Version version)
     {
-        var storeVersion = $"{available.Major}.{available.Minor}.{available.Build}.{available.Revision}";
+        version = new Version(0, 0);
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var normalized = text.Trim();
+        if (!normalized.Contains('.')) normalized += ".0";
+        return Version.TryParse(normalized, out version);
+    }
+
+    /// <summary>从微软商店商品接口取「此版本的新增功能」（Payload.Notes 第一段）。失败返回 null。</summary>
+    private static async Task<string?> FetchStoreReleaseNotesAsync()
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
+            await using var stream = await client.GetStreamAsync(StoreProductUrl);
+            using var doc = await JsonDocument.ParseAsync(stream);
+            if (!doc.RootElement.TryGetProperty("Payload", out var payload) ||
+                !payload.TryGetProperty("Notes", out var notes) ||
+                notes.ValueKind != JsonValueKind.Array)
+                return null;
+
+            foreach (var item in notes.EnumerateArray())
+            {
+                var text = item.GetString();
+                if (!string.IsNullOrWhiteSpace(text)) return text.Trim();
+            }
+        }
+        catch { /* 取不到更新内容时只显示版本号，不阻塞更新提示 */ }
+        return null;
+    }
+
+    /// <summary>商店有新版本时的提示：给出该版本的更新内容，确认后打开本应用的商店页面。</summary>
+    private async Task ShowStoreUpdateDialogAsync(
+        Windows.Services.Store.StoreContext? context, Version installed, Version available)
+    {
+        // 构造期就开始检查时界面可能还没挂到 XamlRoot 上，等根布局加载完再弹
+        if (RootFrame.XamlRoot is null)
+        {
+            var ready = new TaskCompletionSource();
+            void OnLoaded(object sender, RoutedEventArgs e)
+            {
+                RootFrame.Loaded -= OnLoaded;
+                ready.TrySetResult();
+            }
+            RootFrame.Loaded += OnLoaded;
+            await ready.Task;
+        }
+
+        var notes = await FetchStoreReleaseNotesAsync();
+        // 商店的更新内容自带一行「Easy4K x.y.z 更新日志」，版本号上方已经有了，去掉这行更干净
+        if (notes is not null)
+        {
+            var firstBreak = notes.IndexOf('\n');
+            if (firstBreak > 0 && notes[..firstBreak].Contains("更新日志"))
+                notes = notes[(firstBreak + 1)..].TrimStart();
+        }
+
+        var notesBlock = new ScrollViewer
+        {
+            MaxHeight = 260,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(notes) ? "（暂时无法获取更新内容，可前往微软商店查看）" : notes,
+                TextWrapping = TextWrapping.Wrap,
+                IsTextSelectionEnabled = true,
+                FontSize = 13
+            }
+        };
+
         var dlg = new ContentDialog
         {
             Title = "发现新版本",
-            Content = $"微软商店已有新版本。\n\n当前版本: v{installed}\n商店版本: v{storeVersion}\n\n前往微软商店即可更新。",
+            Content = new StackPanel
+            {
+                Spacing = 8,
+                MinWidth = 760,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = $"当前版本: v{installed}    商店版本: v{available}",
+                        TextWrapping = TextWrapping.Wrap
+                    },
+                    new TextBlock
+                    {
+                        Text = "此版本的更新如下:",
+                        FontSize = 13,
+                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+                    },
+                    notesBlock
+                }
+            },
             PrimaryButtonText = "前往微软商店",
             CloseButtonText = "稍后",
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootFrame.XamlRoot
         };
+        // 默认弹窗最大宽度只有 548，撑成横向长条才放得下更新内容
+        dlg.Resources["ContentDialogMaxWidth"] = 860.0;
+        dlg.Resources["ContentDialogMinWidth"] = 760.0;
+
         if (await dlg.ShowLocalizedAsync() != ContentDialogResult.Primary) return;
 
-        var uri = new Uri("ms-windows-store://downloadsandupdates");
-        try
+        var storeId = StoreProductId;
+        if (context is not null)
         {
-            var product = await context.GetStoreProductForCurrentAppAsync();
-            var storeId = product.Product?.StoreId;
-            if (!string.IsNullOrWhiteSpace(storeId))
-                uri = new Uri($"ms-windows-store://pdp/?productid={storeId}");
+            try
+            {
+                var product = await context.GetStoreProductForCurrentAppAsync();
+                if (!string.IsNullOrWhiteSpace(product.Product?.StoreId))
+                    storeId = product.Product.StoreId;
+            }
+            catch { /* 取不到商品 ID 时用内置 ID */ }
         }
-        catch { /* 取不到商品 ID 就用商店的"下载和更新"页 */ }
+        var uri = new Uri($"ms-windows-store://pdp/?productid={storeId}");
 
         try
         {

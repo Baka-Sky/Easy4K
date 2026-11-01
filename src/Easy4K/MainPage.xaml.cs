@@ -1,7 +1,8 @@
 using System.IO;
-using Easy4K.Services;
-using Easy4K.Services.CommandBuilders;
-using Easy4K.Services.RemoteControl;
+using System.Runtime.InteropServices;
+using Easy4K.LuminolEngine;
+using Easy4K.LuminolEngine.CommandBuilders;
+using Easy4K.LuminolEngine.RemoteControl;
 using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -38,13 +39,32 @@ public sealed partial class MainPage : Page
             _ => "晚上好"
         };
 
-        var user = "";
-        try { user = Environment.UserName?.Trim() ?? ""; } catch { }
+        var user = GetCurrentUserDisplayName();
 
         return string.IsNullOrEmpty(user)
             ? $"{period}，您今天想做些什么？"
             : $"{period}，{user}。您今天想做些什么？";
     }
+
+    /// <summary>取当前用户的「显示名称」（Windows 账户设置里的名字，如「小苏打」）。
+    /// Environment.UserName 拿到的是登录账户名（如 jh_JL），跟系统里显示的名字不是一回事。</summary>
+    private static string GetCurrentUserDisplayName()
+    {
+        try
+        {
+            var size = 256u;
+            var buffer = new System.Text.StringBuilder((int)size);
+            // NameDisplay = 3：返回用户的全名/显示名
+            if (GetUserNameEx(3, buffer, ref size) && buffer.Length > 0)
+                return buffer.ToString().Trim();
+        }
+        catch { }
+
+        try { return Environment.UserName?.Trim() ?? ""; } catch { return ""; }
+    }
+
+    [DllImport("secur32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool GetUserNameEx(int nameFormat, System.Text.StringBuilder lpName, ref uint nSize);
 
     public MainPage()
     {
@@ -54,10 +74,11 @@ public sealed partial class MainPage : Page
 
         // 单文件「视频 HDR」只在 HDR 可用时出现：AMD 显卡、核显、非 RTX 的 N 卡一律不显示这一项
         // （NVEncC 的 NGX TrueHDR 需要 NVIDIA RTX 20/30/40/50 系列，摆出来也点不了）
-        if (!Vm.IsHdrEnabled && SfKindCombo.Items.Count > 2)
+        // 列表顺序：0 图片 / 1 音频 / 2 视频音频超分 / 3 视频 HDR —— 只删最后一项，不会影响前面的索引
+        if (!Vm.IsHdrEnabled && SfKindCombo.Items.Count > 3)
         {
-            SfKindCombo.Items.RemoveAt(2);
-            if (Vm.SfKindIndex > 1) Vm.SfKindIndex = 0;
+            SfKindCombo.Items.RemoveAt(3);
+            if (Vm.SfKindIndex > 2) Vm.SfKindIndex = 0;
         }
 
         // 模型属性变化兜底：即使下拉框 SelectionChanged 未触发，也刷新倍率锁定
@@ -414,7 +435,7 @@ public sealed partial class MainPage : Page
             picker.FileTypeFilter.Add(".bmp");
             picker.SuggestedStartLocation = PickerLocationId.PicturesLibrary;
         }
-        else if (Vm.SfIsVideoHdr)
+        else if (Vm.SfIsVideoHdr || Vm.SfIsVideoAudio)
         {
             picker.FileTypeFilter.Add(".mp4");
             picker.FileTypeFilter.Add(".mkv");
@@ -422,6 +443,7 @@ public sealed partial class MainPage : Page
             picker.FileTypeFilter.Add(".avi");
             picker.FileTypeFilter.Add(".ts");
             picker.FileTypeFilter.Add(".m2ts");
+            picker.FileTypeFilter.Add(".webm");
             picker.SuggestedStartLocation = PickerLocationId.VideosLibrary;
         }
         else
