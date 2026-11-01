@@ -150,7 +150,7 @@
 ```
 Easy4K/
 ├── Easy4K.exe                  # 主程序
-├── Easy4K.SFDP.dll             # 帧去重动态库（主程序直接调用，也可给别的 .NET 程序用）
+├── Easy4K.LuminolCore.dll             # 帧去重动态库（主程序直接调用，也可给别的 .NET 程序用）
 ├── appsettings.json            # 配置（工具路径、默认模型、线程数等）
 ├── Assets/                     # 应用资源（图标等）
 ├── FFmpeg-Lei/                 # FFmpeg 工具（ffmpeg.exe / ffprobe.exe）
@@ -169,8 +169,8 @@ Easy4K/
 
 双击仓库根目录的 **`一键编译.bat`**（或 `powershell -ExecutionPolicy Bypass -File build-all.ps1`）：
 
-1. 依次编译 `Easy4K.SFDP` 与 `Easy4K` 的 **Debug + Release**
-2. 把 Release 版帧去重动态库同步到 `lib\Easy4K.SFDP\Easy4K.SFDP.dll`
+1. 依次编译 `Easy4K.LuminolCore` 与 `Easy4K` 的 **Debug + Release**
+2. 把 Release 版帧去重动态库同步到 `lib\Easy4K.LuminolCore\Easy4K.LuminolCore.dll`
 3. 打印 Debug / Release 主程序与动态库的完整路径
 
 > 编译前若 Easy4K 正在运行会直接提示先关闭（否则 exe 被占用，MSB3021）。
@@ -195,13 +195,13 @@ dotnet publish -c Release -r win-x64
 - 打包前需把 `Tools/` 下 4 个工具目录复制到输出目录（`bin\...\win-x64\`）与 exe 同级
 - 开发期间工具位于仓库根 `Tools/`，运行时自动向上查找定位
 
-## Easy4K.SFDP（帧去重动态库）
+## Easy4K.LuminolCore（帧去重动态库）
 
-`lib/Easy4K.SFDP/Easy4K.SFDP.dll` 是把「相邻帧去重 SFDP」单独拆出来的**动态链接库**。
+`lib/Easy4K.LuminolCore/Easy4K.LuminolCore.dll` 是把「相邻帧去重 SFDP」单独拆出来的**动态链接库**。
 主程序直接引用它（不起独立进程），其他 .NET 程序也可以直接调用：
 
 ```csharp
-using Easy4K.SFDP;
+using Easy4K.LuminolCore;
 
 var opt = FrameDedupService.Options.FromMode("performance"); // 或 "uhd"（完美模式）
 
@@ -216,7 +216,7 @@ result.Decisions        // 逐帧判决：Index / Duplicate / Mad / Hamming / Qr
 result.ExpandMap        // 回填表：展开后第 k 帧对应原始第几帧
 ```
 
-- 算法源码在 `src/Easy4K.SFDP`，主程序以**项目引用**共用同一份实现 —— 改一边两边同时生效
+- 算法源码在 `src/Easy4K.LuminolCore`，主程序以**项目引用**共用同一份实现 —— 改一边两边同时生效
 - 判决只做分析，**不改动任何帧文件**；剔除与回填由调用方自己按 `Decisions` / `ExpandMap` 处理
 - 运行时依赖 `Microsoft.Windows.SDK.NET.dll`（解 PNG 用的 WinRT 投影，随 Easy4K 一起分发）
 - `lib\` 里那份由「一键编译」自动刷新，不要手改
@@ -324,7 +324,7 @@ HDR    NVEncC64 SDR→HDR（仅 RTX）
 - **外部工具**：FFmpeg、Real-ESRGAN-ncnn-vulkan、RIFE-ncnn-vulkan、NVEncC
 - **解决方案结构**：
   - `src/Easy4K` — 主程序（WinUI 3）
-  - `src/Easy4K.SFDP` — 帧去重动态库（四阶级联判决 + Farnebäck 光流）
+  - `src/Easy4K.LuminolCore` — 帧去重动态库（四阶级联判决 + Farnebäck 光流）
   - `src/Easy4K.Orphan` — 孤儿任务定时守护进程（无界面控制台 exe）
 - **构建**：`一键编译.bat` → `build-all.ps1`（Debug + Release 全量编译并同步动态库）
 

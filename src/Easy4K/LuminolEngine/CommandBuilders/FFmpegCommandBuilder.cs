@@ -1,0 +1,139 @@
+using System.Globalization;
+using System.IO;
+
+namespace Easy4K.LuminolEngine.CommandBuilders;
+
+/// <summary>FFmpeg 命令构建：拆帧 / 合并视频 / 嵌入音频。
+/// BUG-01：所有路径用双引号包裹，正斜杠统一。
+/// BUG-07：音频嵌入时视频流在前、音频流在后，-map 正确。
+/// BUG-08：合并视频时自动探测输出帧起始编号，传 -start_number。</summary>
+public static class FFmpegCommandBuilder
+{
+    /// <summary>拆分视频为 PNG 序列。输出帧编号从 1 开始，纯数字命名（%08d）。
+    /// 纯数字命名是 RIFE 目录模式的硬性要求（RIFE 只识别 %08d.png，不认 frame_ 前缀）。
+    /// -y 覆盖旧帧：从头完整拆一遍，不做断点续传。始终多线程全速。
+    /// useGpu：勾选「使FFmpeg尝试使用GPU加速」时加 -hwaccel auto（GPU 解码，失败由上层回退 CPU）。</summary>
+    public static (string args, string framePattern) SplitFrames(string videoPath, string framesDir, bool useGpu = false,
+        string hwAccel = "")
+    {
+        Directory.CreateDirectory(framesDir);
+        var pattern = Path.Combine(framesDir, "%08d.png").Replace('\\', '/');
+        var hw = useGpu ? (string.IsNullOrEmpty(hwAccel) ? " -hwaccel auto" : $" -hwaccel {hwAccel}") : "";
+        // -q:v 2 高质量 PNG；-y 覆盖
+        // -fps_mode passthrough：FFmpeg 9 已移除 -vsync（旧值 0 = passthrough），等价替换，保持逐帧不丢不补
+        var args = $"-y{hw} -i \"{videoPath}\" -q:v 2 -fps_mode passthrough \"{pattern}\"";
+        return (args, pattern);
+    }
+
+    /// <summary>只拆出指定帧号区间（0 基、闭区间）的帧，输出仍从 1 开始连续编号。
+    /// 用 select 按解码后的帧序号筛选，边界精确、段与段之间不重叠也不缺帧；
+    /// 代价是每个分段都要从头解码一遍源视频（解码远快于超分/补帧，可接受）。
+    /// 涡轮分段模式用它把视频切成 N 段，各段流水线并行处理后再按顺序汇总。</summary>
+    public static (string args, string framePattern) SplitFramesRange(
+        string videoPath, string framesDir, long fromFrame, long toFrame, bool useGpu = false, string hwAccel = "")
+    {
+        Directory.CreateDirectory(framesDir);
+        var pattern = Path.Combine(framesDir, "%08d.png").Replace('\\', '/');
+        var hw = useGpu ? (string.IsNullOrEmpty(hwAccel) ? " -hwaccel auto" : $" -hwaccel {hwAccel}") : "";
+        var from = Math.Max(0, fromFrame);
+        var to = Math.Max(from, toFrame);
+        var select = $"select='between(n\\,{from}\\,{to})'";
+        var args = $"-y{hw} -i \"{videoPath}\" -vf \"{select}\" -q:v 2 -fps_mode passthrough \"{pattern}\"";
+        return (args, pattern);
+    }
+
+    /// <summary>把 PNG 序列合成视频。BUG-08：自动探测起始帧编号。
+    /// encArgs 由上层决定（GPU 硬件编码或 CPU libx265）；-threads 0 = 使用全部 CPU 核心，不限制。
+    /// subtitleSource 非空时把该文件作为第二个输入，只取它的字幕流原样复制（-map 1:s?，没有字幕也不报错）：
+    /// 成片是从帧序列重建的，原文件里的字幕不会自己跟过来，必须显式映射；
+    /// 合并产物是 matroska，所以字幕可以直接 -c:s copy（mp4 不支持大多数字幕格式的 copy）。</summary>
+    public static string MergeFrames(string framesDir, string outputVideo, double fps, string encArgs,
+        string? subtitleSource = null)
+    {
+        var pattern = Path.Combine(framesDir, "%08d.png").Replace('\\', '/');
+        var startNum = DetectStartNumber(framesDir);
+        // 帧率固定用不变区域格式化：目标帧率可以是小数（如 59.94），缺了这一步在部分区域设置下会写成 "59,94"
+        var fpsText = fps.ToString("0.##", CultureInfo.InvariantCulture);
+        var sub = string.IsNullOrWhiteSpace(subtitleSource)
+            ? ""
+            : $" -i \"{subtitleSource}\" -map 0:v:0 -map 1:s? -c:s copy";
+        var args = $"-y -framerate {fpsText} -start_number {startNum} -i \"{pattern}\"{sub} " +
+                   $"-c:v {encArgs} -threads 0 -pix_fmt yuv420p -an \"{outputVideo}\"";
+        return args;
+    }
+
+    /// <summary>把音频嵌入到最终视频。BUG-07：-map 0:v:0 -map 1:a:0 顺序正确。
+    /// sampleRate：默认 96000（原音轨重采样到 PCM 24bit 96kHz）；开了音频超分时传 48000，
+    /// 直接用 AudioSR 产出的 48kHz WAV，不再让 ffmpeg 重采样。
+    /// useGpu：勾选「使FFmpeg尝试使用GPU加速」时加 -hwaccel auto（对 -c:v copy 无实际加速，仅保持"尝试"语义）。
+    /// 字幕：-map 0:s? -c:s copy 把上一步（合并视频）已经带进来的内嵌字幕原样带过去；
+    /// 没有字幕流时 ? 让它静默跳过，不影响出片。这一步曾是"内嵌字幕丢失"的根因。</summary>
+    public static string EmbedAudio(string videoPath, string audioPath, string outputPath, bool useGpu = false,
+        int sampleRate = 96000, string? comment = null)
+    {
+        var hw = useGpu ? " -hwaccel auto" : "";
+        // comment：把"这段音频是不是 AudioSR 处理的"写进成品文件信息（MediaInfo / ffprobe 的 Comment 字段）。
+        // 只覆盖 comment 一个字段，Title/日期等其余元数据仍由 -map_metadata 默认继承。
+        var meta = string.IsNullOrEmpty(comment) ? "" : $" -metadata comment=\"{comment}\"";
+        return $"-y{hw} -i \"{videoPath}\" -i \"{audioPath}\" " +
+               $"-c:v copy -c:a pcm_s24le -ar {sampleRate} -ac 2 -map 0:v:0 -map 1:a:0 -map 0:s? -c:s copy{meta} \"{outputPath}\"";
+    }
+
+    /// <summary>把原视频里的封面图抽成一个 PNG 文件（attached_pic 视频流 / mkv 封面附件）。
+    /// 成片是从帧序列重建的，封面不会自己跟过来，必须先抽出来再作为附件写回成品。</summary>
+    public static string ExtractCover(string sourcePath, int coverStreamIndex, string outputPng)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPng) ?? ".");
+        return $"-y -i \"{sourcePath}\" -map 0:{coverStreamIndex} -frames:v 1 -c:v png \"{outputPng}\"";
+    }
+
+    /// <summary>出片前把原视频的元数据 / 封面写回成品。
+    /// copyMetadata：-map_metadata 1 从原文件（第二个输入）复制标题/艺人/注释/创建时间等格式标签；
+    /// coverFile：把封面图作为 mkv 附件写入（-attach + mimetype），播放器会把它当封面显示；
+    /// comment：重新盖回 AudioSR 来源标记，避免被原文件的 comment 覆盖。
+    /// 全程 -c copy，只重封装，不重新编码。</summary>
+    public static string EmbedMetadataAndCover(string videoPath, string sourcePath, string outputPath,
+        bool copyMetadata, string? coverFile, string? comment)
+    {
+        var args = $"-y -i \"{videoPath}\" -i \"{sourcePath}\" -map 0 -c copy";
+        if (copyMetadata) args += " -map_metadata 1";
+        if (!string.IsNullOrEmpty(comment)) args += $" -metadata comment=\"{comment}\"";
+        if (!string.IsNullOrEmpty(coverFile) && File.Exists(coverFile))
+            args += $" -attach \"{coverFile}\" -metadata:s:t filename=\"cover.png\" -metadata:s:t mimetype=image/png";
+        return args + $" \"{outputPath}\"";
+    }
+
+    /// <summary>把任意音轨转成 AudioSR 要求的 PCM WAV（48kHz / float32 / 保持声道数）。
+    /// AudioSR 的驱动只读 WAV，所以 flac/mp3/aac 都要先过这一步。</summary>
+    public static string ToWav48k(string inputAudio, string outputWav)
+    {
+        var dir = Path.GetDirectoryName(outputWav);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        return $"-y -i \"{inputAudio}\" -vn -c:a pcm_f32le -ar 48000 \"{outputWav}\"";
+    }
+
+    /// <summary>从原视频提取音频为 FLAC（无损，保留原始码率/位深）。
+    /// 用 -vn 丢视频流、-c:a flac 编码 FLAC。</summary>
+    public static string ExtractAudio(string videoPath, string outputAudio)
+    {
+        var dir = Path.GetDirectoryName(outputAudio);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        return $"-y -i \"{videoPath}\" -vn -c:a flac \"{outputAudio}\"";
+    }
+
+    /// <summary>探测帧目录下最小的帧编号，用于 -start_number。BUG-08。</summary>
+    public static int DetectStartNumber(string framesDir)
+    {
+        if (!Directory.Exists(framesDir)) return 0;
+        int min = int.MaxValue;
+        foreach (var f in Directory.EnumerateFiles(framesDir, "*.png"))
+        {
+            var name = Path.GetFileNameWithoutExtension(f.AsSpan());
+            if (int.TryParse(name, out var n))
+            {
+                if (n < min) min = n;
+            }
+        }
+        return min == int.MaxValue ? 0 : min;
+    }
+}

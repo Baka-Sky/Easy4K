@@ -1,0 +1,4029 @@
+using System.IO;
+using System.Text.RegularExpressions;
+using System.Threading.Channels;
+using Easy4K.Models;
+using Easy4K.LuminolEngine.CommandBuilders;
+using Easy4K.LuminolCore;
+
+namespace Easy4K.LuminolEngine;
+
+/// <summary>处理上下文：把所有运行所需信息打包传给 Orchestrator</summary>
+public sealed class ProcessingContext
+{
+    public string InputVideo { get; set; } = "";
+    /// <summary>成品文件命名基准（原视频路径）。输入视频可能是自动转换出来的中间文件，
+    /// 空 = 用 <see cref="InputVideo"/>；帧文件夹模式用 <see cref="ExternalFramesDir"/>。</summary>
+    public string OutputNameBase { get; set; } = "";
+    public string TempRoot { get; set; } = "";
+    public string OutputRoot { get; set; } = "";
+    /// <summary>手动导入的外部帧文件夹（非空时复制到 Temp/input_frames 并跳过拆帧）</summary>
+    public string ExternalFramesDir { get; set; } = "";
+    public VideoInfo Video { get; set; } = new();
+    public ProcessingOptions Options { get; set; } = new();
+    public string SrModel { get; set; } = "";
+    public int SrScale { get; set; } = 2;
+    public string IfModel { get; set; } = "";
+    /// <summary>补帧模型的 vfi_driver.py --model 取值（见 VfiCatalog）；
+    /// 空串 = 走 ncnn 轨（rife-ncnn-vulkan），非空 = 走 PyTorch 轨（仅 NVIDIA）。</summary>
+    public string IfDriverKey { get; set; } = "";
+    public int IfMultiplier { get; set; } = 2;
+    public int HdrSaturation { get; set; } = 200;
+    public int HdrContrast { get; set; } = 200;
+    /// <summary>AI HDR 重建的亮度强度（50~150，100 = 模型原始映射）</summary>
+    public int HdrAiStrength { get; set; } = 100;
+    public GpuInfo Gpu { get; set; } = new();
+    public AppSettings Settings { get; set; } = new();
+    public ToolPaths Tools { get; set; } = new();
+
+    /// <summary>CPU 处理模式下遇到不支持 CPU 的超分模型时的询问回调。
+    /// 返回 true = 改用 GPU 继续；false = 结束任务让用户更换模型。
+    /// null = 无人值守（处理前测试/自动测试），按历史行为自动升级 GPU。</summary>
+    public Func<string, Task<bool>>? OnSrCpuIncompatibleAsync { get; set; }
+}
+
+/// <summary>处理流水线编排（与《Easy4K流水线逻辑》一致）：
+/// 测试（上层 RunPreProcessTestAsync）→ 拆帧 → 超分 → 补帧 → AudioSR 分支 → 合并 → 视频审查。
+/// 每个阶段都有 GPU 崩溃自动降级 / 安全帧率自动停止 / 失败生成 ERROR 报告的对应处理。</summary>
+public sealed class ProcessingOrchestrator
+{
+    private readonly ProcessRunner _runner;
+    private readonly Logger _logger;
+
+    // ---- 音频处理来源（AudioSR 有没有真正介入）----
+    // 音频链路上前后都是 ffmpeg（提取 → 转 48k → 嵌入），日志里全是 ffmpeg 命令，
+    // 所以这里额外维护"是否介入 + 原因 + 后端"，最后输出唯一结论行，并把标记写进产物文件信息。
+    /// <summary>AudioSR 未介入的原因（null = 已介入或未请求）</summary>
+    private string? _audioSrSkipReason;
+    /// <summary>AudioSR 推理后端（由驱动脚本输出解析：DirectML（GPU）/ CPU）</summary>
+    private string? _audioSrBackend;
+    /// <summary>AudioSR 精度档文案（FP16 低精度性能模式 / FP32 高精度完美模式）</summary>
+    private string _audioSrPrecisionText = "";
+
+    /// <summary>写进产物文件信息的"音频处理来源"标记（成品视频的 comment / AudioSR WAV 的 ICMT）。
+    /// 必须是**纯 ASCII 英文**：WAV 的 LIST/INFO 块没有统一编码约定，媒体工具（MediaInfo）按本地代码页
+    /// 解码，写 UTF-8 中文会显示乱码（实测中文显示成 "鏈煶棰?）。
+    /// 与 Tools\AudioSR\audiosr_onnx.py 里的 EASY4K_AUDIO_MARK 保持一致，不要随意改动。</summary>
+    private const string AudioSrMarkUsed =
+        "This audio was super-resolved by the AudioSR module of Easy4K 2 Pro. Please verify the audio processing source carefully!";
+    private const string AudioSrMarkNotUsed =
+        "AudioSR was NOT used for this audio (original track + ffmpeg resample). Please verify the audio processing source carefully!";
+
+    public ProcessingOrchestrator(ProcessRunner runner, Logger logger)
+    {
+        _runner = runner;
+        _logger = logger;
+    }
+
+    /// <summary>当前阶段进度推送</summary>
+    public event Action<ProcessProgress>? ProgressChanged;
+
+    /// <summary>一次流水线运行的共享状态：跨阶段传递的目录、目标帧数与中间产物。</summary>
+    private sealed class PipelineState
+    {
+        public ProcessingContext Ctx = null!;
+        public string TempRoot = "";
+        public string InputFrames = "";
+        public string SrFrames = "";
+        public string IfFrames = "";
+        public string TempVideo = "";
+        public long TotalFrames;
+        public bool Cpu;
+        public bool OldNcnnModel;
+        public double IfRatio;
+        public int IfMult;
+        public long TargetFrames;
+        public double OutFps;
+        public int OutWidth;
+        public int OutHeight;
+        /// <summary>拆帧续跑判断用的已去重保留帧数（0 = 未启用）</summary>
+        public int CachedDedupKept;
+        /// <summary>本次帧去重实际保留帧数（0 = 未启用/未生效）</summary>
+        public int DedupKept;
+        public long SrTarget;
+        public long IfTarget;
+        public string InputDirForIf = "";
+        /// <summary>当前视频产物（合并 → HDR → 嵌音频逐步推进）</summary>
+        public string CurrentVideo = "";
+        public bool HdrDone;
+        /// <summary>AudioSR 产出的 48k WAV（null = 未介入）</summary>
+        public string? AudioSrWav;
+        /// <summary>未勾选「将原音频合并进新视频」时的独立音频成品</summary>
+        public string? StandaloneAudioWav;
+        /// <summary>视频审查：本次合并的期望帧数</summary>
+        public long ExpectedFrames;
+        /// <summary>音频嵌入阶段写入成品的 AudioSR 来源标记（空 = 没有标记；元数据写回时要盖回去）</summary>
+        public string AudioMark = "";
+        /// <summary>分段涡轮：本段只拆 [SplitFrom, SplitTo] 这个帧号区间（0 基闭区间，-1 = 不限）</summary>
+        public long SplitFrom = -1;
+        public long SplitTo = -1;
+        /// <summary>是否由分段涡轮创建的子流水线（子流水线内部不再启用块级涡轮）</summary>
+        public bool Segmented;
+        /// <summary>PySceneDetect 检出的剪切点（源视频 0 基帧号 = 新镜头第一帧）</summary>
+        public List<int> SceneCuts = new();
+    }
+
+    /// <summary>本次是否抑制桌面 ERROR 报告（用户主动中止，如选择「更换其他模型」）。</summary>
+    public bool SuppressFailureReport { get; private set; }
+
+    /// <summary>运行整个流水线。阶段顺序与《Easy4K流水线逻辑》一致：
+    /// 测试（上层 RunPreProcessTestAsync）→ 拆帧 → 超分 → 补帧 → AudioSR → 合并 → 视频审查。
+    /// 返回最终输出文件路径；失败返回 null。</summary>
+    public async Task<string?> RunAsync(ProcessingContext ctx, CancellationToken ct)
+    {
+        SuppressFailureReport = false;
+        var st = PreparePipeline(ctx);
+        if (st is null) return null;
+
+        // 转场检测（PySceneDetect）：只勾了补帧才需要；结果在合并阶段用于"转场处不插值"
+        if (ctx.Options.Interpolation && ctx.Settings.SceneGuardEnabled)
+            await DetectSceneCutsAsync(st, ct);
+
+        if (CanSegmentTurbo(ctx, st))
+        {
+            // 涡轮分段：N 条完整流水线并行，产出帧汇总到主临时目录后统一合并
+            if (!await RunSegmentedTurboAsync(st, ct)) return null;
+            // 每段内部已做完去重回填，主流程不能再展开一次
+            st.DedupKept = 0;
+        }
+        else
+        {
+            // ============ 阶段2：拆帧 ============
+            if (!await SplitStageAsync(st, ct)) return null;
+
+            // 内部优化（不属于对外阶段）：涡轮块级流水 + 帧去重（原阶段1.5）
+            await RunTurboAndDedupAsync(st, ct);
+
+            // ============ 阶段3：超分 ============
+            if (!await SuperResStageAsync(st, ct)) return null;
+
+            // ============ 阶段4：补帧 ============
+            if (!await InterpolationStageAsync(st, ct)) return null;
+        }
+
+        // ============ 阶段5：AudioSR 分支 ============
+        if (!await AudioSrStageAsync(st, ct)) return null;
+
+        // ============ 阶段6：合并（视频 → HDR → 音频） ============
+        if (!await MergeStageAsync(st, ct)) return null;
+
+        // 未勾选合并视频：没有成品视频，按原行为提前结束
+        if (!ctx.Options.MergeVideo)
+        {
+            if (st.StandaloneAudioWav is not null)
+            {
+                var wavProbe = ProbeAudioSummary(ctx.Tools.FFprobeExe, st.StandaloneAudioWav);
+                if (wavProbe is not null) _logger.Info($"成品音频实测（ffprobe）：{wavProbe}");
+                _logger.Warn("未勾选合并视频：本次不产出成品视频，成品为音频超分结果");
+                ProgressChanged?.Invoke(new ProcessProgress { Stage = ProcessStage.Done, StageText = "完成（仅音频超分）" });
+                return st.StandaloneAudioWav;
+            }
+            _logger.Warn("未勾选合并视频：本次不产出成品视频（中间帧保留在临时目录），处理到此结束");
+            ProgressChanged?.Invoke(new ProcessProgress { Stage = ProcessStage.Done, StageText = "完成（未勾选合并，无成品输出）" });
+            return st.TempVideo;
+        }
+
+        // ============ 阶段7：视频审查 ============
+        if (!await AuditStageAsync(st, ct)) return null;
+
+        // ============ 阶段8：元数据 / 封面 ============
+        if (!await MetadataCoverStageAsync(st, ct)) return null;
+
+        // ============ 输出到最终路径 ============
+        return FinalizeOutput(st);
+    }
+
+    /// <summary>准备运行状态：目录、总帧数、补帧目标、磁盘预估。返回 null 表示无法继续。</summary>
+    private PipelineState? PreparePipeline(ProcessingContext ctx)
+    {
+        var st = new PipelineState
+        {
+            Ctx = ctx,
+            TempRoot = ctx.TempRoot,
+            InputFrames = Path.Combine(ctx.TempRoot, "input_frames").Replace('\\', '/'),
+            SrFrames = Path.Combine(ctx.TempRoot, "4k_frames").Replace('\\', '/'),
+            IfFrames = Path.Combine(ctx.TempRoot, "output_frames").Replace('\\', '/'),
+            TempVideo = Path.Combine(ctx.TempRoot, "temp_video.mkv").Replace('\\', '/'),
+            TotalFrames = ctx.Video.TotalFrames
+        };
+
+        if (st.TotalFrames <= 0)
+        {
+            _logger.Error("无法获取视频总帧数，无法继续");
+            return null;
+        }
+
+        // 只勾了拆帧时不产出成品：以前会在几秒内"完成"并弹完成窗，看起来像"跑了 0 秒"。
+        if (!ctx.Options.SuperResolution && !ctx.Options.Interpolation && !ctx.Options.MergeVideo)
+            _logger.Warn("当前只勾选了「拆帧」：不会执行超分/补帧/合并，也不会产出成品视频；如需成品请勾选「合并视频」。");
+
+        // 续跑兜底：未勾选补帧时去重会把重复帧移出 input_frames（只剩保留帧），拆帧的"够不够"要按保留数比；
+        // 勾选补帧时重复帧留在原地（超分要对全部源帧跑），input_frames 始终是全量。
+        st.CachedDedupKept = ctx.Settings.DedupEnabled && !ctx.Options.Interpolation ? TryReadDedupKept(st.TempRoot) : 0;
+
+        // BUG-09：NCNN 的 v2/v3 老模型不支持 -n 自定义帧数，仅支持 2 倍补帧
+        st.OldNcnnModel = ctx.IfModel.StartsWith("rife-v", StringComparison.OrdinalIgnoreCase)
+            && !ctx.IfModel.StartsWith("rife-v4", StringComparison.OrdinalIgnoreCase);
+
+        // 补帧目标：优先"目标帧率"（成片 fps 精确等于用户填的值），否则按整数倍率。
+        st.IfRatio = ctx.Options.TargetFps > 0 && ctx.Video.FrameRate > 0
+            ? ctx.Options.TargetFps / ctx.Video.FrameRate
+            : (double)ctx.IfMultiplier;
+        if (st.OldNcnnModel)
+        {
+            st.IfRatio = 2;
+            if (ctx.Options.TargetFps > 0)
+                _logger.Warn($"模型 {ctx.IfModel} 不支持自定义帧数（-n），目标帧率 {ctx.Options.TargetFps:0.##}fps 本次已忽略，按 x2 处理");
+            else if (ctx.IfMultiplier != 2)
+                _logger.Warn($"模型 {ctx.IfModel} 仅支持 2 倍补帧，本次已按 x2 处理");
+        }
+        if (st.IfRatio < 1) st.IfRatio = 1;
+        st.IfMult = Math.Max(1, (int)Math.Round(st.IfRatio));
+        st.TargetFrames = ctx.Options.Interpolation ? (long)Math.Round(st.TotalFrames * st.IfRatio) : st.TotalFrames;
+        st.OutFps = ctx.Options.Interpolation
+            ? (ctx.Options.TargetFps > 0 && !st.OldNcnnModel ? ctx.Options.TargetFps : ctx.Video.FrameRate * st.IfMult)
+            : ctx.Video.FrameRate;
+        if (ctx.Options.Interpolation && ctx.Options.TargetFps > 0 && !st.OldNcnnModel)
+            _logger.Info($"补帧目标帧率 {ctx.Options.TargetFps:0.##} fps：源 {ctx.Video.FrameRate:0.##} fps → "
+                + $"比例 ≈{st.IfRatio:0.###}×，输出 {st.TargetFrames} 帧（原按倍率 ×{ctx.IfMultiplier} 会是 {ctx.Video.FrameRate * ctx.IfMultiplier:0.##} fps）");
+        st.OutWidth = ctx.Video.Width * (ctx.Options.SuperResolution ? ctx.SrScale : 1);
+        st.OutHeight = ctx.Video.Height * (ctx.Options.SuperResolution ? ctx.SrScale : 1);
+
+        // CPU 处理模式：超分/补帧模型全部用 CPU 推理（NCNN -g -1）
+        st.Cpu = ctx.Settings.UseCpuProcessing;
+        if (st.Cpu)
+            _logger.Warn("已开启 CPU 处理模式：超分/补帧模型将全部使用 CPU 推理，速度会大幅下降");
+
+        // 高负载稳定性：预估磁盘占用，剩余空间过少时提前警告（几万帧 PNG 可能占用数十 GB）
+        try
+        {
+            var drive = new DriveInfo(Path.GetPathRoot(st.TempRoot)!);
+            if (drive.IsReady)
+            {
+                var peakMB = st.TotalFrames * (ctx.Options.SuperResolution || ctx.Options.Interpolation ? 6 : 2);
+                var freeGB = drive.AvailableFreeSpace / 1024.0 / 1024.0 / 1024.0;
+                var needGB = peakMB / 1024.0;
+                if (freeGB < needGB * 0.5)
+                    _logger.Warn($"磁盘剩余空间可能不足：当前 {freeGB:0.0} GB，此任务峰值预估约需 {needGB:0.0} GB，处理中可能因空间不足崩溃");
+            }
+        }
+        catch { }
+
+        st.InputDirForIf = ctx.Options.SuperResolution ? st.SrFrames : st.InputFrames;
+        return st;
+    }
+
+    /// <summary>阶段2 拆帧：外部帧文件夹优先；否则按「拆帧」开关执行。
+    /// 开启 GPU 加速时崩溃/报错 → 自动降级 CPU；仍失败 → 结束全部任务并生成 ERROR 报告。</summary>
+    private async Task<bool> SplitStageAsync(PipelineState st, CancellationToken ct)
+    {
+        var ctx = st.Ctx;
+        var inputFrames = st.InputFrames;
+        var totalFrames = st.TotalFrames;
+
+        // 手动导入外部帧文件夹时，始终复制到 Temp/input_frames，后续统一用 Temp 目录
+        var useExternalFrames = !string.IsNullOrEmpty(ctx.ExternalFramesDir) && Directory.Exists(ctx.ExternalFramesDir);
+        if (useExternalFrames)
+        {
+            _logger.Info($"复制外部帧到临时目录: {ctx.ExternalFramesDir} → {inputFrames}");
+            await CopyFramesAsync(ctx.ExternalFramesDir, inputFrames, ct);
+            _logger.Success($"外部帧已复制到临时目录（{CountFrames(inputFrames)} 帧）");
+            return true;
+        }
+
+        if (!ctx.Options.SplitFrames) return true;
+
+        // 涡轮分段：只拆 [SplitFrom, SplitTo] 帧号区间（0 基闭区间），输出重新从 1 连续编号
+        if (st.SplitFrom >= 0 && st.SplitTo >= st.SplitFrom)
+        {
+            var rangeTier = FfmpegTier.New;   // 每个阶段都先试新版，崩了再逐级降
+            var rangeUseGpu = ctx.Settings.UseGpuAcceleration && TierAllowsGpu(rangeTier);
+            var rangeAccel = "";
+            if (rangeUseGpu)
+            {
+                var accel = DetectUsableHwAccel(ctx, TierExe(ctx, rangeTier));
+                if (accel is null)
+                {
+                    _logger.Warn("硬件解码实际不可用（试解码失败），分段拆帧改用 CPU"
+                        + (string.IsNullOrEmpty(_hwAccelProbeFailReason) ? "" : $"：{_hwAccelProbeFailReason}"));
+                    rangeUseGpu = false;
+                }
+                else
+                {
+                    rangeAccel = accel;
+                    _logger.Info($"分段拆帧：硬件解码后端 {accel}（解码走 GPU，PNG 压缩仍由 CPU 完成）");
+                }
+            }
+            _logger.Info($"开始拆帧（分段 {st.SplitFrom + 1} ~ {st.SplitTo + 1} 帧）: {Path.GetFileName(ctx.InputVideo)}");
+
+            var rangeExit = -1;
+            while (true)
+            {
+                var (rangeArgs, _) = FFmpegCommandBuilder.SplitFramesRange(
+                    ctx.InputVideo, inputFrames, st.SplitFrom, st.SplitTo, rangeUseGpu, rangeAccel);
+                _logger.Command($"ffmpeg {rangeArgs}");
+                // 运行期盯 stderr：驱动静默回退软件解码时，阶段文字要立刻从「GPU加速」改成「CPU处理」
+                var rangeHwFellBack = false;
+                rangeExit = await RunStageWithProgress(ProcessStage.Splitting, SplitStageText(rangeTier, rangeUseGpu), totalFrames,
+                    TierExe(ctx, rangeTier), rangeArgs, ParseFfmpegFrame, inputFrames, ct,
+                    stageLabel: () => SplitStageText(rangeTier, rangeUseGpu && !rangeHwFellBack),
+                    rawErrLine: line =>
+                    {
+                        if (rangeUseGpu && !rangeHwFellBack && ContainsHwAccelFailure(line))
+                        {
+                            rangeHwFellBack = true;
+                            _logger.Warn("硬件解码初始化失败，分段拆帧已回退 CPU 解码（阶段标识同步改为 CPU 处理）");
+                        }
+                    });
+                if (rangeExit == 0)
+                {
+                    break;
+                }
+
+                ct.ThrowIfCancellationRequested();
+                if (!DowngradeTier(ctx, ref rangeTier)) break;
+                rangeUseGpu = ctx.Settings.UseGpuAcceleration && TierAllowsGpu(rangeTier);
+                rangeAccel = "";
+                if (rangeUseGpu)
+                {
+                    var accel = DetectUsableHwAccel(ctx, TierExe(ctx, rangeTier));
+                    if (accel is null) rangeUseGpu = false; else rangeAccel = accel;
+                }
+            }
+
+            if (rangeExit != 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                Fail("拆帧失败（分段：新版、老版本、CPU 处理均无法完成）");
+                return false;
+            }
+            return true;
+        }
+
+        var existing = CountFrames(inputFrames);
+        if (existing >= (st.CachedDedupKept > 0 ? st.CachedDedupKept : totalFrames))
+        {
+            // 上次已拆好帧，跳过拆帧（崩溃重跑不从头）
+            _logger.Info("当前[拆帧]已完成 自动跳过此步骤");
+            return true;
+        }
+
+        // 上次拆帧未完整结束（中断/被停止）：本次自动清理残留并从该步骤重新开始，属正常恢复
+        if (existing > 0)
+        {
+            _logger.Warn("检测到上次拆帧未完整结束留下的中间文件，已自动清理，本次从拆帧重新开始");
+            await CleanPartialOutputAsync(inputFrames, ProcessStage.Splitting, "拆帧中", ct);
+        }
+
+        _logger.Info($"开始拆帧: {Path.GetFileName(ctx.InputVideo)}");
+        // 拆帧不受安全帧率限制（安全帧率只负责 Vulkan 设备丢失/显存溢出自动停止），始终多线程全速
+        var tier = FfmpegTier.New;   // 每个阶段都先试新版，崩了再逐级降
+        var useGpu = ctx.Settings.UseGpuAcceleration && TierAllowsGpu(tier);
+        var hwAccel = "";
+        if (useGpu)
+        {
+            var accel = DetectUsableHwAccel(ctx, TierExe(ctx, tier));
+            if (accel is null)
+            {
+                _logger.Warn("硬件解码实际不可用（试解码失败），本次拆帧改用 CPU"
+                    + (string.IsNullOrEmpty(_hwAccelProbeFailReason) ? "" : $"：{_hwAccelProbeFailReason}"));
+                useGpu = false;
+            }
+            else
+            {
+                hwAccel = accel;
+                _logger.Info($"拆帧：硬件解码后端 {accel}（解码走 GPU，PNG 压缩仍由 CPU 完成）");
+            }
+        }
+
+        var exit = -1;
+        while (true)
+        {
+            var (args, _) = FFmpegCommandBuilder.SplitFrames(ctx.InputVideo, inputFrames, useGpu, hwAccel);
+            _logger.Command($"ffmpeg {args}");
+            // 运行期盯 stderr：驱动静默回退软件解码时，阶段文字要立刻从「GPU加速」改成「CPU处理」
+            var hwFellBack = false;
+            exit = await RunStageWithProgress(ProcessStage.Splitting, SplitStageText(tier, useGpu), totalFrames,
+                TierExe(ctx, tier), args, ParseFfmpegFrame, inputFrames, ct,
+                stageLabel: () => SplitStageText(tier, useGpu && !hwFellBack),
+                rawErrLine: line =>
+                {
+                    if (useGpu && !hwFellBack && ContainsHwAccelFailure(line))
+                    {
+                        hwFellBack = true;
+                        _logger.Warn("硬件解码初始化失败，本次拆帧已回退 CPU 解码（阶段标识同步改为 CPU 处理）");
+                    }
+                });
+            if (exit == 0)
+            {
+                // -hwaccel auto 在硬件解码器不可用时会静默回退软件解码（进程仍正常退出）
+                if (useGpu && hwFellBack)
+                    _logger.Warn("GPU 解码未生效（未检测到可用硬件解码器），本次拆帧实际使用 CPU");
+                break;
+            }
+
+            ct.ThrowIfCancellationRequested();
+            if (!DowngradeTier(ctx, ref tier)) break;
+            useGpu = ctx.Settings.UseGpuAcceleration && TierAllowsGpu(tier);
+            hwAccel = "";
+            if (useGpu)
+            {
+                // 换 exe 后重新试解码：老版本内置的解码器与新版不同，不能直接沿用探测结果
+                var accel = DetectUsableHwAccel(ctx, TierExe(ctx, tier));
+                if (accel is null) useGpu = false; else hwAccel = accel;
+            }
+        }
+
+        if (exit != 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            // 新版 / 老版本 / CPU 都失败 → 结束全部任务，生成 ERROR 报告
+            Fail("拆帧失败（新版、老版本、CPU 处理均无法完成）");
+            return false;
+        }
+        _logger.Success($"拆帧完成: {CountFrames(inputFrames)} 帧");
+        return true;
+    }
+
+    /// <summary>FFmpeg 工具档位：新版 → 老版本 → CPU。每个阶段都从新版开始重试，崩了逐级降。</summary>
+    private enum FfmpegTier { New, Old, Cpu }
+
+    /// <summary>档位对应的 ffmpeg.exe（老版本未部署时回落到新版）。</summary>
+    private static string TierExe(ProcessingContext ctx, FfmpegTier tier)
+        => tier == FfmpegTier.New || !ctx.Tools.FFmpegOldExists ? ctx.Tools.FFmpegExe : ctx.Tools.FFmpegOldExe;
+
+    /// <summary>该档位是否允许硬件加速（CPU 档位强制软件处理）。</summary>
+    private static bool TierAllowsGpu(FfmpegTier tier) => tier != FfmpegTier.Cpu;
+
+    /// <summary>崩溃后降档：新版 →（开关允许时）老版本 → CPU。返回 false 表示已无档可降（本例失败）。</summary>
+    private bool DowngradeTier(ProcessingContext ctx, ref FfmpegTier tier)
+    {
+        switch (tier)
+        {
+            case FfmpegTier.New:
+                if (ShouldTryOldFfmpeg(ctx))
+                {
+                    tier = FfmpegTier.Old;
+                    _logger.Warn("新版 FFmpeg 崩溃，本例改用老版本 FFmpeg 重试");
+                }
+                else
+                {
+                    tier = FfmpegTier.Cpu;
+                    _logger.Warn("新版 FFmpeg 崩溃，本例改用 CPU 处理");
+                }
+                return true;
+            case FfmpegTier.Old:
+                tier = FfmpegTier.Cpu;
+                _logger.Warn("老版本 FFmpeg 仍崩溃，本例改用 CPU 处理");
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>拆帧阶段文案：永远反映真实档位与后端。</summary>
+    private static string SplitStageText(FfmpegTier tier, bool gpu)
+        => tier == FfmpegTier.Old ? "拆帧中(老版本)" : (gpu ? "拆帧中(GPU加速)" : "拆帧中(CPU处理)");
+
+    /// <summary>合并阶段文案：永远反映真实档位与后端。</summary>
+    private static string MergeStageText(FfmpegTier tier, bool hw)
+        => tier == FfmpegTier.Old ? "合并中(老版本)" : (hw ? "合并中(GPU加速)" : "合并中(CPU处理)");
+
+    /// <summary>是否应改用老版本 FFmpeg 重试（拆帧/合并/HDR/音频嵌入都走这里）：
+    /// 用户勾选了「崩溃时尝试使用老版本处理架构」且老版本已部署。</summary>
+    private bool ShouldTryOldFfmpeg(ProcessingContext ctx)
+    {
+        if (!ctx.Settings.TryOldFfmpegOnCrash) return false;
+        return CanFallbackToOldFfmpeg(ctx);
+    }
+
+    /// <summary>老版本 FFmpeg 是否已部署（未部署时告警一次，无法兜底）。</summary>
+    private bool CanFallbackToOldFfmpeg(ProcessingContext ctx)
+    {
+        if (ctx.Tools.FFmpegOldExists) return true;
+        _logger.Warn("未找到 Tools/FFmpeg-Old/bin/ffmpeg.exe，无法用老版本 FFmpeg 兜底重试");
+        return false;
+    }
+
+    /// <summary>是否应改用老版本 NVEncC 重试（同一开关，7.74 兜底）。</summary>
+    private bool ShouldTryOldNvenc(ProcessingContext ctx)
+    {
+        if (!ctx.Settings.TryOldFfmpegOnCrash) return false;
+        if (ctx.Tools.NvEncOldExists) return true;
+        _logger.Warn("已勾选「崩溃时尝试使用老版本处理架构」，但未找到 Tools/NVEncC-Old/NVEncC64.exe，无法重试");
+        return false;
+    }
+
+    // ===================== 转场保护（PySceneDetect） =====================
+
+    /// <summary>用 PySceneDetect 扫一遍源视频的剪切点，结果缓存到临时目录（续跑直接复用）。
+    /// 失败/未部署只告警，不影响正常补帧出片。</summary>
+    private async Task DetectSceneCutsAsync(PipelineState st, CancellationToken ct)
+    {
+        var ctx = st.Ctx;
+        if (!ctx.Tools.SceneDetectReady)
+        {
+            _logger.Warn("转场保护已开启，但未找到 Tools/SceneDetect/scene_detect.py 或 python-torch 解释器，本次跳过转场检测");
+            return;
+        }
+
+        var cutJson = Path.Combine(st.TempRoot, "scene_cuts.json");
+        try
+        {
+            if (File.Exists(cutJson))
+            {
+                st.SceneCuts = ParseSceneCuts(cutJson);
+                _logger.Info($"转场保护：复用已有检测结果（{st.SceneCuts.Count} 个剪切点）");
+                return;
+            }
+
+            ProgressChanged?.Invoke(new ProcessProgress
+            {
+                Stage = ProcessStage.Interpolating,
+                StageText = "转场检测中（PySceneDetect）",
+                CustomDetail = "转场检测中（PySceneDetect）",   // 明细里不再重复阶段百分比，百分比只由进度条/总进度体现
+                Current = 0,
+                Total = 100,
+                PercentDisplay = true
+            });
+            _logger.Info("转场检测开始（PySceneDetect ContentDetector）");
+
+            var args = $"\"{ctx.Tools.SceneDetectScript}\" \"{ctx.InputVideo}\" \"{cutJson}\" 0 -1 27";
+            _logger.Command($"python {args}");
+            // 脚本按 EASY4K_PROGRESS <已处理帧> <总帧> 输出进度，这里实时推给进度条
+            var exit = await _runner.RunAsync(ctx.Tools.TorchPythonExe, args,
+                onLine: line =>
+                {
+                    var m = System.Text.RegularExpressions.Regex.Match(line, @"EASY4K_PROGRESS\s+(\d+)\s+(\d+)");
+                    if (!m.Success) return;
+                    if (!long.TryParse(m.Groups[1].Value, out var done)) return;
+                    if (!long.TryParse(m.Groups[2].Value, out var total)) return;
+                    // PercentDisplay=true 时 Current 被当作百分比直接显示，必须换算成 0~100
+                    var pct = total > 0 ? (long)Math.Round(done * 100.0 / total) : 0;
+                    ProgressChanged?.Invoke(new ProcessProgress
+                    {
+                        Stage = ProcessStage.Interpolating,
+                        StageText = "转场检测中（PySceneDetect）",
+                        CustomDetail = "转场检测中（PySceneDetect）",
+                        Current = Math.Clamp(pct, 0, 100),
+                        Total = 100,
+                        PercentDisplay = true
+                    });
+                }, ct: ct);
+            if (exit != 0 || !File.Exists(cutJson))
+            {
+                _logger.Warn($"转场检测失败（exit={exit}），本次不做转场保护");
+                return;
+            }
+
+            st.SceneCuts = ParseSceneCuts(cutJson);
+            _logger.Success($"转场检测完成：{st.SceneCuts.Count} 个剪切点");
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warn($"转场检测异常，本次不做转场保护：{ex.Message}");
+        }
+    }
+
+    private static List<int> ParseSceneCuts(string jsonPath)
+    {
+        var list = new List<int>();
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(jsonPath));
+            if (!doc.RootElement.TryGetProperty("cuts", out var arr)) return list;
+            foreach (var item in arr.EnumerateArray())
+                if (item.TryGetInt32(out var n) && n > 0) list.Add(n);
+        }
+        catch { }
+        return list;
+    }
+
+    /// <summary>转场处不插值：把每个剪切点前面的插值帧替换成上一帧的复制，消除跨镜头混合鬼影。
+    /// 帧数、时长、帧率都不变；不在展开目录里时先用硬链接建一个工作目录，避免污染超分原始帧。</summary>
+    private async Task<string> ApplySceneGuardAsync(ProcessingContext ctx, PipelineState st,
+        string framesDir, bool framesDirIsScratch, CancellationToken ct)
+    {
+        var cuts = st.SceneCuts;
+        if (cuts.Count == 0 || st.IfRatio < 1e-6) return framesDir;
+
+        var totalOut = st.ExpectedFrames > 0 ? st.ExpectedFrames : CountFrames(framesDir);
+        if (totalOut <= 1) return framesDir;
+
+        var workDir = framesDir;
+        if (!framesDirIsScratch)
+        {
+            workDir = Path.Combine(st.TempRoot, "scene_guard_frames").Replace('\\', '/');
+            try
+            {
+                if (Directory.Exists(workDir)) Directory.Delete(workDir, true);
+            }
+            catch { }
+            Directory.CreateDirectory(workDir);
+
+            var files = Directory.GetFiles(framesDir, "*.png");
+            Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+            await Task.Run(() =>
+            {
+                foreach (var f in files)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    HardLinkOrCopy(f, Path.Combine(workDir, Path.GetFileName(f)));
+                }
+            }, ct);
+        }
+
+        var ratio = st.IfRatio;
+        var replaced = 0;
+        var srcFrames = st.TotalFrames;
+        await Task.Run(() =>
+        {
+            foreach (var c in cuts)
+            {
+                ct.ThrowIfCancellationRequested();
+                var s = c + 1;                       // 1 基：新镜头第一帧
+                if (s < 2 || s > srcFrames) continue;
+                var q0 = (long)Math.Round((s - 2) * ratio) + 1;   // 上一镜头最后一帧的输出序号
+                var q1 = (long)Math.Round((s - 1) * ratio);       // 下一镜头第一帧之前
+                if (q0 < 1 || q0 > totalOut) continue;
+                if (q1 > totalOut) q1 = totalOut;
+                var srcFile = Path.Combine(workDir, $"{q0:D8}.png");
+                if (!File.Exists(srcFile)) continue;
+                for (var q = q0 + 1; q <= q1; q++)
+                {
+                    var dst = Path.Combine(workDir, $"{q:D8}.png");
+                    // 必须"先删再链"：展开目录里的帧是硬链接，直接覆盖会改到共享的源帧数据
+                    try { HardLinkOrCopy(srcFile, dst); replaced++; } catch { }
+                }
+            }
+        }, ct);
+
+        _logger.Success($"转场保护：{cuts.Count} 个剪切点，替换 {replaced} 个插值帧（{workDir}）");
+        return workDir;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern bool CreateHardLink(string lpFileName, string lpExistingFileName, IntPtr lpSecurityAttributes);
+
+    /// <summary>优先建硬链接（同卷瞬间完成、零额外空间），不支持时回退普通复制。</summary>
+    private static void HardLinkOrCopy(string src, string dst)
+    {
+        try
+        {
+            if (File.Exists(dst)) File.Delete(dst);
+            if (CreateHardLink(dst, src, IntPtr.Zero)) return;
+        }
+        catch { }
+        CopyWithRetry(src, dst);
+    }
+
+
+    /// <summary>分段涡轮里帧去重的全局闸门：ONNX/DirectML 会话在多线程同时创建/推理会直接把进程带崩
+    /// （无托管异常、不写失败报告），所以多段并行时去重判决逐个段串行执行，SR/IF 仍然并行。</summary>
+    private static readonly SemaphoreSlim DedupGate = new(1, 1);
+
+    /// <summary>内部优化：涡轮块级流水 + 帧去重（原阶段1.5），并计算超分/补帧的目标帧数。</summary>
+    private async Task RunTurboAndDedupAsync(PipelineState st, CancellationToken ct)
+    {
+        var ctx = st.Ctx;
+        var tempRoot = st.TempRoot;
+        var inputFrames = st.InputFrames;
+        var srFrames = st.SrFrames;
+        var ifFrames = st.IfFrames;
+        var totalFrames = st.TotalFrames;
+        var ifMult = st.IfMult;
+        var cpu = st.Cpu;
+
+        // ============ 块级涡轮流水（CPU 侧按块判决/准备 与 GPU 侧超分/补帧 同时进行） ============
+        // 分段涡轮的子流水线里不再套块级涡轮：段已经并行，再嵌套一层只会互相抢资源
+        var turboDedupKept = 0;
+        if (ctx.Settings.TurboMode && !st.Segmented)
+        {
+            if (TurboSupported(ctx))
+            {
+                var (turboOk, dedupKeptInTurbo) = await RunTurboBlocksAsync(st, cpu, ct);
+                if (turboOk)
+                {
+                    turboDedupKept = dedupKeptInTurbo;
+                    _logger.Success("[涡轮] 块级流水已产出全部帧，后续阶段将自动跳过并进入合并");
+                }
+                else
+                {
+                    _logger.Warn("[涡轮] 块级流水未完成，本次回退为逐阶段串行处理");
+                }
+            }
+            else
+            {
+                _logger.Warn("[涡轮] 当前组合暂不支持块级流水（需勾选超分或补帧、补帧使用 NCNN 引擎），本次按逐阶段串行处理");
+            }
+        }
+
+        // ============ 阶段1.5：帧去重（高级模式开关） ============
+        // 剔除与上一帧重复的画面 → 超分/补帧只算保留帧；合并前按 map 回填，时长与帧率不变。
+        st.DedupKept = turboDedupKept; // 0 = 未启用/未生效
+        if (ctx.Settings.DedupEnabled && st.DedupKept == 0)
+        {
+            if (st.Segmented)
+            {
+                // 分段并行时去重判决串行化：AI 模型会话不能多线程同时用（会硬崩）
+                await DedupGate.WaitAsync(ct);
+                try { st.DedupKept = await RunDedupAsync(ctx, tempRoot, inputFrames, totalFrames, ct); }
+                finally { DedupGate.Release(); }
+            }
+            else
+            {
+                st.DedupKept = await RunDedupAsync(ctx, tempRoot, inputFrames, totalFrames, ct);
+            }
+        }
+
+        var dedupKept = st.DedupKept;
+        // 去重生效后：勾选补帧时超分仍处理全部源帧（去重只省补帧的算力），未勾选补帧时超分只算保留帧；
+        // 补帧始终只算保留帧（= 回填前的数量）。
+        st.SrTarget = dedupKept > 0 && !ctx.Options.Interpolation ? dedupKept : totalFrames;
+        st.IfTarget = dedupKept > 0 ? (long)dedupKept * ifMult : st.TargetFrames;
+    }
+
+    // ===================== 涡轮分段（N 条完整流水线并行） =====================
+
+    /// <summary>分段涡轮适用性：需要真正拆帧（外部帧文件夹没有视频可切），且帧数够分。</summary>
+    private static bool CanSegmentTurbo(ProcessingContext ctx, PipelineState st)
+    {
+        if (!ctx.Settings.TurboMode) return false;
+        if (Math.Clamp(ctx.Settings.TurboSegments, 1, 5) <= 1) return false;
+        if (!ctx.Options.SplitFrames) return false;
+        if (!string.IsNullOrEmpty(ctx.ExternalFramesDir) && Directory.Exists(ctx.ExternalFramesDir)) return false;
+        return st.TotalFrames >= 8;
+    }
+
+    /// <summary>把总帧数按段均分（余数分给前几段），返回各段的 [起, 止] 帧号（0 基闭区间）。</summary>
+    private static List<(long From, long To)> BuildFrameRanges(long total, int segments)
+    {
+        var ranges = new List<(long From, long To)>(segments);
+        var size = total / segments;
+        var extra = total % segments;
+        long start = 0;
+        for (var i = 0; i < segments; i++)
+        {
+            var len = size + (i < extra ? 1 : 0);
+            ranges.Add((start, start + len - 1));
+            start += len;
+        }
+        return ranges;
+    }
+
+    /// <summary>按文件名里的数字排序（帧号可能不连续，不能靠字符串排序）。</summary>
+    private static List<string> SortFramesByNumber(string dir)
+    {
+        var list = new List<(long Number, string Path)>();
+        if (Directory.Exists(dir))
+        {
+            foreach (var file in Directory.EnumerateFiles(dir, "*.png"))
+            {
+                var name = Path.GetFileNameWithoutExtension(file);
+                list.Add((long.TryParse(name, out var n) ? n : long.MaxValue, file));
+            }
+        }
+        list.Sort((a, b) => a.Number.CompareTo(b.Number));
+        return list.Select(x => x.Path).ToList();
+    }
+
+    /// <summary>分段涡轮主流程：并行跑 N 条完整流水线（各自独立的临时目录），
+    /// 全部完成后按段顺序把成品帧汇总到主目录并重新编号，再由主流程统一做 AudioSR / 合并 / HDR / 审查。</summary>
+    private async Task<bool> RunSegmentedTurboAsync(PipelineState main, CancellationToken ct)
+    {
+        var ctx = main.Ctx;
+        var segments = Math.Clamp(ctx.Settings.TurboSegments, 2, 5);
+        var total = main.TotalFrames;
+        var ranges = BuildFrameRanges(total, segments);
+
+        _logger.Info($"[分段涡轮] 启用 {segments} 段并行流水线："
+            + string.Join(" / ", ranges.Select(r => $"第 {r.From + 1}-{r.To + 1} 帧")) + $"（共 {total} 帧）");
+        if (ctx.Settings.DedupEnabled)
+            _logger.Info("[分段涡轮] 帧去重按段独立执行：段首帧不和上一段末帧比较（跨段边界不做判重）");
+
+        // 清空上次的分段目录与汇总目录，避免残留帧混进本次结果
+        var turboRoot = Path.Combine(main.TempRoot, "turbo").Replace('\\', '/');
+        var targetDir = ctx.Options.Interpolation ? main.IfFrames
+            : ctx.Options.SuperResolution ? main.SrFrames : main.InputFrames;
+        foreach (var dir in new[] { turboRoot, targetDir })
+        {
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+            Directory.CreateDirectory(dir);
+        }
+
+        var progress = new double[segments];
+        var stageTexts = new string[segments];
+        var outputs = new string?[segments];
+        var errors = new string?[segments];
+        var segmentStages = BuildSegmentStages(ctx.Options);
+
+        var tasks = new List<Task>(segments);
+        for (var i = 0; i < segments; i++)
+        {
+            var index = i;
+            var range = ranges[i];
+            tasks.Add(Task.Run(async () =>
+            {
+                try
+                {
+                    var segRoot = Path.Combine(turboRoot, $"seg{index + 1}").Replace('\\', '/');
+                    var subCtx = new ProcessingContext
+                    {
+                        InputVideo = ctx.InputVideo,
+                        TempRoot = segRoot,
+                        OutputRoot = ctx.OutputRoot,
+                        ExternalFramesDir = "",
+                        Video = ctx.Video,
+                        Options = ctx.Options,
+                        SrModel = ctx.SrModel,
+                        SrScale = ctx.SrScale,
+                        IfModel = ctx.IfModel,
+                        IfDriverKey = ctx.IfDriverKey,
+                        IfMultiplier = ctx.IfMultiplier,
+                        HdrSaturation = ctx.HdrSaturation,
+                        HdrContrast = ctx.HdrContrast,
+                        Gpu = ctx.Gpu,
+                        Settings = ctx.Settings,
+                        Tools = ctx.Tools,
+                        OnSrCpuIncompatibleAsync = ctx.OnSrCpuIncompatibleAsync
+                    };
+
+                    var orch = new ProcessingOrchestrator(_runner, _logger);
+                    orch.ProgressChanged += p =>
+                    {
+                        stageTexts[index] = p.StageText;
+                        // 段内进度按"已完成阶段数 + 当前阶段比例"折算，再做只增不减钳制：
+                        // 阶段切换时阶段内进度会从 100% 掉回 0%，直接平均会让总进度倒退（数字抽搐）
+                        progress[index] = Math.Max(progress[index], SegmentProgressOf(segmentStages, p));
+                        ReportSegmentedProgress(segments, index, p, progress, stageTexts, total);
+                    };
+
+                    var seg = orch.PreparePipeline(subCtx);
+                    if (seg is null) { errors[index] = "初始化失败"; return; }
+
+                    seg.Segmented = true;
+                    seg.SplitFrom = range.From;
+                    seg.SplitTo = range.To;
+                    seg.TotalFrames = range.To - range.From + 1;
+                    seg.TargetFrames = ctx.Options.Interpolation
+                        ? (long)Math.Round(seg.TotalFrames * seg.IfRatio)
+                        : seg.TotalFrames;
+
+                    if (!await orch.SplitStageAsync(seg, ct)) { errors[index] = "拆帧失败"; return; }
+                    await orch.RunTurboAndDedupAsync(seg, ct);
+                    if (!await orch.SuperResStageAsync(seg, ct)) { errors[index] = "超分失败"; return; }
+                    if (!await orch.InterpolationStageAsync(seg, ct)) { errors[index] = "补帧失败"; return; }
+
+                    outputs[index] = await orch.CollectSegmentFramesAsync(seg, ct);
+                    if (outputs[index] is null) errors[index] = "帧回填失败";
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { errors[index] = ex.Message; }
+                finally { progress[index] = 1; }
+            }, ct));
+        }
+
+        try { await Task.WhenAll(tasks); }
+        catch (OperationCanceledException) { throw; }
+
+        var failed = errors.FirstOrDefault(e => e is not null);
+        if (failed is not null)
+        {
+            Fail($"分段流水线处理失败：{failed}");
+            return false;
+        }
+
+        // 按段顺序汇总：第 1 段 → 第 N 段，重新编号成 1..M 的连续序列
+        long seq = 0;
+        for (var i = 0; i < segments; i++)
+        {
+            foreach (var file in SortFramesByNumber(outputs[i]!))
+            {
+                seq++;
+                var dest = Path.Combine(targetDir, $"{seq:00000000}.png").Replace('\\', '/');
+                try
+                {
+                    if (File.Exists(dest)) File.Delete(dest);
+                    File.Move(file, dest);
+                }
+                catch
+                {
+                    try { File.Copy(file, dest, true); } catch (Exception ex) { _logger.Warn($"分段帧汇总失败：{ex.Message}"); }
+                }
+            }
+        }
+
+        if (seq == 0)
+        {
+            Fail("分段流水线没有产出任何帧");
+            return false;
+        }
+
+        _logger.Success($"[分段涡轮] {segments} 段全部完成，已按顺序汇总 {seq} 帧到 {targetDir}");
+        main.TargetFrames = seq;
+        // 不补帧时：汇总帧数就是成片帧数；补帧时按比例反推源帧数，供合并阶段校验
+        main.TotalFrames = ctx.Options.Interpolation
+            ? (long)Math.Round(seq / Math.Max(1.0, main.IfRatio))
+            : seq;
+        return true;
+    }
+
+    /// <summary>把某一段流水线的成品帧收拢到一个目录：开了帧去重就先按索引表回填成完整序列。</summary>
+    private async Task<string?> CollectSegmentFramesAsync(PipelineState seg, CancellationToken ct)
+    {
+        var framesDir = seg.Ctx.Options.Interpolation ? seg.IfFrames
+            : seg.Ctx.Options.SuperResolution ? seg.SrFrames : seg.InputFrames;
+
+        if (seg.DedupKept <= 0) return framesDir;
+
+        var expanded = Path.Combine(seg.TempRoot, "expanded_frames").Replace('\\', '/');
+        var ratio = seg.Ctx.Options.Interpolation ? seg.IfRatio : 1.0;
+        var block = seg.Ctx.Options.Interpolation ? seg.IfMult : 1;
+        var selfDir = seg.Ctx.Options.Interpolation
+            ? (seg.Ctx.Options.SuperResolution ? seg.SrFrames : seg.InputFrames)
+            : null;
+
+        var ok = await TryExpandDedupFramesAsync(seg.TempRoot, framesDir, expanded, ratio, block, ct, selfDir);
+        return ok ? expanded : null;
+    }
+
+    /// <summary>分段并行进度：总进度按各段进度平均，预览区每段一格。
+    /// 明细里不放百分比（右侧已有唯一的百分比），阶段文字按"当前有几段在做什么"汇总，
+    /// 只在段真正换阶段时才变化，避免进度文字一直抖动。</summary>
+    private void ReportSegmentedProgress(int segments, int index, ProcessProgress segmentProgress,
+        double[] progress, string[] stageTexts, long totalFrames)
+    {
+        double overall = 0;
+        for (var i = 0; i < segments; i++) overall += progress[i];
+        overall /= segments;
+
+        var pipelines = new List<PipelineFramePreview>(segments);
+        for (var i = 0; i < segments; i++)
+        {
+            pipelines.Add(new PipelineFramePreview
+            {
+                Key = $"seg{i + 1}",
+                Label = $"分段 {i + 1}/{segments}（{(string.IsNullOrEmpty(stageTexts[i]) ? "准备中" : stageTexts[i])}）",
+                FramePath = i == index ? segmentProgress.LatestFramePath : "",
+                FrameIndex = 0
+            });
+        }
+
+        var stageTally = string.Join(" · ", stageTexts
+            .Where(t => !string.IsNullOrEmpty(t))
+            .GroupBy(t => t)
+            .Select(g => g.Count() > 1 ? $"{g.Key} ×{g.Count()}" : g.Key));
+
+        ProgressChanged?.Invoke(new ProcessProgress
+        {
+            // 用固定的 SuperRes 作为阶段值：段与段各自在不同阶段上报，若直接透传，
+            // 主界面会误以为"阶段不停切换"而反复重置剩余时间估算（文字一闪一闪）
+            Stage = ProcessStage.SuperRes,
+            StageText = $"分段并行 {segments} 段",
+            Current = (long)Math.Round(overall * 1000),
+            Total = 1000,
+            PercentDisplay = true,
+            CustomDetail = string.IsNullOrEmpty(stageTally)
+                ? $"分段并行 {segments} 段  ·  共 {totalFrames} 帧"
+                : $"分段并行 {segments} 段  ·  {stageTally}",
+            LatestFramePath = segmentProgress.LatestFramePath,
+            Pipelines = pipelines
+        });
+    }
+
+    /// <summary>分段子流水线实际经过的阶段顺序（帧去重也上报 Splitting，与拆帧合并计一段）。</summary>
+    private static List<ProcessStage> BuildSegmentStages(ProcessingOptions options)
+    {
+        var stages = new List<ProcessStage> { ProcessStage.Splitting };
+        if (options.SuperResolution) stages.Add(ProcessStage.SuperRes);
+        if (options.Interpolation) stages.Add(ProcessStage.Interpolating);
+        return stages;
+    }
+
+    /// <summary>把"当前阶段内的进度"折算成"整条段流水线的进度"（0~1）。
+    /// 阶段切换时阶段内进度会从 100% 回到 0%，各段直接平均会让总进度倒退，所以按阶段权重折算，
+    /// 调用方再按只增不减钳制。</summary>
+    private static double SegmentProgressOf(List<ProcessStage> stages, ProcessProgress p)
+    {
+        var idx = Math.Max(0, stages.IndexOf(p.Stage));
+        var frac = p.Total > 0 ? Math.Clamp((double)p.Current / p.Total, 0, 1) : 0;
+        return (idx + frac) / stages.Count;
+    }
+
+    /// <summary>阶段3 超分：读取拆分帧 → 模型 → 倍率 → 构建启动代码 → 超分中。
+    /// CPU 模式下模型不支持 CPU 时询问用户（改用 GPU / 更换模型）。</summary>
+    private async Task<bool> SuperResStageAsync(PipelineState st, CancellationToken ct)
+    {
+        var ctx = st.Ctx;
+        var inputFrames = st.InputFrames;
+        var srFrames = st.SrFrames;
+        var totalFrames = st.TotalFrames;
+        var cpu = st.Cpu;
+        var srTarget = st.SrTarget;
+
+        if (!ctx.Options.SuperResolution) return true;
+
+        var existingSr = CountFrames(srFrames);
+        if (existingSr >= srTarget)
+        {
+            // 上次已超分完成，跳过（崩溃重跑不从头）
+            _logger.Info("当前[超分]已完成 自动跳过此步骤");
+            return true;
+        }
+
+        // 上次超分未完整结束（中断/被停止）：本次自动清理残留并从该步骤重新开始，属正常恢复
+        if (existingSr > 0)
+        {
+            _logger.Warn("检测到上次超分未完整结束留下的中间文件，已自动清理，本次从超分重新开始");
+            await CleanPartialOutputAsync(srFrames, ProcessStage.SuperRes, "超分中", ct);
+        }
+
+        // 读取拆分帧
+        _logger.Info($"读取拆分帧: {CountFrames(inputFrames)} 帧（{inputFrames}）");
+        var safe = ctx.Settings.UseSafeFrameRate;
+        // 线程由滑块控制（超分：解码线程 + 编码线程分开）；安全帧率只负责"致命 GPU 错误自动停止"
+        var jThreads = $"{Math.Clamp(ctx.Settings.SrDecodeThreads, 1, 32)}:{Math.Clamp(ctx.Settings.SrEncodeThreads, 1, 32)}:{Math.Clamp(ctx.Settings.SrEncodeThreads, 1, 32)}";
+        _fatalGpuError = false;
+        // 模型属于哪个超分算法，就用那个算法的引擎（Real-ESRGAN / Real-CUGAN / RealSR / SRMD / waifu2x）
+        var srExe = SrCommandBuilder.ExeFor(ctx.Tools, ctx.SrModel);
+        if (string.IsNullOrEmpty(srExe) || !File.Exists(srExe))
+        {
+            Fail($"超分模型 {ctx.SrModel} 对应的引擎没有部署（{Path.GetFileName(srExe)}）");
+            return false;
+        }
+        // 读取超分模型 / 倍率
+        _logger.Info($"读取超分模型: {ctx.SrModel}（倍率 ×{ctx.SrScale}，线程 {jThreads}）");
+        var stageText = cpu ? "超分中(CPU)" : "超分中";
+        _logger.Info(cpu
+            ? $"超分开始(CPU): 模型 {ctx.SrModel} ×{ctx.SrScale}（线程 {jThreads}）"
+            : $"超分开始: 模型 {ctx.SrModel} ×{ctx.SrScale}（线程 {jThreads}）");
+        var args = SrCommandBuilder.Build(ctx.SrModel, ctx.SrScale, inputFrames, srFrames, jThreads, ctx.Settings.LowerQualityForVram, useCpu: cpu,
+            gpuIndex: Math.Clamp(ctx.Settings.PipelineGpuIndex, 0, 8));
+        _logger.Command($"{Path.GetFileName(srExe)} {args}");
+        var exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, stageText, totalFrames,
+            srExe, args, srFrames, ct);
+
+        // CPU 模式遇到不支持 CPU 的超分模型：按设计提示用户 →「改为使用GPU」或「更换其他模型」。
+        // 无人值守场景（处理前测试/自动测试）没有回调，保持历史行为自动升级 GPU。
+        if (exit != 0 && cpu && _lastStderr.Contains("invalid gpu device", StringComparison.OrdinalIgnoreCase))
+        {
+            var useGpu = true;
+            if (ctx.OnSrCpuIncompatibleAsync is not null)
+                useGpu = await ctx.OnSrCpuIncompatibleAsync(ctx.SrModel);
+            else
+                _logger.Warn($"超分模型 {ctx.SrModel} 不支持 CPU 推理（realesrgan-ncnn 无 CPU 后端），自动改为 GPU 处理");
+
+            if (!useGpu)
+            {
+                // 「选择更换其他模型」→ 结束全部任务，不产 ERROR 报告
+                SuppressFailureReport = true;
+                Fail("已停止：当前超分模型不支持 CPU 处理，请更换其他模型后重试");
+                return false;
+            }
+
+            _logger.Warn($"超分模型 {ctx.SrModel} 不支持 CPU 推理，已改为 GPU 处理");
+            await CleanPartialOutputAsync(srFrames, ProcessStage.SuperRes, "超分中(CPU)", ct);
+            var gpuArgs = SrCommandBuilder.Build(ctx.SrModel, ctx.SrScale, inputFrames, srFrames, jThreads, ctx.Settings.LowerQualityForVram, useCpu: false,
+                gpuIndex: Math.Clamp(ctx.Settings.PipelineGpuIndex, 0, 8));
+            _logger.Command($"{Path.GetFileName(srExe)} {gpuArgs}（CPU 升级 GPU）");
+            exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中(升级GPU)", totalFrames,
+                srExe, gpuArgs, srFrames, ct);
+        }
+
+        if (exit != 0)
+        {
+            // 用户停止 → 抛取消异常由上层显示"处理已停止"；工具异常 → 本次停止，下次启动清理重跑
+            ct.ThrowIfCancellationRequested();
+            // 安全帧率开启：检测到 Vulkan 设备丢失/显存溢出 → 自动停止
+            if (safe && _fatalGpuError)
+            {
+                Fail("已按安全帧率自动停止：检测到 Vulkan 设备丢失或显存溢出");
+                return false;
+            }
+            // 安全帧率未开启：显卡错误不停止，自动降级为单线程重试一次
+            if (_fatalGpuError)
+            {
+                _logger.Warn("检测到显卡错误（Vulkan 设备丢失/显存溢出），自动降级为单线程重试本次超分");
+                await CleanPartialOutputAsync(srFrames, ProcessStage.SuperRes, "超分中(降级)", ct);
+                var retryArgs = SrCommandBuilder.Build(ctx.SrModel, ctx.SrScale, inputFrames, srFrames, "1:1:1", ctx.Settings.LowerQualityForVram, useCpu: cpu,
+                    gpuIndex: Math.Clamp(ctx.Settings.PipelineGpuIndex, 0, 8));
+                _logger.Command($"{Path.GetFileName(srExe)} {retryArgs}（降级单线程重试）");
+                exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes, "超分中(降级)", totalFrames,
+                    srExe, retryArgs, srFrames, ct);
+                if (exit != 0)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    Fail("超分失败");
+                    return false;
+                }
+            }
+            else
+            {
+                Fail("超分失败");
+                return false;
+            }
+        }
+        _logger.Success($"超分完成: {CountFrames(srFrames)} 帧");
+        return true;
+    }
+
+    /// <summary>阶段4 补帧：读取超分帧 → NCNN 线程 → UHD 降级模式 → CPU 检测 → 补帧中。
+    /// 失败时：开启安全帧率 → 自动停止并提示；未开启 → 线程改为 1:1:1 并开 UHD 省显存重试。</summary>
+    private async Task<bool> InterpolationStageAsync(PipelineState st, CancellationToken ct)
+    {
+        var ctx = st.Ctx;
+        var tempRoot = st.TempRoot;
+        var inputFrames = st.InputFrames;
+        var srFrames = st.SrFrames;
+        var ifFrames = st.IfFrames;
+        var ifTarget = st.IfTarget;
+        var ifRatio = st.IfRatio;
+        var outFps = st.OutFps;
+        var dedupKept = st.DedupKept;
+        var cpu = st.Cpu;
+
+        if (!ctx.Options.Interpolation) return true;
+
+        var existingIf = CountFrames(ifFrames);
+        if (existingIf >= ifTarget)
+        {
+            // 上次已补帧完成，跳过（崩溃重跑不从头）
+            _logger.Info("当前[补帧]已完成 自动跳过此步骤");
+            return true;
+        }
+
+        // 上次补帧未完整结束（中断/被停止）：本次自动清理残留并从该步骤重新开始，属正常恢复
+        if (existingIf > 0)
+        {
+            _logger.Warn("检测到上次补帧未完整结束留下的中间文件，已自动清理，本次从补帧重新开始");
+            await CleanPartialOutputAsync(ifFrames, ProcessStage.Interpolating, "补帧中", ct);
+        }
+
+        // 读取超分帧
+        _logger.Info($"读取超分帧: {CountFrames(inputFrames)} 帧");
+
+        // 去重生效（勾选补帧）时：超分产物是全部源帧，补帧只能喂"保留帧"子集
+        if (dedupKept > 0)
+        {
+            var srcForIf = ctx.Options.SuperResolution ? srFrames : inputFrames;
+            var keptDir = await EnsureKeptSubsetAsync(tempRoot, srcForIf,
+                Path.Combine(tempRoot, "if_input_kept"), ct);
+            if (keptDir is null)
+            {
+                Fail("帧去重：准备补帧输入子集失败（保留帧与超分产物对不上号，或目录被占用）");
+                return false;
+            }
+            st.InputDirForIf = keptDir;
+        }
+        var inputDirForIf = st.InputDirForIf;
+
+        // ===== 补帧：rife-ncnn-vulkan（ncnn + Vulkan）或 PyTorch 轨 =====
+        var safe = ctx.Settings.UseSafeFrameRate;
+        // 读取 NCNN 处理线程（load:proc:save）；安全帧率只负责"致命 GPU 错误自动停止"
+        var jThreads = $"{Math.Clamp(ctx.Settings.IfDecodeThreads, 1, 32)}:{Math.Clamp(ctx.Settings.IfEncodeThreads, 1, 32)}:{Math.Clamp(ctx.Settings.IfEncodeThreads, 1, 32)}";
+        _fatalGpuError = false;
+        _logger.Info($"补帧开始: 模型 {ctx.IfModel} ×{ifRatio:0.###} ({ctx.Video.FrameRate:0.##}→{outFps:0.##}fps)（线程 {jThreads}，UHD 省显存 {(ctx.Settings.LowerQualityForVram ? "开" : "关")}）");
+        // ncnn + PyTorch 双轨：RIFE / DRBA / GMFSS / GIMM-VFI 上游只有 PyTorch 实现，没有 ncnn 版本
+        var useTorch = ctx.IfDriverKey.Length > 0;
+        string vfiExe, args;
+        if (useTorch)
+        {
+            // 不是 NCNN → 跳过 UHD 模式检测、跳过 NCNN 线程检测，直接构建补帧启动代码
+            if (cpu)
+                _logger.Warn($"CPU 处理模式对 PyTorch 轨补帧族不生效（{ctx.IfModel} 上游只有 CUDA 实现），本次仍走 GPU");
+            vfiExe = ctx.Tools.TorchPythonExe;
+            if (ctx.Settings.UseSafeFrameRate && ctx.Settings.UseCpuProcessing == false)
+                _logger.Info("PyTorch 轨补帧：安全帧率无额外作用（该轨出错即停，不做降级重试）；场景切换检测默认关闭以免运动中插物理帧");
+            args = VfiTorchCommandBuilder.Build(ctx.Tools.VfiDriverScript, ctx.IfDriverKey, inputDirForIf, ifFrames,
+                ifTarget, VfiTorchCommandBuilder.ScaleFor(ctx.Video.Width), sceneDetect: false,
+                threads: Math.Clamp(ctx.Settings.ThreadCount, 1, 32), fp16: ctx.Settings.LowerQualityForVram);
+            _logger.Command($"python-torch {args}");
+        }
+        else
+        {
+            vfiExe = ctx.Tools.RifeExe;
+            args = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, ifTarget, jThreads, ctx.Settings.LowerQualityForVram, useCpu: cpu,
+                gpuIndex: Math.Clamp(ctx.Settings.PipelineGpuIndex, 0, 8));
+            _logger.Command($"rife-ncnn-vulkan {args}");
+        }
+        var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中", ifTarget,
+            vfiExe, args, ifFrames, ct);
+
+        // 有些显卡补帧"不启动"：Vulkan 设备 0 是核显 / 虚拟显卡 / 仅显示设备时，
+        // rife 要么起不来（报 vkCreateInstance 一类错误），要么静默退出、一帧都不产。
+        // 这里按设备序号 1、2 依次重试；都失败才交给后面的降级/停止逻辑。
+        if (!useTorch && !cpu && CountFrames(ifFrames) == 0)
+        {
+            var selectedGpu = Math.Clamp(ctx.Settings.PipelineGpuIndex, 0, 8);
+            var why = exit != 0 ? $"退出码 {exit}" : "一帧未产出";
+            for (var gpuIndex = 0; gpuIndex <= 2; gpuIndex++)
+            {
+                if (gpuIndex == selectedGpu) continue;   // 用户指定的设备已经试过，不重复
+                _logger.Warn($"补帧：GPU {selectedGpu} 未能启动（{why}），切换至 GPU {gpuIndex} 重试");
+                await CleanPartialOutputAsync(ifFrames, ProcessStage.Interpolating, "补帧中", ct);
+                var argsGpu = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier,
+                    ifTarget, jThreads, ctx.Settings.LowerQualityForVram, useCpu: cpu, gpuIndex: gpuIndex);
+                _logger.Command($"rife-ncnn-vulkan {argsGpu}（切换至 GPU {gpuIndex} 重试）");
+                exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中", ifTarget,
+                    ctx.Tools.RifeExe, argsGpu, ifFrames, ct);
+                if (CountFrames(ifFrames) > 0) break;
+            }
+        }
+
+        // BUG-04：rife-v4.25/v4.26 命令行版会报 "layer MemoryData not exists" → 回退 v4.6
+        if (!useTorch && exit != 0 && _lastStderr.Contains("MemoryData not exists", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.Warn($"模型 {ctx.IfModel} 不被命令行版支持，已因硬件原因回退至 rife-v4.6");
+            await CleanPartialOutputAsync(ifFrames, ProcessStage.Interpolating, "补帧中", ct);
+            var args2 = RifeCommandBuilder.Build(inputDirForIf, ifFrames, "rife-v4.6", ctx.IfMultiplier, ifTarget, jThreads, ctx.Settings.LowerQualityForVram, useCpu: cpu,
+                gpuIndex: Math.Clamp(ctx.Settings.PipelineGpuIndex, 0, 8));
+            _logger.Command($"rife-ncnn-vulkan {args2}（因硬件原因回退至v4.6）");
+            exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(因硬件原因回退至v4.6)", ifTarget,
+                ctx.Tools.RifeExe, args2, ifFrames, ct);
+        }
+        if (exit != 0)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // 开启安全帧率 → 自动停止并提示
+            if (safe)
+            {
+                _logger.Warn("已开启安全帧率：检测到补帧报错，自动停止");
+                Fail("已按安全帧率自动停止：检测到补帧报错"
+                    + (_fatalGpuError ? "（Vulkan 设备丢失/显存溢出）" : ""));
+                return false;
+            }
+
+            // 未开启安全帧率：NCNN 轨自动把处理线程改为 1:1:1 并开 UHD 省显存模式重试
+            if (!useTorch)
+            {
+                _logger.Warn("检测到补帧报错，自动将处理线程改为 1:1:1 并开启 UHD 省显存模式重试");
+                ProgressChanged?.Invoke(new ProcessProgress
+                {
+                    Stage = ProcessStage.Interpolating,
+                    StageText = "检测到补帧报错 自动降级重试",
+                    Current = 0,
+                    Total = 0
+                });
+                await CleanPartialOutputAsync(ifFrames, ProcessStage.Interpolating, "补帧中(降级)", ct);
+                var retryArgs = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, ifTarget, "1:1:1", useUhdMode: true, useCpu: cpu,
+                    gpuIndex: Math.Clamp(ctx.Settings.PipelineGpuIndex, 0, 8));
+                _logger.Command($"rife-ncnn-vulkan {retryArgs}（降级 1:1:1 + 省显存重试）");
+                exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(降级重试)", ifTarget,
+                    ctx.Tools.RifeExe, retryArgs, ifFrames, ct);
+                if (exit != 0)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    Fail("补帧失败");
+                    return false;
+                }
+            }
+            else
+            {
+                // 不是 NCNN → 失败直接提示
+                Fail("补帧失败（PyTorch 轨不做降级重试）");
+                return false;
+            }
+        }
+        _logger.Success($"补帧完成: {CountFrames(ifFrames)} 帧");
+        return true;
+    }
+
+    /// <summary>阶段5 AudioSR 分支：开启 → 提取音轨并由 AudioSR 升带宽（完成写水印、等待合并）；
+    /// 未开启 → 不做任何处理，交给合并阶段用 FFmpeg 重采样。
+    /// 勾选了音频超分但最终失败时不允许静默降级：直接停止并出失败报告。</summary>
+    private async Task<bool> AudioSrStageAsync(PipelineState st, CancellationToken ct)
+    {
+        var ctx = st.Ctx;
+        var tempRoot = st.TempRoot;
+
+        if (!ctx.Options.AudioSr)
+        {
+            _logger.Info("AudioSR 分支：未开启，不做任何处理，等待合并阶段使用 FFmpeg 处理音频");
+            return true;
+        }
+        if (!ctx.Video.HasAudio)
+        {
+            _logger.Warn("AudioSR 分支：输入视频无音频流，跳过音频超分");
+            return true;
+        }
+
+        var audioPath = Path.Combine(tempRoot, "audio.flac").Replace('\\', '/');
+        if (!File.Exists(audioPath))
+        {
+            _logger.Info("从输入视频提取音频...");
+            var exExit = await RunFfmpegTieredAsync(ctx, ProcessStage.AddingAudio,
+                _ => FFmpegCommandBuilder.ExtractAudio(ctx.InputVideo, audioPath),
+                tier => "提取音频" + TierSuffix(tier), ct);
+            if (exExit != 0 || !File.Exists(audioPath))
+            {
+                _audioSrSkipReason = "音轨提取失败";
+                Fail("音频超分失败：从原视频提取音轨失败（新版、老版本、CPU 处理均无法完成）");
+                return false;
+            }
+        }
+
+        st.AudioSrWav = await RunAudioSrAsync(ctx, audioPath, tempRoot, ct);
+        if (st.AudioSrWav is not null)
+        {
+            _logger.Info($"【音频处理来源】AudioSR 已介入（{_audioSrPrecisionText} / 后端 {_audioSrBackend ?? "未知"}），"
+                + "水印已写入音频文件信息，等待合并阶段");
+            return true;
+        }
+
+        Fail($"音频超分失败：{_audioSrSkipReason ?? "未知原因"}");
+        return false;
+    }
+
+    /// <summary>阶段6 合并：视频（GPU/CPU 编码）→ HDR → 音频（AudioSR 直出或 FFmpeg 重采样到 PCM 24bit 48kHz）。</summary>
+    private async Task<bool> MergeStageAsync(PipelineState st, CancellationToken ct)
+    {
+        var ctx = st.Ctx;
+        var tempRoot = st.TempRoot;
+        var inputFrames = st.InputFrames;
+        var srFrames = st.SrFrames;
+        var ifFrames = st.IfFrames;
+        var tempVideo = st.TempVideo;
+        var totalFrames = st.TotalFrames;
+        var ifMult = st.IfMult;
+        var ifRatio = st.IfRatio;
+        var targetFrames = st.TargetFrames;
+        var outFps = st.OutFps;
+        var dedupKept = st.DedupKept;
+        var currentVideo = st.CurrentVideo;
+
+        // ============ 阶段6.1：合并视频 ============
+        if (ctx.Options.MergeVideo)
+        {
+            var framesForMerge = ctx.Options.Interpolation ? ifFrames : (ctx.Options.SuperResolution ? srFrames : inputFrames);
+
+            // 帧去重回填：把保留帧按索引表展开成与原始帧数一致的完整序列，时长/帧率/音频保持不变。
+            // 回填失败绝不静默继续：那样 FFmpeg 会拿"去重后的少帧序列"去合并，成品直接变短。
+            if (dedupKept > 0)
+            {
+                var expandedDir = Path.Combine(tempRoot, "expanded_frames").Replace('\\', '/');
+                var expandRatio = ctx.Options.Interpolation ? ifRatio : 1.0;
+                var expandBlock = ctx.Options.Interpolation ? ifMult : 1;
+                var selfFramesDir = ctx.Options.Interpolation
+                    ? (ctx.Options.SuperResolution ? srFrames : inputFrames)
+                    : null;
+                if (!await TryExpandDedupFramesAsync(tempRoot, framesForMerge, expandedDir, expandRatio, expandBlock, ct, selfFramesDir))
+                {
+                    Fail("帧去重回填失败：为避免产出一支少帧的成品，本次已停止。"
+                        + "（dedup_map.json 缺失/不可读，或个别帧复制失败；可清理临时文件后重跑）");
+                    return false;
+                }
+                framesForMerge = expandedDir;
+            }
+
+            // 转场保护：剪切点处不插值（用上一帧复制），消除跨镜头混合鬼影；帧数/时长不变
+            if (ctx.Options.Interpolation && ctx.Settings.SceneGuardEnabled && st.SceneCuts.Count > 0)
+                framesForMerge = await ApplySceneGuardAsync(ctx, st, framesForMerge, dedupKept > 0, ct);
+
+            st.ExpectedFrames = ctx.Options.Interpolation ? targetFrames : totalFrames;
+
+            var fpsForMerge = ctx.Options.Interpolation ? outFps : ctx.Video.FrameRate;
+            var total = ctx.Options.Interpolation ? targetFrames : totalFrames;
+            // 勾选「使FFmpeg尝试使用GPU加速」→ 自动挑硬件编码器（N 卡 NVENC / A 卡 AMF / Intel QSV），失败回退 CPU libx265
+            var cpuArgs = CpuEncodeArgs(ctx.Settings.EncodePreset, ctx.Settings.Crf);
+            var tier = FfmpegTier.New;   // 每个阶段都先试新版，崩了再逐级降
+            string? hwEnc = null;
+            string? hwArgs = null;
+            bool wantHwEnc = false;
+
+            void ResolveEncoder()
+            {
+                wantHwEnc = ctx.Settings.UseGpuAcceleration && !ctx.Settings.UseCpuProcessing && TierAllowsGpu(tier);
+                hwEnc = wantHwEnc ? DetectHardwareEncoder(TierExe(ctx, tier), ctx.Gpu) : null;
+                hwArgs = hwEnc is null ? null : HwEncodeArgs(hwEnc, ctx.Settings.HwQualityMode, ctx.Settings.HwQuality);
+            }
+            ResolveEncoder();
+            if (wantHwEnc && hwEnc is null)
+                _logger.Warn("未检测到可用的 GPU 编码器（NVENC/AMF/QSV），本次合并视频使用 CPU 编码（libx265）");
+            else
+                _logger.Info(hwEnc is null
+                    ? $"开始合并视频（编码：CPU libx265，CRF {Math.Clamp(ctx.Settings.Crf, 0, 51)}）"
+                    : $"开始合并视频（编码：GPU {hwEnc}，质量模式 {QualityModeText(ctx.Settings.HwQualityMode)} {Math.Clamp(ctx.Settings.HwQuality, 0, 51)}）");
+
+            // 与拆帧同一套档位：新版 →（开关允许时）老版本 → CPU；崩溃后本次运行不再回到新版
+            var exit = -1;
+            while (true)
+            {
+                var args = FFmpegCommandBuilder.MergeFrames(framesForMerge, tempVideo, fpsForMerge,
+                    hwArgs ?? cpuArgs, SubtitleSource(ctx));
+                _logger.Command($"ffmpeg {args}");
+                exit = await RunStageWithProgress(ProcessStage.Merging, MergeStageText(tier, hwEnc is not null), total,
+                    TierExe(ctx, tier), args, ParseFfmpegFrame, null, ct);
+                if (exit == 0)
+                {
+                    break;
+                }
+
+                ct.ThrowIfCancellationRequested();
+                if (!DowngradeTier(ctx, ref tier)) break;
+                ResolveEncoder();   // 降档后重新决定编码器：CPU 档位强制软件编码，老版本重新探测硬件编码器
+            }
+            if (exit != 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                Fail("合并视频失败（新版、老版本、CPU 处理均无法完成）");
+                return false;
+            }
+            _logger.Success("合并视频完成");
+            currentVideo = tempVideo;
+        }
+        else
+        {
+            // 不合并就无最终视频可继续；规格书主链路必合并，这里兜底
+            currentVideo = tempVideo;
+        }
+
+        // ============ 阶段6.2：SDR→HDR 转换（仅开启 HDR 时，先渲染 HDR 再合并音频） ============
+        // 合并阶段已经把原视频内嵌字幕映射进来了：HDR 这一步（NVEncC / AI 重建）必须显式声明带字幕，
+        // 否则会在这一步被丢掉（曾导致"勾了保留内嵌字幕但成品没有字幕"）
+        var keepSubtitles = SubtitleSource(ctx) is not null;
+        var hdrDone = false;
+        if (ctx.Options.SdrToHdr)
+        {
+            var hdrVideo = Path.Combine(tempRoot, "hdr_video.mkv").Replace('\\', '/');
+            if (ctx.Gpu.SupportsHdr && ctx.Tools.NvEncExists)
+            {
+                // NVIDIA RTX：NVEncC 一条命令完成（NGX TrueHDR）
+                if (ctx.Settings.UseCpuProcessing)
+                    _logger.Warn("SDR→HDR 由 NVEncC 的 GPU 滤镜完成，没有 CPU 路径：CPU 处理模式对该步骤不生效");
+                _logger.Info($"HDR 转换开始: saturation={ctx.HdrSaturation}, contrast={ctx.HdrContrast}");
+                var args = NvEncCommandBuilder.Build(currentVideo, hdrVideo, ctx.HdrSaturation, ctx.HdrContrast,
+                    keepSubtitles);
+                _logger.Command($"NVEncC64 {args}");
+                var exit = await RunStageWithProgress(ProcessStage.HdrConverting, "HDR转换中", 100,
+                    ctx.Tools.NvEncExe, args, ParseNvencProgress, null, ct, percentDisplay: true);
+                if (exit != 0 && ShouldTryOldNvenc(ctx))
+                {
+                    // 新版 NVEncC 在这台机器上崩溃 → 用老版本（7.74）重试一次
+                    _logger.Warn("新版 NVEncC 转换失败，改用老版本 NVEncC 重试");
+                    exit = await RunStageWithProgress(ProcessStage.HdrConverting, "HDR转换中(老版本)", 100,
+                        ctx.Tools.NvEncOldExe, args, ParseNvencProgress, null, ct, percentDisplay: true);
+                }
+                if (exit != 0)
+                {
+                    Fail("HDR 转换失败");
+                    return false;
+                }
+                _logger.Success("HDR 转换完成");
+                currentVideo = hdrVideo; // 后续合并音频基于 HDR 视频流
+                hdrDone = true;
+            }
+            else if (HdrAiConverter.IsAvailable(ctx.Tools))
+            {
+                // 非 NVIDIA（或没装 NVEncC）：走 HDRTVNet++ ONNX + DirectML 的 AI 重建
+                LastStageText = "HDR重建中";
+                _logger.Info($"AI HDR 重建开始（HDRTVNet++ / {(ctx.Settings.UseCpuProcessing ? "CPU 处理模式下仍用 GPU 推理" : "DirectML")}）");
+                var ok = await HdrAiConverter.ConvertAsync(ctx.Tools, currentVideo, hdrVideo, ctx.HdrAiStrength,
+                    (done, total) => ProgressChanged?.Invoke(new ProcessProgress
+                    {
+                        Stage = ProcessStage.HdrConverting,
+                        StageText = "HDR重建中",
+                        Current = done,
+                        Total = total
+                    }), _logger, ct);
+                if (!ok)
+                {
+                    Fail("HDR 重建失败");
+                    return false;
+                }
+                _logger.Success("AI HDR 重建完成");
+                currentVideo = hdrVideo;
+                hdrDone = true;
+            }
+            else
+            {
+                Fail("SDR→HDR 无法执行：当前显卡不支持 NVEncC 的 TrueHDR，且未安装 AI HDR 模型（Tools/HDRTVNet）。"
+                    + "请取消勾选 HDR，或补齐 HDR 工具后重试");
+                return false;
+            }
+        }
+
+        // ============ 阶段6.3：音频（AudioSR 直出 或 FFmpeg 重采样） ============
+        var nameBaseAudio = string.IsNullOrEmpty(ctx.InputVideo)
+            ? Path.GetFileName(ctx.ExternalFramesDir.TrimEnd('/', '\\'))
+            : Path.GetFileNameWithoutExtension(ctx.InputVideo);
+
+        if ((ctx.Options.MergeAudio || ctx.Options.AudioSr) && ctx.Video.HasAudio)
+        {
+            var audioPath = Path.Combine(tempRoot, "audio.flac").Replace('\\', '/');
+            // 若未提前拆分音频，则现在提取
+            if (!File.Exists(audioPath))
+            {
+                _logger.Info("从输入视频提取音频...");
+                var exExit = await RunFfmpegTieredAsync(ctx, ProcessStage.AddingAudio,
+                    _ => FFmpegCommandBuilder.ExtractAudio(ctx.InputVideo, audioPath),
+                    tier => "提取音频" + TierSuffix(tier), ct);
+                if (exExit != 0 || !File.Exists(audioPath))
+                {
+                    Fail(ctx.Options.MergeAudio
+                        ? "合并音频失败：从原视频提取音轨失败（新版、老版本、CPU 处理均无法完成）"
+                        : "音频超分失败：从原视频提取音轨失败（新版、老版本、CPU 处理均无法完成）");
+                    return false;
+                }
+            }
+
+            if (File.Exists(audioPath))
+            {
+                var srWav = st.AudioSrWav;
+                // 音频处理来源：以"是否真的拿到 AudioSR 的 48kHz 产物"为准
+                var audioSrEngaged = srWav is not null;
+                var audioMark = (audioSrEngaged ? AudioSrMarkUsed : AudioSrMarkNotUsed)
+                    + AudioProcessDetail(ctx, audioSrEngaged);
+                st.AudioMark = audioMark;
+                _logger.Info(audioSrEngaged
+                    ? $"【音频处理来源】AudioSR 已介入（{_audioSrPrecisionText} / 后端 {_audioSrBackend ?? "未知"}），"
+                      + "该标记已写入产物文件信息"
+                    : $"【音频处理来源】AudioSR 未介入（{(ctx.Options.AudioSr ? _audioSrSkipReason ?? "未知原因" : "未勾选音频超分")}），"
+                      + "该标记已写入产物文件信息");
+
+                if (!ctx.Options.MergeAudio)
+                {
+                    // 未勾选「将原音频合并进新视频」：只把超分结果作为独立 WAV 输出，不动视频
+                    if (srWav is not null)
+                    {
+                        Directory.CreateDirectory(ctx.OutputRoot);
+                        var wavOut = Path.Combine(ctx.OutputRoot, $"{nameBaseAudio}_AudioSR_48kHz.wav").Replace('\\', '/');
+                        File.Copy(srWav, wavOut, overwrite: true);
+                        st.StandaloneAudioWav = wavOut;
+                        _logger.Success($"音频超分结果已单独输出（未勾选合并进视频）: {wavOut}");
+                    }
+                }
+                else
+                {
+                    if (!ctx.Options.MergeVideo)
+                    {
+                        _logger.Warn("未勾选合并视频：跳过「合并音频」（没有成品视频可嵌入）");
+                    }
+                    else
+                    {
+                    // 设计图：被 AudioSR 截止 → 停止重采样，直接使用 AudioSR 产出的 48kHz 音频（PCM 2.0 24bit 48kHz）；
+                    // 没有被截止（未开启或失败）→ FFmpeg 重采样到 PCM 2.0 24bit 48kHz 并打上水印。
+                    var audioToEmbed = srWav ?? audioPath;
+                    var embedRate = 48000;
+                    var audioEmbedded = Path.Combine(tempRoot, "audio_embedded.mkv").Replace('\\', '/');
+                    var srcRate = ctx.Video.AudioSampleRate;
+                    var srcText = srcRate > 0 ? $"{srcRate / 1000.0:0.##}kHz" : "未知采样率";
+                    _logger.Info(audioSrEngaged
+                        ? $"音频链路：源 {srcText} → AudioSR 升带宽 → 嵌入 PCM 2.0 24bit 48kHz（不再重采样）"
+                        : $"音频链路：源 {srcText} → ffmpeg 重采样 → 嵌入 PCM 2.0 24bit 48kHz");
+                    var tier = FfmpegTier.New;   // 每个阶段都先试新版，崩了再逐级降
+                    var useGpu = ctx.Settings.UseGpuAcceleration && TierAllowsGpu(tier);
+                    var exit = -1;
+                    while (true)
+                    {
+                        var args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioToEmbed, audioEmbedded, useGpu, embedRate, audioMark);
+                        _logger.Command($"ffmpeg {args}");
+                        exit = await RunStageAsync(ProcessStage.AddingAudio,
+                            tier == FfmpegTier.Old ? "合并音频中(老版本)" : useGpu ? "合并音频中(GPU加速)" : "合并音频中(CPU处理)",
+                            TierExe(ctx, tier), args, ct);
+                        if (exit == 0)
+                        {
+                            // -hwaccel auto 静默回退：硬件加速未生效时明确提示
+                            if (useGpu && ContainsHwAccelFailure(_lastStderr))
+                                _logger.Warn("GPU 加速未生效，本次合并音频实际使用 CPU 处理");
+                            break;
+                        }
+                        ct.ThrowIfCancellationRequested();
+                        if (!DowngradeTier(ctx, ref tier)) break;
+                        useGpu = ctx.Settings.UseGpuAcceleration && TierAllowsGpu(tier);
+                    }
+                    if (exit != 0)
+                    {
+                        Fail("合并原音频失败（新版、老版本、CPU 处理均无法完成）");
+                        return false;
+                    }
+                    _logger.Success("合并音频完成");
+                    currentVideo = audioEmbedded;
+                    }
+                }
+            }
+        }
+        else if (ctx.Options.MergeAudio && !ctx.Video.HasAudio)
+        {
+            _logger.Warn("输入视频无音频流，跳过合并原音频");
+        }
+        else if (ctx.Options.AudioSr && !ctx.Video.HasAudio)
+        {
+            _logger.Warn("输入视频无音频流，跳过音频超分");
+        }
+
+        st.CurrentVideo = currentVideo;
+        st.HdrDone = hdrDone;
+        return true;
+    }
+
+    /// <summary>阶段7 视频审查：对比产出视频帧数与补帧/超分帧目录的期望帧数。
+    /// 对不上 → 按「合并时出错：产出的视频与补帧的帧不对齐」停止并生成完整 ERROR 报告。</summary>
+    private async Task<bool> AuditStageAsync(PipelineState st, CancellationToken ct)
+    {
+        var ctx = st.Ctx;
+        var expected = st.ExpectedFrames;
+        ProgressChanged?.Invoke(new ProcessProgress
+        {
+            Stage = ProcessStage.Auditing,
+            StageText = "视频审查中",
+            Current = 0,
+            Total = 100,
+            PercentDisplay = true
+        });
+
+        var actual = await Task.Run(() => ProbeVideoFrameCount(ctx.Tools.FFprobeExe, st.CurrentVideo), ct);
+        _logger.Info($"视频审查：产出视频 {actual?.ToString() ?? "无法读取"} 帧 / 帧目录期望 {expected} 帧");
+        if (actual is null)
+        {
+            _logger.Warn("视频审查：无法读取产出视频的帧数，已跳过比对");
+            return true;
+        }
+        if (actual == expected)
+        {
+            _logger.Success($"视频审查通过：产出 {actual} 帧 = 帧目录 {expected} 帧");
+            return true;
+        }
+        _logger.Warn($"视频审查：产出 {actual} 帧 ≠ 帧目录 {expected} 帧（差 {actual - expected} 帧）");
+        // 帧对不齐就是合并出错：停止并生成完整 ERROR 报告（不裁剪任何原始输出）
+        Fail($"合并时出错：产出的视频与补帧的帧不对齐（产出 {actual} 帧，补帧/帧目录 {expected} 帧，差 {actual - expected} 帧）");
+        return false;
+    }
+
+    /// <summary>阶段8 元数据 / 封面：成片是从帧序列重建的，原文件的标题/艺人/注释等标签与封面图都会丢。
+    /// 出片前把原文件里的这两类信息写回成品（仅原视频确实带、且用户勾选时执行）。
+    /// 勾选后失败不允许静默跳过：直接停止并出失败报告。</summary>
+    private async Task<bool> MetadataCoverStageAsync(PipelineState st, CancellationToken ct)
+    {
+        var ctx = st.Ctx;
+        var copyMetadata = ctx.Options.EmbedMetadata && ctx.Video.HasMetadata;
+        var addCover = ctx.Options.EmbedCover && ctx.Video.HasCover;
+        if (!copyMetadata && !addCover) return true;
+        if (string.IsNullOrWhiteSpace(ctx.InputVideo) || !File.Exists(ctx.InputVideo))
+        {
+            Fail("元数据/封面嵌入失败：找不到原始输入视频文件");
+            return false;
+        }
+
+        string? coverFile = null;
+        if (addCover)
+        {
+            coverFile = Path.Combine(st.TempRoot, "cover.png").Replace('\\', '/');
+            var coverExit = await RunFfmpegTieredAsync(ctx, ProcessStage.Merging,
+                _ => FFmpegCommandBuilder.ExtractCover(ctx.InputVideo, ctx.Video.CoverStreamIndex, coverFile),
+                tier => "提取原视频封面中" + TierSuffix(tier), ct);
+            if (coverExit != 0 || !File.Exists(coverFile))
+            {
+                Fail("封面嵌入失败：无法从原视频提取封面图（新版、老版本、CPU 处理均无法完成）");
+                return false;
+            }
+        }
+
+        var muxed = Path.Combine(st.TempRoot, "final_metadata.mkv").Replace('\\', '/');
+        // 原文件自带 comment（例如 YouTube 链接）时不能直接盖掉：保留原文，用 " | " 追加音频来源标记
+        var comment = st.AudioMark;
+        if (copyMetadata && !string.IsNullOrEmpty(comment))
+        {
+            var originalComment = ProbeFormatTag(ctx.Tools.FFprobeExe, ctx.InputVideo, "comment");
+            if (!string.IsNullOrWhiteSpace(originalComment))
+                comment = $"{SanitizeMetadataValue(originalComment)} | {comment}";
+        }
+        var label = coverFile is not null ? "嵌入元数据/封面中" : "嵌入元数据中";
+        var exit = await RunFfmpegTieredAsync(ctx, ProcessStage.Merging,
+            _ => FFmpegCommandBuilder.EmbedMetadataAndCover(st.CurrentVideo, ctx.InputVideo, muxed,
+                copyMetadata, coverFile, comment),
+            tier => label + TierSuffix(tier), ct);
+
+        if (exit != 0 || !File.Exists(muxed))
+        {
+            Fail("元数据/封面嵌入失败（新版、老版本、CPU 处理均无法完成）");
+            return false;
+        }
+
+        st.CurrentVideo = muxed;
+        _logger.Success(coverFile is not null
+            ? "已嵌入原视频元数据与封面"
+            : "已嵌入原视频元数据");
+        return true;
+    }
+
+    /// <summary>把合并产物复制到输出目录，并做成品音频实测。</summary>
+    private string? FinalizeOutput(PipelineState st)
+    {
+        var ctx = st.Ctx;
+        // 帧文件夹模式无输入视频文件，用帧文件夹名作为输出文件基础名；
+        // 动态帧率自动转换时 InputVideo 是中间文件，输出名仍取原视频（OutputNameBase）。
+        var nameBase = string.IsNullOrEmpty(ctx.OutputNameBase)
+            ? (string.IsNullOrEmpty(ctx.InputVideo) ? ctx.ExternalFramesDir : ctx.InputVideo)
+            : ctx.OutputNameBase;
+        var finalName = OutputNamer.Build(nameBase, ctx.Options.SuperResolution, ctx.Options.Interpolation,
+            st.HdrDone, st.OutWidth, st.OutHeight, st.OutFps, ctx.Options.MergeAudio);
+        var finalPath = Path.Combine(ctx.OutputRoot, finalName).Replace('\\', '/');
+        Directory.CreateDirectory(ctx.OutputRoot);
+        File.Copy(st.CurrentVideo, finalPath, overwrite: true);
+
+        // 成品实测（最直接的判据）：音轨编码/采样率 + 文件信息里的处理来源标记。
+        var probe = ProbeAudioSummary(ctx.Tools.FFprobeExe, finalPath);
+        if (probe is not null) _logger.Info($"成品音频实测（ffprobe）：{probe}");
+
+        ProgressChanged?.Invoke(new ProcessProgress { Stage = ProcessStage.Done, StageText = "完成" });
+        _logger.Success($"全部完成！输出: {finalPath}");
+        return finalPath;
+    }
+
+    /// <summary>读取视频帧数：优先容器元数据 nb_frames（毫秒级）；缺失时退回 -count_frames 精确统计（较慢）。</summary>
+    private static long? ProbeVideoFrameCount(string ffprobeExe, string path)
+    {
+        var fast = RunFfprobeText(ffprobeExe,
+            $"-v error -select_streams v:0 -show_entries stream=nb_frames -of default=nw=1:nk=1 \"{path}\"", 20000);
+        if (long.TryParse(fast?.Trim(), out var n) && n > 0) return n;
+        // -count_frames 要真正解码一遍，长片可能几十秒；给 10 分钟上限，超时就放弃比对（不再无限等待）
+        var slow = RunFfprobeText(ffprobeExe,
+            $"-v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of default=nw=1:nk=1 \"{path}\"", 600000);
+        return long.TryParse(slow?.Trim(), out var m) && m > 0 ? m : null;
+    }
+
+    /// <summary>读取原文件某个格式层标签（如 comment）。没设置或读取失败返回空串。</summary>
+    private static string ProbeFormatTag(string ffprobeExe, string path, string key)
+    {
+        var text = RunFfprobeText(ffprobeExe,
+            $"-v error -show_entries format_tags={key} -of default=nw=1:nk=1 \"{path}\"", 15000);
+        return text?.Trim() ?? "";
+    }
+
+    /// <summary>清理要写回 ffmpeg 元数据参数的文本：去掉换行、双引号换成单引号，避免破坏命令行引号结构。</summary>
+    private static string SanitizeMetadataValue(string value) =>
+        value.Replace("\r", " ").Replace("\n", " ").Replace('"', '\'').Trim();
+
+    /// <summary>跑 ffprobe 并返回 stdout。stdout/stderr 必须同时异步读——
+    /// 只读 stdout 不读 stderr 时，ffprobe 往 stderr 写满管道缓冲区就会双向死锁（表现为“视频审查卡住不动”）。</summary>
+    private static string? RunFfprobeText(string ffprobeExe, string args, int timeoutMs)
+    {
+        try
+        {
+            using var p = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = ffprobeExe,
+                    Arguments = args,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                    StandardOutputEncoding = System.Text.Encoding.UTF8
+                }
+            };
+            p.Start();
+            var outTask = p.StandardOutput.ReadToEndAsync();
+            var errTask = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(timeoutMs))
+            {
+                try { p.Kill(true); } catch { }
+                return null;
+            }
+            return outTask.GetAwaiter().GetResult();
+        }
+        catch { return null; }
+    }
+
+    // ---- 进度解析器 ----
+
+    private static readonly Regex FfmpegFrameRe = new(@"frame=\s*(\d+)", RegexOptions.Compiled);
+    private static readonly Regex NvencPercentRe = new(@"(\d+(?:\.\d+)?)\s*%", RegexOptions.Compiled);
+    /// <summary>AudioSR 驱动的进度行形如 "[AudioSR] 进度 42%  窗口 3/7 ..."</summary>
+    private static readonly Regex AudioSrPercentRe = new(@"进度\s*(\d+)\s*%", RegexOptions.Compiled);
+
+    private static long? ParseAudioSrPercent(string line)
+    {
+        var m = AudioSrPercentRe.Match(line);
+        return m.Success && long.TryParse(m.Groups[1].Value, out var v) ? Math.Clamp(v, 0, 100) : null;
+    }
+
+    private static long? ParseFfmpegFrame(string line)
+    {
+        var m = FfmpegFrameRe.Match(line);
+        return m.Success && long.TryParse(m.Groups[1].Value, out var v) ? v : null;
+    }
+
+    private static long? ParseNvencProgress(string line)
+    {
+        // NVEncC 输出既有 "Frames: 2450/3929" 也有 "23.45%"。HDR 阶段按百分比显示（Total=100），
+        // 必须优先解析百分比：否则像 "12000/100" 这类帧号/分母行会被误当比例，算出 12000% 的离奇进度。
+        var p = NvencPercentRe.Match(line);
+        if (p.Success && double.TryParse(p.Groups[1].Value, out var pct))
+            return (long)Math.Clamp(Math.Round(pct), 0, 100);
+        // 帧/帧 格式仅在比例合理时采用（分母 2~100000 且分子不超过分母）
+        var m = Regex.Match(line, @"(\d+)/(\d+)");
+        if (m.Success && long.TryParse(m.Groups[1].Value, out var c) && long.TryParse(m.Groups[2].Value, out var t)
+            && t >= 2 && t <= 100000 && c <= t)
+            return (long)(c * 100.0 / t);
+        return null;
+    }
+
+    // ---- 工具方法 ----
+
+    private string _lastStderr = "";
+    /// <summary>最近一次执行到的阶段文字（失败报告里用来定位崩在哪一步）</summary>
+    public string LastStageText { get; private set; } = "";
+    /// <summary>当前阶段是否发生 Vulkan 设备丢失/显存溢出（安全帧率开启时据此自动停止）</summary>
+    private bool _fatalGpuError;
+
+    private static string? _detectedHwAccel;
+
+    /// <summary>探测 FFmpeg 是否真的带硬件解码后端（-hwaccels 里出现 d3d11va/dxva2/cuda/vulkan）。
+    /// -hwaccel auto 在没有任何硬件解码器时会静默走 CPU；这一步保证界面上的「GPU加速」不是空话。</summary>
+    private static string? DetectHwAccel(string ffmpegExe)
+    {
+        if (_detectedHwAccel is not null)
+            return string.IsNullOrEmpty(_detectedHwAccel) ? null : _detectedHwAccel;
+        try
+        {
+            using var p = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = ffmpegExe,
+                    Arguments = "-hide_banner -hwaccels",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                }
+            };
+            p.Start();
+            var text = (p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd()).ToLowerInvariant();
+            p.WaitForExit(5000);
+            foreach (var name in new[] { "d3d11va", "dxva2", "cuda", "vulkan" })
+            {
+                if (text.Contains(name))
+                {
+                    _detectedHwAccel = name;
+                    return name;
+                }
+            }
+            _detectedHwAccel = "";
+            return null;
+        }
+        catch
+        {
+            _detectedHwAccel = "";
+            return null;
+        }
+    }
+
+    /// <summary>最近一次硬件解码试解码失败的原因（取自 stderr，如「Failed setup for format d3d11」），
+    /// 供日志说明"为什么开了 GPU 加速却还是 CPU"；成功或未探测时为空。</summary>
+    private string _hwAccelProbeFailReason = "";
+
+    /// <summary>用「这台机器 + 这个输入文件」实际试解码几帧，确认硬件解码真的能用。
+    /// 只查 -hwaccels 不够：后端编译进去了，也可能因为驱动/编码格式（如 AV1）不支持而静默回退 CPU。
+    /// 返回可用的 accel 名（d3d11va / dxva2 / cuda / vulkan），都不能用返回 null。</summary>
+    private string? DetectUsableHwAccel(ProcessingContext ctx, string? ffmpegExe = null)
+    {
+        var exe = string.IsNullOrEmpty(ffmpegExe) ? ctx.Tools.FFmpegExe : ffmpegExe;
+        var key = exe + "|" + ctx.InputVideo;
+        lock (_hwAccelProbeCache)
+        {
+            if (_hwAccelProbeCache.TryGetValue(key, out var cached))
+            {
+                _hwAccelProbeFailReason = _hwAccelProbeReasonCache.TryGetValue(key, out var r) ? r : "";
+                return string.IsNullOrEmpty(cached) ? null : cached;
+            }
+        }
+
+        string? found = null;
+        _hwAccelProbeFailReason = "";
+        try
+        {
+            var listed = DetectHwAccel(exe);
+            if (listed is null)
+            {
+                _hwAccelProbeFailReason = "当前 FFmpeg 未编译任何硬件解码后端";
+                lock (_hwAccelProbeCache) _hwAccelProbeCache[key] = "";
+                return null;
+            }
+
+            var reasons = new List<string>();
+            foreach (var accel in new[] { "d3d11va", "dxva2", "cuda", "vulkan" })
+            {
+                try
+                {
+                    using var p = new System.Diagnostics.Process
+                    {
+                        StartInfo = new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = exe,
+                            // -sn -dn：null 输出不接受字幕/数据流，不屏蔽的话带字幕的 mkv 会被误判成"硬件解码不可用"
+                            // -v verbose：需要靠 "pix_fmt: d3d11/dxva2/cuda/vulkan" 这条日志确认帧真的留在 GPU 上
+                            Arguments = $"-hide_banner -v verbose -hwaccel {accel} -i \"{ctx.InputVideo}\" -frames:v 3 -an -sn -dn -f null -",
+                            UseShellExecute = false,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            CreateNoWindow = true
+                        }
+                    };
+                    p.Start();
+                    var errTask = p.StandardError.ReadToEndAsync();
+                    if (!p.WaitForExit(30000)) { try { p.Kill(true); } catch { } continue; }
+                    var err = errTask.Result;
+                    if (p.ExitCode == 0)
+                    {
+                        // 有些驱动（典型是 P106 这类改装卡）会"接受" -hwaccel 却静默回退软件解码、进程照常退出 0。
+                        // 只有解码器重初始化成硬件像素格式才能证明真的走了 GPU，否则一律按 CPU 处理，界面上也不许标 GPU。
+                        if (!ContainsHwAccelFailure(err) && HasHwFrameFormat(err, accel)) { found = accel; break; }
+                        reasons.Add($"{accel}: 未确认硬件解码（无 {ExpectedPixFmt(accel)} 帧格式，已静默回退 CPU）");
+                        continue;
+                    }
+                    var line = err.Split('\n')
+                        .Select(x => x.Trim())
+                        .FirstOrDefault(x => x.Contains("hwaccel", StringComparison.OrdinalIgnoreCase)
+                                          || x.Contains("Failed setup", StringComparison.OrdinalIgnoreCase));
+                    if (!string.IsNullOrEmpty(line)) reasons.Add($"{accel}: {line}");
+                }
+                catch { }
+            }
+            if (found is null && reasons.Count > 0) _hwAccelProbeFailReason = reasons[0];
+        }
+        catch { }
+
+        lock (_hwAccelProbeCache)
+        {
+            _hwAccelProbeCache[key] = found ?? "";
+            _hwAccelProbeReasonCache[key] = found is null ? _hwAccelProbeFailReason : "";
+        }
+        return found;
+    }
+
+    private static readonly Dictionary<string, string> _hwAccelProbeCache = new();
+    private static readonly Dictionary<string, string> _hwAccelProbeReasonCache = new();
+
+    /// <summary>ffmpeg -hwaccel 硬件加速失败的常见 stderr 标志（此时 ffmpeg 会静默回退软件解码/编码，进程仍正常退出）</summary>
+    private static readonly string[] HwAccelFailMarkers =
+    {
+        "hwaccel initialisation returned error",
+        "Failed setup for format",
+        "Hardware acceleration failed",
+        "Could not initialise hardware"
+    };
+
+    private static bool ContainsHwAccelFailure(string stderr)
+        => Array.Exists(HwAccelFailMarkers, m => stderr.Contains(m, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>硬件解码确实生效的正面证据：解码器被重初始化成硬件像素格式。
+    /// 只靠"进程退出码 0"不够——部分改装驱动会接受 -hwaccel 但静默回退 CPU。</summary>
+    private static bool HasHwFrameFormat(string log, string accel)
+        => log.Contains($"pix_fmt: {ExpectedPixFmt(accel)}", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>各硬件解码后端对应的硬件像素格式名（ffmpeg verbose 日志里的 pix_fmt）。</summary>
+    private static string ExpectedPixFmt(string accel) => accel switch
+    {
+        "d3d11va" => "d3d11",
+        "dxva2" => "dxva2",
+        "cuda" => "cuda",
+        "vulkan" => "vulkan",
+        _ => accel
+    };
+
+    /// <summary>判断 stderr 行是否为致命 GPU 错误（设备丢失 / 显存溢出）</summary>
+    private static bool IsFatalGpuLine(string line)
+    {
+        return line.Contains("vkQueueSubmit failed", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("VK_ERROR_DEVICE_LOST", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("vkAllocateMemory failed", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("VK_ERROR_OUT_OF_DEVICE_MEMORY", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("out of device memory", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("out of memory", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<int> RunStageWithProgress(ProcessStage stage, string stageText, long total,
+        string exe, string args, Func<string, long?> frameParser, string? previewDir, CancellationToken ct,
+        bool percentDisplay = false, Action<string>? rawLine = null, Func<string>? stageLabel = null,
+        Action<string>? rawErrLine = null)
+    {
+        // stageLabel 非空时以它为准：AudioSR 的后端要等脚本启动后才确定，阶段文字得跟着变
+        Func<string> label = stageLabel ?? (() => stageText);
+        LastStageText = label();
+        var lastLog = DateTime.MinValue;
+        var exit = await RunStageWithProgressEx(stage, label, total, exe, args, line =>
+        {
+            rawLine?.Invoke(line);
+            var v = frameParser(line);
+            if (v.HasValue)
+            {
+                var text = label();
+                ProgressChanged?.Invoke(new ProcessProgress
+                {
+                    Stage = stage,
+                    StageText = text,
+                    Current = v.Value,
+                    Total = total,
+                    PercentDisplay = percentDisplay
+                });
+                // 节流：每秒记一条实时进度，让命令输出区有内容（百分比阶段显示百分比）
+                var now = DateTime.Now;
+                if ((now - lastLog).TotalSeconds >= 1)
+                {
+                    lastLog = now;
+                    _logger.Info(percentDisplay
+                        ? $"{text} {v.Value}%"
+                        : $"{text} 已处理 {v.Value}/{total}");
+                }
+            }
+        }, previewDir, ct, rawErrLine);
+        // 阶段文字可能在运行期间变化（硬件解码回退 CPU / AudioSR 后端确定），结束时同步一次，
+        // 失败报告与阶段时间线才不会留下"实际走 CPU 却写着 GPU 加速"的记录
+        LastStageText = label();
+        return exit;
+    }
+
+    private async Task<int> RunStageWithProgressEx(ProcessStage stage, Func<string> stageLabel, long total,
+        string exe, string args, Action<string> onLine, string? previewDir, CancellationToken ct,
+        Action<string>? onErrLine = null)
+    {
+        var captured = new System.Text.StringBuilder();
+        using var pollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        Task? pollTask = null;
+
+        // 拆帧阶段：目录轮询最新帧，供预览图实时刷新（FFmpeg frame= 是覆盖式输出，逐行解析不到中间进度）
+        if (!string.IsNullOrEmpty(previewDir))
+        {
+            pollTask = Task.Run(async () =>
+            {
+                while (!pollCts.IsCancellationRequested)
+                {
+                    var latest = FindLatestFrame(previewDir);
+                    if (!string.IsNullOrEmpty(latest))
+                    {
+                        // 帧文件名就是序号（00000123.png）→ 顺带报出真实进度。
+                        // 否则这些轮询事件只能带 Total=0，Percent 恒为 0，
+                        // 转发到界面会把进度条每 200ms 归零一次（表现为拆帧时进度条抽搐）。
+                        long? frameNo = null;
+                        if (total > 0 && long.TryParse(Path.GetFileNameWithoutExtension(latest), out var n))
+                            frameNo = n;
+
+                        ProgressChanged?.Invoke(new ProcessProgress
+                        {
+                            Stage = stage,
+                            StageText = stageLabel(),
+                            LatestFramePath = latest,
+                            Current = frameNo ?? 0,
+                            Total = frameNo.HasValue ? total : 0
+                        });
+                    }
+                    try { await Task.Delay(200, pollCts.Token); } catch (OperationCanceledException) { break; }
+                }
+            }, ct);
+        }
+
+        var exit = await _runner.RunAsync(exe, args,
+            onLine: line => { onLine(line); },
+            onStderr: line =>
+            {
+                lock (captured) captured.AppendLine(line);
+                onErrLine?.Invoke(line);
+            },
+            ct: ct);
+
+        pollCts.Cancel();
+        if (pollTask is not null) { try { await pollTask; } catch { } }
+        lock (captured) _lastStderr = captured.ToString();
+        return exit;
+    }
+
+    /// <summary>运行一个只往目录写帧的工具（Real-ESRGAN / RIFE），
+    /// 通过轮询输出目录帧数 + 解析 stderr 百分比来估算进度。
+    /// Real-ESRGAN 输出 0.00%~98.33% 的帧内 tile 进度；RIFE 无进度输出，仅靠帧数。</summary>
+    private async Task<int> RunStageWithDirectoryPolling(ProcessStage stage, string stageText, long total,
+        string exe, string args, string outputDir, CancellationToken ct,
+        Action<ProcessProgress>? report = null)
+    {
+        LastStageText = stageText;
+        var captured = new System.Text.StringBuilder();
+        using var pollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        // 当前帧内的 tile 进度（0-100），由 stderr 百分比更新
+        double innerPercent = 0;
+        var innerLock = new object();
+        // Vulkan 设备丢失/显存溢出后只快速失败一次（避免多次触发反复 Kill）
+        var fatalKilled = false;
+
+        var pollTask = Task.Run(async () =>
+        {
+            var lastLog = DateTime.MinValue;
+            while (!pollCts.IsCancellationRequested)
+            {
+                try
+                {
+                    var count = CountFrames(outputDir);
+                    double inner;
+                    lock (innerLock) inner = innerPercent;
+                    // 进度 = 已完成帧数 + 当前帧内百分比/100，上限 cap 到 total
+                    var current = Math.Min(count + inner / 100.0, total);
+                    if (current > 0)
+                    {
+                        if (report is not null)
+                        {
+                            // 涡轮模式：进度交给涡轮进度中枢汇总（避免与另一条流水互相覆盖）
+                            report(new ProcessProgress
+                            {
+                                Stage = stage,
+                                StageText = stageText,
+                                Current = (long)Math.Floor(current),
+                                Total = total,
+                                LatestFramePath = FindLatestFrame(outputDir) ?? ""
+                            });
+                        }
+                        else
+                        {
+                            ProgressChanged?.Invoke(new ProcessProgress
+                            {
+                                Stage = stage,
+                                StageText = stageText,
+                                Current = (long)Math.Floor(current),
+                                Total = total,
+                                LatestFramePath = FindLatestFrame(outputDir) ?? ""
+                            });
+                        }
+                        // 节流实时日志：每 1 秒记录一次帧数，避免 Real-ESRGAN stderr 缓冲导致的"假死"
+                        var now = DateTime.Now;
+                        if ((now - lastLog).TotalSeconds >= 1)
+                        {
+                            lastLog = now;
+                            _logger.Info($"{stageText} 已处理 {count}/{total} 帧");
+                        }
+                    }
+                }
+                catch { }
+                try { await Task.Delay(200, pollCts.Token); } catch (OperationCanceledException) { break; }
+            }
+        }, ct);
+
+        var exit = await _runner.RunAsync(exe, args,
+            onLine: line =>
+            {
+                // 检测 Vulkan 设备丢失/显存溢出（线程过高压垮 GPU 或显存不足）。
+                // 一旦出现立即终止进程快速失败，避免工具反复刷错浪费时间
+                if (IsFatalGpuLine(line))
+                {
+                    if (!fatalKilled)
+                    {
+                        fatalKilled = true;
+                        _fatalGpuError = true;
+                        _logger.Warn($"检测到 Vulkan 设备丢失/显存溢出：{line.Trim()}，终止当前进程");
+                        _runner.KillCurrent();
+                    }
+                    return;
+                }
+                // 解析 stderr 的百分比（Real-ESRGAN: 0.00% ~ 98.33%）
+                var m = NvencPercentRe.Match(line);
+                if (m.Success && double.TryParse(m.Groups[1].Value, out var pct))
+                {
+                    lock (innerLock) innerPercent = pct;
+                }
+            },
+            onStderr: line => { lock (captured) captured.AppendLine(line); },
+            ct: ct);
+
+        pollCts.Cancel();
+        try { await pollTask; } catch { }
+        lock (captured) _lastStderr = captured.ToString();
+        return exit;
+    }
+
+    private async Task<int> RunStageAsync(ProcessStage stage, string stageText,
+        string exe, string args, CancellationToken ct)
+    {
+        LastStageText = stageText;
+        var captured = new System.Text.StringBuilder();
+        var exit = await _runner.RunAsync(exe, args,
+            onLine: null,
+            onStderr: line => { lock (captured) captured.AppendLine(line); },
+            ct: ct);
+        lock (captured) _lastStderr = captured.ToString();
+        return exit;
+    }
+
+    /// <summary>"一条命令跑完"型 ffmpeg 步骤的统一降级：新版 →（开关允许时）老版本 → CPU 处理。
+    /// 音频提取、封面抽取、元数据写回这些步骤原来直接用新版 exe，新版崩了整个任务就失败；
+    /// 拆帧/合并有各自的降级循环，这些简单步骤统一走这里。
+    /// 同一 exe + 同一命令只跑一次：老版本未部署时 CPU 档位等于新版，纯软件步骤的 CPU 档位也等于新版，
+    /// 重复跑没有意义，直接跳过。返回非 0 表示三档都不行。</summary>
+    private async Task<int> RunFfmpegTieredAsync(ProcessingContext ctx, ProcessStage stage,
+        Func<FfmpegTier, string> argsForTier, Func<FfmpegTier, string> textForTier, CancellationToken ct)
+    {
+        var tried = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var tier = FfmpegTier.New;
+        while (true)
+        {
+            var exe = TierExe(ctx, tier);
+            var args = argsForTier(tier);
+            if (tried.Add(exe + "|" + args))
+            {
+                _logger.Command($"ffmpeg {args}");
+                var exit = await RunStageAsync(stage, textForTier(tier), exe, args, ct);
+                if (exit == 0) return 0;
+                ct.ThrowIfCancellationRequested();
+            }
+            if (!DowngradeTier(ctx, ref tier)) return -1;
+        }
+    }
+
+    /// <summary>档位文案后缀：老版本加 (老版本)，其余（新版/CPU）不加。</summary>
+    private static string TierSuffix(FfmpegTier tier) => tier == FfmpegTier.Old ? "(老版本)" : "";
+
+    // ===================== 音频超分（阶段5.5） =====================
+
+    /// <summary>音频超分（AudioSR）：把已提取的音轨转成 48k WAV → 跑 audiosr_onnx.py → 返回升采样后的 48kHz WAV。
+    /// 任一前置条件不满足（脚本/权重包缺失、fp16 撞 CPU）或推理失败时返回 null，
+    /// 由调用方回退到原音轨 + ffmpeg 重采样，保证主链路不因音频超分而失败。</summary>
+    private async Task<string?> RunAudioSrAsync(ProcessingContext ctx, string inputAudio, string tempRoot, CancellationToken ct)
+    {
+        var precision = string.Equals(ctx.Options.AudioSrPrecision, "fp16", StringComparison.OrdinalIgnoreCase) ? "fp16" : "fp32";
+        var packText = precision == "fp16" ? "FP16 低精度性能模式" : "FP32 高精度完美模式";
+        // 进度文字带模式标注，避免运行中看不出跑的是哪一档
+        var stageLabel = precision == "fp16" ? "音频超分中(FP16)" : "音频超分中(FP32)";
+        _audioSrSkipReason = null;
+        _audioSrBackend = null;
+        _audioSrPrecisionText = packText;
+        // 后端要等脚本打印"后端 XXX"才知道；确定后补进阶段文字，如「音频超分中(FP16) · CUDA（GPU）」
+        Func<string> stageLabelNow = () =>
+            _audioSrBackend is null ? stageLabel : $"{stageLabel} · {_audioSrBackend}";
+
+        if (!ctx.Tools.AudioSrScriptExists)
+        {
+            _audioSrSkipReason = "驱动脚本缺失";
+            _logger.Warn($"音频超分跳过：未找到驱动脚本 {ctx.Tools.AudioSrScript}");
+            return null;
+        }
+        if (!ctx.Tools.AudioSrPackExists(precision))
+        {
+            _audioSrSkipReason = $"{packText} 的权重包不完整";
+            _logger.Warn($"音频超分跳过：{packText} 的权重包不完整（{ctx.Tools.AudioSrModelsFor(precision)}）");
+            return null;
+        }
+
+        try
+        {
+            var modelsDir = ctx.Tools.AudioSrModelsFor(precision);
+            var inWav = Path.Combine(tempRoot, "audiosr_in_48k.wav").Replace('\\', '/');
+            var outWav = Path.Combine(tempRoot, "audiosr_out_48k.wav").Replace('\\', '/');
+
+            _logger.Info($"音频超分开始（{packText}）：AudioSR 升采样到 48kHz");
+            // 先宣告阶段：AudioSR 要跑完第一个窗口才吐进度（单个窗口可能几十秒），
+            // 不先发一条的话进度条上方会一直停在上一阶段的文案（如"合并中"）上
+            ProgressChanged?.Invoke(new ProcessProgress
+            {
+                Stage = ProcessStage.AudioSr,
+                StageText = stageLabel,
+                Current = 0,
+                Total = 100,
+                PercentDisplay = true
+            });
+            var convExit = await RunFfmpegTieredAsync(ctx, ProcessStage.AudioSr,
+                _ => FFmpegCommandBuilder.ToWav48k(inputAudio, inWav),
+                tier => stageLabel + TierSuffix(tier), ct);
+            if (convExit != 0 || !File.Exists(inWav))
+            {
+                _audioSrSkipReason = "音轨转 48k WAV 失败";
+                _logger.Warn("音频超分跳过：音轨转 48k WAV 失败（新版、老版本 FFmpeg 均未成功）");
+                return null;
+            }
+
+            var py = File.Exists(ctx.Tools.PortablePythonExe) ? ctx.Tools.PortablePythonExe : "python";
+            var args = AudioSrCommandBuilder.Build(ctx.Tools.AudioSrScript, inWav, outWav, modelsDir, ctx.Settings.UseCpuProcessing);
+            _logger.Command($"python {args}");
+            var exit = await RunStageWithProgress(ProcessStage.AudioSr, stageLabel, 100,
+                py, args, ParseAudioSrPercent, null, ct, percentDisplay: true, stageLabel: stageLabelNow, rawLine: line =>
+                {
+                    // 驱动脚本开头会打印 "权重包 fp16 / 后端 DirectML(GPU) / DDIM 50 步 ..."。
+                    // 把后端摘出来单独提示：否则用户只能看到进度百分比，无法确认音频超分到底跑没跑在显卡上。
+                    if (line.Contains("后端 CUDA", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _audioSrBackend = "CUDA（GPU）";
+                        _logger.Success("音频超分推理后端：CUDA（GPU）");
+                    }
+                    else if (line.Contains("后端 DirectML", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _audioSrBackend = "DirectML（GPU）";
+                        _logger.Success("音频超分推理后端：DirectML（GPU）");
+                    }
+                    else if (line.Contains("后端 CPU", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _audioSrBackend = "CPU";
+                        _logger.Warn("音频超分推理后端：CPU（显卡后端不可用或权重包只允许 CPU），速度会明显慢于显卡");
+                    }
+                });
+            if (exit != 0 || !File.Exists(outWav))
+            {
+                _audioSrSkipReason = exit == 0 ? "未产出 48kHz WAV" : $"推理失败（退出码 {exit}）";
+                _logger.Warn(exit == 0
+                    ? "音频超分失败：未产出 48kHz WAV，本次回退原音轨"
+                    : $"音频超分失败（退出码 {exit}），本次回退原音轨");
+                return null;
+            }
+
+            var sizeMb = new FileInfo(outWav).Length / 1024.0 / 1024.0;
+            _logger.Success($"音频超分完成（{packText}）：48kHz WAV {sizeMb:F1} MB");
+            return outWav;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _audioSrSkipReason = $"异常（{ex.Message}）";
+            _logger.Warn($"音频超分异常，本次回退原音轨：{ex.Message}");
+            return null;
+        }
+    }
+
+    // ===================== 帧去重（阶段1.5）与回填 =====================
+
+    /// <summary>去重结果映射文件（放临时目录，供回填与续跑复用）</summary>
+    private static string DedupMapPath(string tempRoot) => Path.Combine(tempRoot, "dedup_map.json");
+
+    /// <summary>读取已存在的去重保留帧数（无文件返回 0）。用于拆帧阶段的续跑判断。</summary>
+    private static int TryReadDedupKept(string tempRoot)
+    {
+        try
+        {
+            var p = DedupMapPath(tempRoot);
+            if (!File.Exists(p)) return 0;
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(p));
+            return doc.RootElement.TryGetProperty("keptCount", out var v) ? v.GetInt32() : 0;
+        }
+        catch { return 0; }
+    }
+
+    /// <summary>读取地图里的"保留帧源序号"（1 基）。超分对全部源帧跑完后，补帧输入按它挑帧。</summary>
+    private static List<int> TryReadDedupKeptIndices(string tempRoot)
+    {
+        var list = new List<int>();
+        try
+        {
+            var p = DedupMapPath(tempRoot);
+            if (!File.Exists(p)) return list;
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(p));
+            if (!doc.RootElement.TryGetProperty("keptIndices", out var arr)) return list;
+            foreach (var item in arr.EnumerateArray()) list.Add(item.GetInt32());
+        }
+        catch { }
+        return list;
+    }
+
+    /// <summary>补帧输入子集的完成标记：帧数/字节数/源目录/保留列表指纹。
+    /// 续跑复用前逐项校验，避免误用上一次任务遗留下来的子集。</summary>
+    private sealed record KeptSubsetMarker(int Count, long Bytes, string SrcDir, string KeptHash);
+
+    /// <summary>完成标记必须放在帧目录【外面】。RIFE 会把 -i 输入目录里的每一个条目都当图片解码，
+    /// 目录内多一个 .json 会让 rife-ncnn-vulkan 直接崩溃（实测 exit=-1073741819，
+    /// stderr 全是 "decode image .../_subset_ok.json failed"）。</summary>
+    private static string KeptSubsetMarkerPath(string dstDir) => dstDir + ".done.json";
+
+    private static string FingerprintOf(List<int> keptIndices)
+        => Convert.ToHexString(System.Security.Cryptography.MD5.HashData(
+            System.Text.Encoding.UTF8.GetBytes(string.Join(",", keptIndices))));
+
+    /// <summary>子集是否已完整可用：完成标记存在，且帧数/字节数/源目录/保留列表指纹四项全对得上。</summary>
+    private static bool KeptSubsetUsable(string dstDir, string srcDir, List<int> keptIndices)
+    {
+        try
+        {
+            var p = KeptSubsetMarkerPath(dstDir);
+            if (!File.Exists(p)) return false;
+            var m = System.Text.Json.JsonSerializer.Deserialize<KeptSubsetMarker>(File.ReadAllText(p));
+            if (m is null) return false;
+            if (m.Count != keptIndices.Count) return false;
+            if (!string.Equals(m.SrcDir, srcDir, StringComparison.OrdinalIgnoreCase)) return false;
+            if (!string.Equals(m.KeptHash, FingerprintOf(keptIndices), StringComparison.Ordinal)) return false;
+            var files = Directory.GetFiles(dstDir, "*.png");
+            if (files.Length != m.Count) return false;
+            long bytes = 0;
+            foreach (var f in files) bytes += new FileInfo(f).Length;
+            return bytes == m.Bytes;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>准备补帧输入子集：按 dedup_map.json 的保留帧序号，从 srcDir（超分产物等）里挑出保留帧，
+    /// 复制到 dstDir 并重新连续编号（1 基）。补帧输入必须缩成"保留帧序列"，否则 RIFE 的输入/输出
+    /// 比例会按全部帧数放大，回填按倍率取块会整体错位。
+    ///
+    /// 三处稳健性（实测踩过：重启后 Directory.Delete 因残留占用抛 Access denied，整个任务直接失败）：
+    /// ① 续跑时子集若已完整（带校验标记）直接复用，不做"删几千个文件再拷一遍"；
+    /// ② 清理与复制全程在后台线程，并上报进度（否则几千个文件静默几十秒，看起来像卡死）；
+    /// ③ 逐个文件带退避重试，真清不掉就换备用目录，绝不因为一个被占用的文件让任务失败。
+    /// 返回可用的子集目录；失败返回 null。</summary>
+    private async Task<string?> EnsureKeptSubsetAsync(string tempRoot, string srcDir, string dstDir, CancellationToken ct)
+    {
+        var keptIndices = TryReadDedupKeptIndices(tempRoot);
+        if (keptIndices.Count == 0)
+        {
+            _logger.Warn("帧去重：地图里没有保留帧序号，无法准备补帧输入子集");
+            return null;
+        }
+
+        if (KeptSubsetUsable(dstDir, srcDir, keptIndices))
+        {
+            _logger.Info($"帧去重：补帧输入子集已存在且校验一致（{keptIndices.Count} 帧），直接复用");
+            return dstDir;
+        }
+
+        if (await TryBuildKeptSubsetAsync(srcDir, dstDir, keptIndices, ct)) return dstDir;
+
+        var altDir = dstDir + "_b";
+        _logger.Warn($"帧去重：{Path.GetFileName(dstDir)} 准备失败（可能被残留进程或杀毒软件占用），" +
+                     $"改用备用目录 {Path.GetFileName(altDir)} 重试");
+        if (await TryBuildKeptSubsetAsync(srcDir, altDir, keptIndices, ct)) return altDir;
+        return null;
+    }
+
+    private async Task<bool> TryBuildKeptSubsetAsync(string srcDir, string dstDir, List<int> keptIndices, CancellationToken ct)
+    {
+        try
+        {
+            // 清理旧内容：逐个删（带退避重试，并上报进度）。整体 Directory.Delete 只要有一个文件被占用
+            // 就全盘失败，这正是"重启后 Access to the path ... is denied"的直接原因。
+            // 注意清【全部】文件而不只是 *.png：目录里任何非图片残留都会让 RIFE 解码失败而崩溃。
+            var stale = Directory.Exists(dstDir)
+                ? Directory.GetFiles(dstDir)
+                : Array.Empty<string>();
+            if (stale.Length > 0)
+            {
+                // 先立刻推一条 0/N：中断重跑时这里要删掉上次的保留帧子集，大目录删到第 200 个才有反馈会像卡死
+                var startText = $"帧去重：准备补帧输入（清理上次残留）0/{stale.Length}";
+                _logger.Info(startText);
+                ProgressChanged?.Invoke(new ProcessProgress
+                {
+                    Stage = ProcessStage.Splitting,
+                    StageText = "帧去重：准备补帧输入",
+                    Current = 0,
+                    Total = stale.Length,
+                    PercentDisplay = true,
+                    CustomDetail = startText
+                });
+                await Task.Run(() =>
+                {
+                    for (var i = 0; i < stale.Length; i++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        TryDeleteWithRetry(stale[i]);
+                        if ((i + 1) % 200 == 0 || i + 1 == stale.Length)
+                        {
+                            var text = $"帧去重：准备补帧输入（清理上次残留）{i + 1}/{stale.Length}";
+                            _logger.Info(text);
+                            ProgressChanged?.Invoke(new ProcessProgress
+                            {
+                                Stage = ProcessStage.Splitting,
+                                StageText = "帧去重：准备补帧输入",
+                                Current = i + 1,
+                                Total = stale.Length,
+                                PercentDisplay = true,
+                                CustomDetail = text
+                            });
+                        }
+                    }
+                }, ct);
+            }
+            else if (!Directory.Exists(dstDir))
+            {
+                Directory.CreateDirectory(dstDir);
+            }
+            try { File.Delete(KeptSubsetMarkerPath(dstDir)); } catch { }
+
+            var total = keptIndices.Count;
+            var written = 0;
+            long bytes = 0;
+            await Task.Run(() =>
+            {
+                for (var k = 0; k < total; k++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var src = Path.Combine(srcDir, $"{keptIndices[k]:D8}.png");
+                    if (!File.Exists(src)) throw new FileNotFoundException($"源帧不存在：{src}");
+                    var dst = Path.Combine(dstDir, $"{k + 1:D8}.png");
+                    HardLinkOrCopy(src, dst);
+                    bytes += new FileInfo(dst).Length;
+                    written++;
+                    if (written % 200 == 0 || written == total)
+                    {
+                        var text = $"帧去重：准备补帧输入（保留帧）{written}/{total}";
+                        _logger.Info(text);
+                        ProgressChanged?.Invoke(new ProcessProgress
+                        {
+                            Stage = ProcessStage.Splitting,
+                            StageText = "帧去重：准备补帧输入",
+                            Current = written,
+                            Total = total,
+                            PercentDisplay = true,
+                            CustomDetail = text
+                        });
+                    }
+                }
+            }, ct);
+
+            var onDisk = Directory.GetFiles(dstDir, "*.png").Length;
+            if (onDisk != total)
+            {
+                _logger.Warn($"帧去重：补帧输入子集数量不符（{onDisk}/{total}，源目录 {srcDir}）");
+                return false;
+            }
+            File.WriteAllText(KeptSubsetMarkerPath(dstDir), System.Text.Json.JsonSerializer.Serialize(
+                new KeptSubsetMarker(total, bytes, srcDir, FingerprintOf(keptIndices))));
+            _logger.Info($"帧去重：补帧输入已缩为保留帧子集 {total} 帧（源目录 {srcDir}）");
+            return true;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warn($"帧去重：准备补帧输入子集失败（{dstDir}）：{ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>带退避重试的复制：预览解码、杀毒实时扫描、上一次残留的进程都可能短暂占用目标文件。
+    /// 目标若是只读（拷贝会继承属性）先去掉只读位再覆盖。</summary>
+    private static void CopyWithRetry(string src, string dst, int attempts = 5)
+    {
+        for (var i = 0; i < attempts; i++)
+        {
+            try
+            {
+                if (File.Exists(dst))
+                {
+                    var a = File.GetAttributes(dst);
+                    if ((a & FileAttributes.ReadOnly) != 0) File.SetAttributes(dst, a & ~FileAttributes.ReadOnly);
+                }
+                File.Copy(src, dst, overwrite: true);
+                return;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            Thread.Sleep(150 * (i + 1));
+        }
+        throw new IOException($"复制失败（目标被占用或不可写）：{dst}");
+    }
+
+    /// <summary>带退避重试的删除；始终失败只告警返回（留着的内容会让数量校验失败，由调用方换备用目录）。</summary>
+    private static void TryDeleteWithRetry(string path, int attempts = 4)
+    {
+        for (var i = 0; i < attempts; i++)
+        {
+            try
+            {
+                if (!File.Exists(path)) return;
+                var a = File.GetAttributes(path);
+                if ((a & FileAttributes.ReadOnly) != 0) File.SetAttributes(path, a & ~FileAttributes.ReadOnly);
+                File.Delete(path);
+                return;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            Thread.Sleep(120 * (i + 1));
+        }
+    }
+
+    /// <summary>预热 SFDP 孪生网络（ONNX）。返回 null 表示本次不能用 AI 判决（模型缺失/加载失败），
+    /// 调用方自动回退四阶判决器，不中断处理。
+    ///
+    /// 为什么必须预热：首个会话要把 ~10MB 模型读进内存、建 DirectML 会话、上传算子与常量缓冲区，
+    /// 首帧判决能卡好几秒，进度条看着像死了。预热时先把这些做一遍（含一次哑推理），
+    /// 正式判决从第一帧起就是全速。</summary>
+    private async Task<SiameseDedupService?> WarmupDedupAiAsync(ProcessingContext ctx, CancellationToken ct)
+    {
+        var modelPath = SiameseDedupService.ModelPathFor(
+            ToolPathResolver.ResolveToolsRoot(ctx.Settings.ToolsRoot), ctx.Settings.DedupMode);
+
+        ProgressChanged?.Invoke(new ProcessProgress
+        {
+            Stage = ProcessStage.Splitting,
+            StageText = "正在预热AI模型",
+            Current = 0,
+            Total = 0,
+            PercentDisplay = false
+        });
+
+        try
+        {
+            var svc = await SiameseDedupService.WarmupAsync(modelPath, ct);
+            if (svc is null)
+            {
+                _logger.Warn($"帧去重：未找到 AI 模型 {modelPath}，本次回退四阶判决");
+                return null;
+            }
+            _logger.Info($"帧去重：AI 模型预热完成（{svc.Provider} — {Path.GetFileName(svc.ModelPath)}）");
+            return svc;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warn($"帧去重：AI 模型预热失败（{ex.Message}），本次回退四阶判决");
+            return null;
+        }
+    }
+
+    /// <summary>阶段1.5：相邻帧去重。判为重复的帧移到 input_frames_dedup_removed（不真删），
+    /// 写 dedup_map.json（keptCount + 回填位置表）。返回保留帧数；未生效返回 0。</summary>
+    private async Task<int> RunDedupAsync(ProcessingContext ctx, string tempRoot, string inputFrames, long totalFrames, CancellationToken ct)
+    {
+        try
+        {
+            var kept = CountFrames(inputFrames);
+
+            // 续跑：map 已存在且与实际帧数对得上 → 直接复用，不重复分析。
+            // 勾选补帧时重复帧留在 input_frames 里（比全量），未勾选时已被移出（比保留数）。
+            var cached = TryReadDedupKept(tempRoot);
+            if (cached > 0 && (ctx.Options.Interpolation ? kept == totalFrames : cached == kept))
+            {
+                _logger.Info($"帧去重：复用已有结果（保留 {cached} / {totalFrames} 帧）");
+                return cached;
+            }
+
+            // 拆帧结果不完整时不做（避免把不完整序列当成完整序列去重）
+            if (kept < totalFrames)
+            {
+                _logger.Warn($"帧去重跳过：拆帧结果不完整（{kept}/{totalFrames} 帧）");
+                return 0;
+            }
+
+            var modeText = ctx.Settings.DedupMode == "uhd" ? "UHD Mode 完美模式" : "Performance Mode 性能模式";
+            _logger.Info($"帧去重开始（{modeText}）：共 {kept} 帧");
+            var modeShort = ctx.Settings.DedupMode == "uhd" ? "完美" : "性能";
+
+            var opt = FrameDedupService.Options.FromMode(ctx.Settings.DedupMode);
+            // 勾选补帧时：超分对全部源帧跑，去重只省补帧的算力 —— 重复帧必须留在 input_frames 里供超分使用。
+            // 未勾选补帧时：去重省的是超分，把重复帧移出 input_frames（保留在 removed 目录，便于排查/回退）。
+            var dedupOnlyForIf = ctx.Options.Interpolation;
+            var removedDir = Path.Combine(tempRoot, "input_frames_dedup_removed");
+            if (!dedupOnlyForIf) Directory.CreateDirectory(removedDir);
+
+            // 进度文本形如：帧去重(性能) AI判决 已判重365帧 第1234帧/共7187帧
+            // （"已判重"=累计判为重复的帧数；"第 N 帧/共 M 帧"=判决进度；百分比单独显示在右侧）
+            string DedupText(string phase, int dup) => $"帧去重({modeShort}) {phase} 已判重{dup}帧";
+
+            // AI 判决：进入 AI 阶段先预热模型（读盘 + 建 DirectML 会话 + 哑推理），
+            // 否则第一帧判决会愣在那儿，用户看到的是"进度条不动"。
+            // 模型缺失/加载失败时返回 null，本次回退四阶判决器，不影响正常出片。
+            var ai = await WarmupDedupAiAsync(ctx, ct);
+
+            void ReportDedup(FrameDedupService.AnalysisProgress pr) =>
+                ProgressChanged?.Invoke(new ProcessProgress
+                {
+                    Stage = ProcessStage.Splitting,
+                    StageText = DedupText(pr.Phase, pr.DuplicateCount),
+                    Current = pr.Done,
+                    Total = pr.Total,
+                    PercentDisplay = false,   // 用"第 N 帧/共 M 帧"表达判决进度，避免与"已判重 N 帧"挨在一起被误读
+                    FrameCompareMode = true,
+                    // 三联预览：右「筛选帧」= 正在判决的帧；中「对比帧」= 与它作比较的上一帧；
+                    // 左「判决帧」= 最近被判为重复的那张（还没判出重复时留空）
+                    LatestFramePath = pr.CurrentFramePath,
+                    CompareFramePath = pr.CompareFramePath,
+                    CompareFrameIndex = pr.CompareIndex,
+                    VerdictFramePath = pr.VerdictFramePath,
+                    VerdictFrameIndex = pr.VerdictIndex
+                });
+
+            var result = ai is not null
+                ? await ai.AnalyzeAsync(inputFrames, opt, ReportDedup, ct)
+                : await FrameDedupService.AnalyzeAsync(inputFrames, opt, ReportDedup, ct);
+
+            var decisions = result.Decisions.ToList();
+            var moveFailed = 0;
+            if (!dedupOnlyForIf)
+            {
+                // 重复帧移出 input_frames（保留在 removed 目录，便于排查/回退）
+                ProgressChanged?.Invoke(new ProcessProgress
+                {
+                    Stage = ProcessStage.Splitting,
+                    StageText = DedupText("搬移重复帧", result.DuplicateCount),
+                    Current = result.Total,
+                    Total = result.Total,
+                    PercentDisplay = true,
+                    FrameCompareMode = true
+                });
+                // 逐个搬移并重试：预览图解码、杀毒软件实时扫描、资源管理器缩略图都可能短暂占用 PNG。
+                // 极个别帧始终搬不动时，把它改判为"保留"——必须保证判决表与磁盘上的实际帧数一致，
+                // 否则回填表会与文件对不上（成品帧数、时长都会缩水）。
+                // 搬移是几千次文件操作（含失败重试），必须放后台线程，否则会阻塞 UI
+                await Task.Run(() =>
+                {
+                    for (var i = 0; i < decisions.Count; i++)
+                    {
+                        var d = decisions[i];
+                        if (!d.Duplicate) continue;
+                        var src = Path.Combine(inputFrames, $"{d.Index:D8}.png");
+                        if (!File.Exists(src)) continue;
+                        var dst = Path.Combine(removedDir, $"{d.Index:D8}.png");
+                        if (!TryMoveFrame(src, dst))
+                        {
+                            decisions[i] = d with { Duplicate = false };
+                            moveFailed++;
+                        }
+                    }
+                }, ct);
+                if (moveFailed > 0)
+                {
+                    _logger.Warn($"帧去重：{moveFailed} 帧因文件被占用无法移出，已改判为保留（成品帧数与时长不受影响）；" +
+                                 "若频繁出现，可关闭图片预览或把临时目录加入杀毒软件实时扫描白名单");
+                    ProgressChanged?.Invoke(new ProcessProgress
+                    {
+                        Stage = ProcessStage.Splitting,
+                        StageText = DedupText("搬移重复帧", decisions.Count(x => x.Duplicate)),
+                        Current = decisions.Count,
+                        Total = decisions.Count,
+                        PercentDisplay = true,
+                        FrameCompareMode = true
+                    });
+                }
+            }
+
+            // 回填位置表：第 k 个输出槽位应取"保留序列"里的第几帧（1 基）
+            var expandPos = new List<int>(decisions.Count);
+            // 保留帧的源序号（1 基）：补帧输入子集按它从超分产物里挑帧（超分对全部源帧跑了）
+            var keptIndices = new List<int>();
+            var seenKept = 0;
+            for (var i = 0; i < decisions.Count; i++)
+            {
+                if (!decisions[i].Duplicate)
+                {
+                    seenKept++;
+                    keptIndices.Add(i + 1);
+                }
+                expandPos.Add(Math.Max(1, seenKept));
+            }
+
+            var keptNow = dedupOnlyForIf ? keptIndices.Count : CountFrames(inputFrames);
+            var movedCount = decisions.Count(x => x.Duplicate);   // 真实剔除量
+            var dedupRate = decisions.Count > 0 ? (double)movedCount / decisions.Count : 0;
+            File.WriteAllText(DedupMapPath(tempRoot), System.Text.Json.JsonSerializer.Serialize(new
+            {
+                mode = ctx.Settings.DedupMode,
+                total = result.Total,
+                keptCount = keptNow,
+                duplicateCount = movedCount,
+                expandPos,
+                keptIndices
+            }));
+
+            _logger.Success(dedupOnlyForIf
+                ? $"帧去重完成：剔除 {movedCount} 帧；超分仍处理全部 {decisions.Count} 帧，补帧只处理 {keptNow} 帧（省 {dedupRate:P1}）"
+                : $"帧去重完成：剔除 {movedCount} 帧，实际处理 {keptNow} 帧（省 {dedupRate:P1}），重复帧保留在 {removedDir}");
+
+            if (ai is not null)
+            {
+                // AI 判决：Mad 位存的是模型给出的相似度分，直接看分布最有诊断价值
+                var sims = result.Decisions.Where(d => d.Decided == FrameDedupService.Stage.Ai)
+                    .Select(d => d.Mad).ToList();
+                var threshold = opt.Mode == "uhd" ? 0.5 : 0.6;
+                if (sims.Count > 0)
+                    _logger.Info($"AI 判决：相似度最低 {sims.Min():0.###}，最高 {sims.Max():0.###}，" +
+                                 $"阈值 {threshold:0.##} → 判重 {result.DuplicateCount} 帧（{ai.Provider}）");
+            }
+            else
+            {
+                // 各阶淘汰量（四阶判决器的可观测性：出问题时能一眼看出卡在哪一阶）
+                var byPixel = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.PixelDiff);
+                var byHash = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.Hash);
+                var byQr = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.Qr);
+                var byFlow = result.Decisions.Count(d => d.Decided == FrameDedupService.Stage.Flow);
+                _logger.Info($"各阶判决：像素差淘汰 {byPixel}，dHash 淘汰 {byHash}，QR 淘汰 {byQr}，" +
+                             $"光流淘汰 {byFlow}，四阶全过判重 {result.DuplicateCount}");
+
+                var qrSample = result.Decisions.Where(d => d.Decided >= FrameDedupService.Stage.Qr).Select(d => d.Qr).ToList();
+                if (qrSample.Count > 0)
+                    _logger.Info($"QR 距离 D_norm（论文归一化）：最小 {qrSample.Min():0.###e-0}，最大 {qrSample.Max():0.###e-0}，" +
+                                 $"阈值 {opt.QrThreshold} → 共淘汰 {byQr} 帧");
+                var flowSample = result.Decisions.Where(d => d.Decided >= FrameDedupService.Stage.Flow).Select(d => d.MeanFlow).ToList();
+                if (flowSample.Count > 0)
+                    _logger.Info($"光流 MeanFlow：最小 {flowSample.Min():0.###}，最大 {flowSample.Max():0.###} 像素，" +
+                                 $"阈值 {opt.FlowThreshold} → 共淘汰 {byFlow} 帧");
+            }
+            return keptNow;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warn($"帧去重失败，本次按不去重继续：{ex.Message}");
+            return 0;
+        }
+    }
+
+    /// <summary>合并前回填：按 dedup_map.json 的位置表，把保留帧展开成完整序列。
+    /// ratio = 每个源帧在成片里占的帧数（补帧倍率，或"目标帧率 ÷ 源帧率"得到的小数；不补帧时 = 1），
+    /// blockMult = RIFE 输出里"每个保留帧占几帧"的整数粒度（= round(ratio)），用于在保留帧区块里取插值帧。
+    ///
+    /// 映射方式：**按输出帧的时间位置**逐帧取源（而不是"每个槽位固定 ratio 帧"）——
+    /// ratio 是小数时每个槽位占的帧数会交替取整（如 5.005 → 多数槽位 5 帧、少数 6 帧），
+    /// 只有按时间取帧才能让输出帧数 = round(源帧数×ratio) 且时间轴不错位。
+    ///
+    /// 内容规则（BUG-18 修正）：
+    /// - 重复段（该帧被判为与上一帧重复，段长 &gt; 1）→ **整段（含段尾）定格**，取该源帧自身的产物；
+    ///   段尾不能放过渡帧：RIFE 只被要求给"相邻两个保留帧之间" blockMult 帧，而这一段在成片里
+    ///   横跨 L 个源槽位，那 blockMult 帧是按整段均匀摊的 —— 拿来当段尾的过渡帧会把下一段画面混进来（幽灵帧）。
+    /// - 段长为 1 的源帧（没有重复，下一帧就是另一个源帧）→ 才用 RIFE 的过渡块（该间隔正好等于该槽位时长）。
+    /// selfFramesDir 非空时（勾选补帧：超分对全部源帧跑了），定格帧取该源帧**自身**的产物。
+    /// 返回 true 表示已生成可用的展开目录（随后合并改读该目录）。</summary>
+    private async Task<bool> TryExpandDedupFramesAsync(string tempRoot, string framesDir, string expandedDir,
+        double ratio, int blockMult, CancellationToken ct, string? selfFramesDir = null)
+    {
+        try
+        {
+            var mapPath = DedupMapPath(tempRoot);
+            if (!File.Exists(mapPath)) return false;
+
+            List<int>? expandPos = null;
+            using (var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(mapPath)))
+            {
+                if (doc.RootElement.TryGetProperty("expandPos", out var arr))
+                {
+                    expandPos = new List<int>();
+                    foreach (var item in arr.EnumerateArray()) expandPos.Add(item.GetInt32());
+                }
+            }
+            if (expandPos is null || expandPos.Count == 0) return false;
+            if (ratio < 1e-6) ratio = 1;
+            if (blockMult < 1) blockMult = 1;
+
+            // 保留帧按文件名排序后的列表：位置表里的序号指向"第几个保留帧"
+            var keptFiles = Directory.GetFiles(framesDir, "*.png");
+            if (keptFiles.Length == 0) return false;
+            Array.Sort(keptFiles, StringComparer.OrdinalIgnoreCase);
+
+            if (Directory.Exists(expandedDir))
+            {
+                // 上一次中断留下的展开目录可能有几万帧：同步删除会卡死 UI，表现为进度文字不动
+                var cleanText = "回填：清理上次展开文件…";
+                ProgressChanged?.Invoke(new ProcessProgress
+                {
+                    Stage = ProcessStage.Merging,
+                    StageText = cleanText,
+                    CustomDetail = cleanText
+                });
+                await Task.Run(() => Directory.Delete(expandedDir, true), ct);
+            }
+            Directory.CreateDirectory(expandedDir);
+
+            // 预扫：每个槽位所属"重复段"的长度。expandPos 非递减，同值连续区间 = 一个重复段
+            // （长度 1 = 该源帧没有重复，后面紧跟的是另一个源帧）。
+            var runLens = new int[expandPos.Count];
+            for (var i = 0; i < expandPos.Count; )
+            {
+                var j = i;
+                while (j + 1 < expandPos.Count && expandPos[j + 1] == expandPos[i]) j++;
+                for (var t = i; t <= j; t++) runLens[t] = j - i + 1;
+                i = j + 1;
+            }
+
+            // 输出总帧数 = round(源帧数 × ratio)：ratio 为整数时等于原来的 源帧数×倍率
+            var totalOut = (long)Math.Round(expandPos.Count * ratio);
+            if (totalOut <= 0) return false;
+
+            await Task.Run(() =>
+            {
+                for (var q = 1; q <= totalOut; q++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    // 第 q 个输出帧对应的源时间（0 基，单位 = 源帧）→ 落在哪个源槽位、槽位内子位置
+                    var pos = (q - 1) / ratio;
+                    var slot = (int)Math.Floor(pos);
+                    if (slot >= expandPos.Count) slot = expandPos.Count - 1;
+                    if (slot < 0) slot = 0;
+                    var f = pos - slot;
+
+                    var selfFile = selfFramesDir is null ? null : Path.Combine(selfFramesDir, $"{slot + 1:D8}.png");
+                    var held = runLens[slot] > 1;   // 重复段（含段尾）整段定格
+                    string? srcPath = null;
+
+                    // 定格段：取该源帧自身的产物（没有自身产物时退回保留帧区块首帧）
+                    if (selfFile is not null && File.Exists(selfFile) && (held || f <= 1e-3))
+                        srcPath = selfFile;
+
+                    if (srcPath is null)
+                    {
+                        // 插值帧：取该槽位对应保留帧区块里、最接近子位置 f 的那一帧
+                        var k = expandPos[slot];
+                        var j = held ? 0 : (int)Math.Round(f * blockMult);
+                        if (j < 0) j = 0;
+                        if (j >= blockMult) j = blockMult - 1;
+                        var srcIdx = (k - 1) * blockMult + j;
+                        if (srcIdx >= 0 && srcIdx < keptFiles.Length) srcPath = keptFiles[srcIdx];
+                        else if (selfFile is not null && File.Exists(selfFile)) srcPath = selfFile;
+                    }
+                    if (srcPath is null) continue;
+
+                    var dst = Path.Combine(expandedDir, $"{q:D8}.png");
+                    try { HardLinkOrCopy(srcPath, dst); }
+                    catch { /* 个别帧链接/复制失败时跳过，不中断整个流程 */ }
+                }
+            }, ct);
+
+            // 回填必须"一个不多一个不少"：展开后的帧数应与 源帧数×比例 严格相等。
+            // 单个 File.Copy 失败上面是 catch 跳过，若最终数量对不上，说明成品会少帧，必须报出来。
+            var n = CountFrames(expandedDir);
+            if (n != totalOut)
+            {
+                _logger.Warn($"帧去重回填不完整：展开 {n} 帧，应为 {totalOut} 帧（个别帧复制失败或源帧缺失）");
+                return false;
+            }
+            _logger.Info($"帧去重回填：{expandPos.Count} 源帧 → 展开为 {n} 帧（{ratio:0.###}×）");
+            return true;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // 这里返回 false 后调用方会直接 Fail 整个任务（见合并阶段），不是"继续跑"，
+            // 日志措辞必须跟行为一致，否则排查时会被误导成"少帧成品已经产出"。
+            _logger.Warn($"帧去重回填失败：{ex.GetType().Name}: {ex.Message}（本次按失败处理，不会产出少帧成品）");
+            return false;
+        }
+    }
+
+    /// <summary>涡轮模式适用性判定：需要勾选超分或补帧（纯粹有外部工具可并行）。
+    /// 帧去重已支持（按块流式判决，判决与 GPU 侧重叠）。</summary>
+    private static bool TurboSupported(ProcessingContext ctx)
+        => ctx.Options.SuperResolution || ctx.Options.Interpolation;
+
+    /// <summary>待 GPU 处理的块：块内帧清单 + 各阶段输出的全局起始编号（块内连续编号需要整体平移）。
+    /// Frames = 该块送超分的全部源帧；KeptOffsets = 去重后保留帧在 Frames 里的
+    /// 下标（0 基，升序），补帧只喂这些帧；为 null 表示未去重，补帧用全部帧。</summary>
+    private sealed record TurboBlock(int Index, List<string> Frames, int SrStartNumber, int IfStartNumber)
+    {
+        public List<int>? KeptOffsets { get; init; }
+
+        /// <summary>该块补帧实际处理的帧数（去重时 = 保留帧数，否则 = 块内全部帧）。</summary>
+        public int IfFrameCount => KeptOffsets?.Count ?? Frames.Count;
+    }
+
+    /// <summary>涡轮模式进度中枢：把 CPU 去重判决与两条 GPU 流水（超分 / 补帧）的进度汇总成**一条单调不倒退的总进度**，
+    /// 并维护每条流水各自的最新产出帧（预览区一格一条流水，互不覆盖）。
+    ///
+    /// 背景：涡轮模式下有三处会同时上报进度 —— 去重按"帧"、块提交按"块"、两条流水各按"块内帧"，
+    /// 口径互不相同又交替到达，百分比在几个口径之间来回跳，这就是"进度条抽抽"的根源。
+    /// 这里统一成「源帧」：每个阶段都要经手全部 N 个源帧（被去重跳过的帧对该阶段而言也算已处理完），
+    /// 总进度 = 各阶段已完成源帧之和 / 各阶段总量之和，且用 _lastPercent 钳成只增不减。
+    /// 这样总量在开跑前就完全确定，不会出现"去重先跑完就把进度条顶到 100%"或中途倒退。</summary>
+    private sealed class TurboProgressHub
+    {
+        private readonly Action<ProcessProgress> _emit;
+        private readonly object _lock = new();
+        private readonly List<Slot> _slots = new();
+        private readonly Dictionary<string, Slot> _byKey = new();
+        /// <summary>单调钳制用的上次百分比：任何情况下都不让进度条倒退</summary>
+        private double _lastPercent;
+        /// <summary>文字节流：流水线每帧都会上报，每次都重排文字会让顶部文案不停抖动，
+        /// 这里限制最快 200ms 推一次；块提交与首次布格子时强制推。</summary>
+        private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        private long _lastEmitMs;
+        private const int EmitIntervalMs = 200;
+
+        private sealed class Slot
+        {
+            public string Key = "";
+            public string StageName = "";
+            /// <summary>该阶段要经手的源帧总数（各阶段相同，开跑前即确定）</summary>
+            public long Total;
+            /// <summary>已完成整块的源帧数（含被去重跳过、对该阶段无需处理的帧）</summary>
+            public long Committed;
+            /// <summary>当前块内已完成的源帧数</summary>
+            public long Live;
+            /// <summary>最新产出帧路径与帧号（预览用）</summary>
+            public string Path = "";
+            public long FrameIndex;
+        }
+
+        public TurboProgressHub(Action<ProcessProgress> emit) => _emit = emit;
+
+        /// <summary>注册一条流水线，编号按注册顺序（预览标签「流水线 N」即由此而来）。</summary>
+        public void AddPipeline(string key, string stageName, long total)
+        {
+            lock (_lock)
+            {
+                var slot = new Slot { Key = key, StageName = stageName, Total = Math.Max(0, total) };
+                _slots.Add(slot);
+                _byKey[key] = slot;
+            }
+        }
+
+        /// <summary>汇报某阶段当前块的处理进度：done = 本块内已完成的源帧数。</summary>
+        public void Advance(string key, long done, string? path = null, long frameIndex = 0)
+        {
+            lock (_lock)
+            {
+                if (!_byKey.TryGetValue(key, out var s)) return;
+                s.Live = Math.Max(0, done);
+                if (!string.IsNullOrEmpty(path)) { s.Path = path; s.FrameIndex = frameIndex; }
+                EmitLocked(false);
+            }
+        }
+
+        /// <summary>某阶段处理完一整块：本块源帧数计入已完成，块内进度清零。</summary>
+        public void CommitBlock(string key, long sourceFrames)
+        {
+            lock (_lock)
+            {
+                if (!_byKey.TryGetValue(key, out var s)) return;
+                s.Committed += Math.Max(0, sourceFrames);
+                s.Live = 0;
+                EmitLocked(true);
+            }
+        }
+
+        /// <summary>被去重剔除的源帧：它们不会再进 GPU，对这些阶段视作已处理完（否则进度条永远到不了 100%）。</summary>
+        public void Credit(string key, long sourceFrames)
+        {
+            lock (_lock)
+            {
+                if (!_byKey.TryGetValue(key, out var s) || sourceFrames <= 0) return;
+                s.Committed += sourceFrames;
+            }
+        }
+
+        /// <summary>立刻按当前状态推一次进度（用于开跑时先把预览区各流水格子摆出来）。</summary>
+        public void Emit()
+        {
+            lock (_lock) EmitLocked(true);
+        }
+
+        private void EmitLocked(bool force)
+        {
+            var now = _clock.ElapsedMilliseconds;
+            if (!force && now - _lastEmitMs < EmitIntervalMs) return;
+            _lastEmitMs = now;
+
+            long done = 0, total = 0;
+            var parts = new List<string>(_slots.Count);
+            var names = new List<string>(_slots.Count);
+            var pipelines = new List<PipelineFramePreview>(_slots.Count);
+            for (var i = 0; i < _slots.Count; i++)
+            {
+                var s = _slots[i];
+                var live = Math.Min(s.Committed + s.Live, s.Total);
+                done += live;
+                total += s.Total;
+                parts.Add($"{s.StageName} {live}/{s.Total}");
+                names.Add(s.StageName);
+                pipelines.Add(new PipelineFramePreview
+                {
+                    Key = s.Key,
+                    Label = $"流水线 {i + 1}（{s.StageName}）",
+                    FramePath = s.Path,
+                    FrameIndex = s.FrameIndex
+                });
+            }
+
+            var percent = total > 0 ? Math.Min(100.0, done * 100.0 / total) : 0;
+            if (percent < _lastPercent) percent = _lastPercent;   // 单调钳制：绝不倒退
+            else _lastPercent = percent;
+
+            var summary = parts.Count > 0 ? string.Join(" · ", parts) : "准备中";
+            var stageLine = names.Count > 0 ? string.Join(" + ", names) : "准备中";
+            _emit(new ProcessProgress
+            {
+                Stage = ProcessStage.SuperRes,
+                StageText = $"[涡轮] {summary}（源帧）",
+                Current = (long)Math.Round(percent),
+                Total = 100,
+                PercentDisplay = true,
+                // 明细里不再带百分比（右侧已有唯一的百分比），也不再逐帧刷新数字：
+                // 文案固定后顶部这行不会因为数字位数变化而左右抖动。
+                CustomDetail = $"[涡轮] {stageLine} 并行推进 · 共 {total} 源帧",
+                Pipelines = pipelines
+            });
+        }
+    }
+
+    /// <summary>涡轮模式核心：把帧序列切成块，CPU 侧按块准备输入（开了帧去重时判决也在这里做），
+    /// 两条 GPU 流水用有界队列串起来——超分 worker 处理块 n+1 的同时补帧 worker 正在处理块 n，
+    /// 两个外部进程真正同时跑；队列容量 2 形成背压，避免帧文件与显存双爆。
+    /// 产物按全局连续编号写入 srFrames / ifFrames，与逐阶段串行的目录结构完全一致，
+    /// 因此后续阶段会凭"帧数够"自动跳过，合并阶段不需要任何改动。
+    /// 返回 (Ok, DedupKept)：Ok=false 表示未完成（调用方回退逐阶段串行）；DedupKept 是流水线内
+    /// 做完去重后的保留帧数（未启用去重时为 0，调用方据此跳过串行去重）。</summary>
+    private async Task<(bool Ok, int DedupKept)> RunTurboBlocksAsync(PipelineState st, bool cpu, CancellationToken ct)
+    {
+        var ctx = st.Ctx;
+        var tempRoot = st.TempRoot;
+        var inputFrames = st.InputFrames;
+        var srFrames = st.SrFrames;
+        var ifFrames = st.IfFrames;
+        var totalFrames = st.TotalFrames;
+        var ifMult = st.IfMult;
+        var blockFrames = Math.Clamp(ctx.Settings.TurboBlockFrames, 32, 4000);
+        var turboRoot = Path.Combine(tempRoot, "turbo_blocks");
+
+        // 线程：两条流水都用各自阶段的解码/编码线程（见高级页四段滑块），不由涡轮对半分。
+        // 早先试过「两条流水各分一半」（8 → 每条 4），实测反而慢一大截：单个进程用满线程比两个进程各半
+        // 高效得多（模型只加载一次、显存与调度冲突少）。296 帧 360p 实测：串行 1:8:8 = 58.5s，
+        // 涡轮两条各 1:8:8 = 59.6s，涡轮两条各 1:4:4 = 72.7s。线程数交给用户自己权衡。
+        // 四段线程：超分、补帧各自用自己的解码/编码线程（与逐阶段路径保持一致）
+        var srJThreads = $"{Math.Clamp(ctx.Settings.SrDecodeThreads, 1, 32)}:{Math.Clamp(ctx.Settings.SrEncodeThreads, 1, 32)}:{Math.Clamp(ctx.Settings.SrEncodeThreads, 1, 32)}";
+        var ifJThreads = $"{Math.Clamp(ctx.Settings.IfDecodeThreads, 1, 32)}:{Math.Clamp(ctx.Settings.IfEncodeThreads, 1, 32)}:{Math.Clamp(ctx.Settings.IfEncodeThreads, 1, 32)}";
+
+        var files = Directory.GetFiles(inputFrames, "*.png");
+        Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+        if (files.Length == 0)
+        {
+            _logger.Warn("[涡轮] 输入帧目录为空，无法进行块级流水");
+            return (false, 0);
+        }
+
+        try
+        {
+            if (Directory.Exists(turboRoot))
+            {
+                // 上次中断留下的块目录可能有上万个文件：同步递归删除会卡住 UI 线程，
+                // 表现就是进度文字一直停在"准备中"却还在跑。这里先给文案，再丢后台线程删。
+                var cleanText = "准备中：清理上次涡轮临时文件…";
+                ProgressChanged?.Invoke(new ProcessProgress
+                {
+                    Stage = ProcessStage.SuperRes,
+                    StageText = cleanText,
+                    CustomDetail = cleanText
+                });
+                await Task.Run(() => Directory.Delete(turboRoot, true), ct);
+            }
+            Directory.CreateDirectory(turboRoot);
+            await CleanPartialOutputAsync(srFrames, ProcessStage.SuperRes, "超分中", ct);
+            if (ctx.Options.Interpolation)
+                await CleanPartialOutputAsync(ifFrames, ProcessStage.Interpolating, "补帧中", ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warn($"[涡轮] 初始化临时目录失败：{ex.Message}");
+            return (false, 0);
+        }
+
+        // 帧去重判决也并进流水线：判决是纯 CPU 运算（dHash / QR / 光流），正好与 GPU 侧重叠。
+        // 拆帧结果不完整时不做（与串行路径同一条规则），本次交给后面的串行阶段处理。
+        var streamDedup = ctx.Settings.DedupEnabled && files.Length >= totalFrames;
+        if (ctx.Settings.DedupEnabled && !streamDedup)
+            _logger.Warn($"[涡轮] 拆帧结果不完整（{files.Length}/{totalFrames} 帧），本次不做去重判决");
+        var dedupOpt = streamDedup ? FrameDedupService.Options.FromMode(ctx.Settings.DedupMode) : null;
+        var dedupModeShort = ctx.Settings.DedupMode == "uhd" ? "完美" : "性能";
+        // AI 判决：进入 AI 阶段先预热 ONNX 模型（理由见 WarmupDedupAiAsync）。
+        // 放在进度中枢建立之前，进度文字就停在「正在预热AI模型」，模型就绪后才开始块级流水。
+        var dedupAi = streamDedup ? await WarmupDedupAiAsync(ctx, ct) : null;
+        // 全局原始判决（未做时序平滑）：下标 = 原始帧号 - 1
+        var raw = streamDedup ? new List<FrameDedupService.FrameDecision>(files.Length) : null;
+        // 定稿判决（下标 = 原始帧号 - 1）：发布一块时写入，之后不再改动。
+        // 末尾不再对 raw 统一跑一次时序平滑 —— 发布时每块都已掌握全局长度，结论就是最终结论；
+        // 末尾再平滑一次只会在"搬不动改判保留"改变过序列之后产生级联差异（实测差 6 帧、被判据对不上拦下）。
+        var finalDup = streamDedup ? new bool[files.Length] : null;
+        var finalized = 0;   // 已写入定稿表的帧数
+        var removedDir = Path.Combine(tempRoot, "input_frames_dedup_removed");
+        var dedupMoveFailed = 0;
+        // 勾选补帧时超分对整块全部帧跑，重复帧不能移出（超分要用它们）；
+        // 只有"去重省超分"的路径（未勾选补帧）才需要搬移目录。
+        var dedupMovesFrames = streamDedup && !ctx.Options.Interpolation;
+        if (dedupMovesFrames) Directory.CreateDirectory(removedDir);   // 搬移重复帧前必须先建好目标目录
+
+        var blockCount = (int)Math.Ceiling(files.Length / (double)blockFrames);
+        _logger.Info($"[涡轮] 块级流水开始：{files.Length} 帧 → {blockCount} 块 × {blockFrames} 帧，" +
+                     (streamDedup
+                         ? $"CPU 侧去重判决（{dedupModeShort}模式）与 GPU 侧超分/补帧同时进行"
+                         : "CPU 侧准备与 GPU 侧超分/补帧同时进行"));
+
+        // 涡轮统一进度中枢：三处并发上报（去重按帧、块提交按块、两条流水各按块内帧）在这里汇总成一条单调总进度，
+        // 同时按流水保存各自的最新产出帧（预览区一格一条流水）。不走涡轮的串行路径完全不经过这里，行为不变。
+        // 计量统一成「源帧」：每个阶段都要经手全部 files.Length 个源帧，被去重跳过的帧由 Credit 记为已完成。
+        var hub = new TurboProgressHub(p => ProgressChanged?.Invoke(p));
+        if (streamDedup) hub.AddPipeline("dedup", "帧去重", files.Length);
+        if (ctx.Options.SuperResolution) hub.AddPipeline("sr", "超分", files.Length);
+        if (ctx.Options.Interpolation) hub.AddPipeline("if", "补帧", files.Length);
+        hub.Emit();   // 先把各流水的格子摆出来，预览区立刻能看出当前在跑几条流水
+
+        // 两条 GPU 流水串起来：超分 worker 处理块 n+1 的同时，补帧 worker 正在处理块 n，
+        // 两个外部进程各吃一份显存、真正同时跑；CPU 侧负责把下一块的帧喂进来。
+        // 队列容量 2：手里最多压两块，再往上就让上游等 —— 这就是背压，避免帧文件与显存双爆。
+        var srQueue = Channel.CreateBounded<TurboBlock>(new BoundedChannelOptions(2)
+        {
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait
+        });
+        var ifQueue = Channel.CreateBounded<TurboBlock>(new BoundedChannelOptions(2)
+        {
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait
+        });
+
+        // 故障联动：任一 worker 抛异常时必须取消整条流水，否则另一侧会因为输出队列满（容量 2 + Wait）
+        // 永久阻塞在 WriteAsync 上 —— 表现是"处理卡住不动"，而不是报错退出，用户完全不知道该重试还是清理。
+        // turboToken 用于本流水内部的所有读写与子进程调用；用户按停止走的是外层 ct，两者区分开，
+        // 这样"用户主动停止"与"worker 报错"能在最后分辨，前者不掩盖、后者不漏报。
+        using var turboCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var turboToken = turboCts.Token;
+
+        var srWorker = Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (var block in srQueue.Reader.ReadAllAsync(turboToken))
+                {
+                    if (!await SuperResBlockAsync(ctx, block, turboRoot, srFrames, srJThreads, cpu, turboToken,
+                            p => hub.Advance("sr", p.Current, p.LatestFramePath,
+                                             block.SrStartNumber + Math.Max(0, p.Current - 1))))
+                        throw new InvalidOperationException($"第 {block.Index} 块超分失败");
+                    hub.CommitBlock("sr", block.Frames.Count);
+                    await ifQueue.Writer.WriteAsync(block, turboToken);
+                }
+                ifQueue.Writer.Complete();
+            }
+            catch (Exception ex)
+            {
+                ifQueue.Writer.TryComplete(ex);
+                turboCts.Cancel();   // 联动：让补帧侧与生产侧都不要再等
+                throw;
+            }
+        }, turboToken);
+
+        // 补帧流水的进度上报：进度中枢按「源帧」计量，所以把"已产出的输出帧数"换算回源帧数；
+        // 借了下一块的首帧会多算一份插值，这里按本块补帧实际处理的帧数（去重时 = 保留帧数）封顶。
+        Action<ProcessProgress> ReportIf(TurboBlock block)
+        {
+            var sourceFrames = (long)block.IfFrameCount;
+            return p =>
+            {
+                var done = Math.Min(p.Current / ifMult, sourceFrames);
+                hub.Advance("if", done, p.LatestFramePath, block.IfStartNumber + Math.Max(0, p.Current - 1));
+            };
+        }
+
+        var ifWorker = Task.Run(async () =>
+        {
+            // 补帧侧原来没有 try/catch：它一旦抛异常就没人再读 ifQueue，超分侧会永久阻塞在 WriteAsync 上。
+            // 现在失败时同时把上游队列关掉 + 取消整条流水，故障表现为明确报错而不是卡死。
+            try
+            {
+            // 押后一块再补帧：要知道"下一帧"是谁才能把块的末帧插值对。
+            // RIFE 对没有后继的末帧只能原地保持，而整段处理时它是与下一帧的插值结果 ——
+            // 押后一块就能把下一块的首帧借来当"下一帧"，块边界与整段处理结果完全一致。
+            TurboBlock? pending = null;
+            await foreach (var block in ifQueue.Reader.ReadAllAsync(turboToken))
+            {
+                if (pending is not null)
+                {
+                    if (!await InterpBlockAsync(ctx, pending, turboRoot, ifFrames, ifMult, ifJThreads, cpu, LookaheadOf(block), turboToken, ReportIf(pending)))
+                        throw new InvalidOperationException($"第 {pending.Index} 块补帧失败");
+                    hub.CommitBlock("if", pending.IfFrameCount);
+                }
+                pending = block;
+            }
+            // 最后一块没有"下一块"，它的末帧本来就是原地保持（整段处理时也一样）
+            if (pending is not null)
+            {
+                if (!await InterpBlockAsync(ctx, pending, turboRoot, ifFrames, ifMult, ifJThreads, cpu, null, turboToken, ReportIf(pending)))
+                    throw new InvalidOperationException($"第 {pending.Index} 块补帧失败");
+                hub.CommitBlock("if", pending.IfFrameCount);
+            }
+            }
+            catch (Exception ex)
+            {
+                srQueue.Writer.TryComplete(ex);
+                turboCts.Cancel();     // 联动：让超分侧与生产侧都不要再等
+                throw;
+            }
+        }, turboToken);
+
+        /// <summary>下一块里"第一个保留帧"的产物路径：补帧拿它当"下一帧"，让本块末帧的插值与整段一致。
+        /// 去重时该块超分产物是全帧，所以必须按保留帧下标取，不能直接取 00000001。</summary>
+        string LookaheadOf(TurboBlock next)
+        {
+            var dir = Path.Combine(turboRoot, $"block_{next.Index:D4}",
+                ctx.Options.SuperResolution ? "sr_out" : "sr_in");
+            var off = next.KeptOffsets is { Count: > 0 } ko ? ko[0] : 0;
+            return Path.Combine(dir, $"{off + 1:D8}.png");
+        }
+
+        var srNumber = 1;
+        var ifNumber = 1;
+
+        // ---- 开帧去重时 CPU 侧的额外工作（判决与 GPU 侧重叠）----
+        // 判决按块流水：块末尾的重复段要看到下一块才知道真实长度（时序平滑会把孤立的短重复段撤销），
+        // 所以「判决」跑在前面、「定稿交付给 GPU」晚一块 —— GPU 一直在吃已经定稿的块，不会等整段判完。
+
+        async Task DecideDedupBlockAsync(int b)
+        {
+            var s = b * blockFrames;
+            var e = Math.Min((b + 1) * blockFrames, files.Length);
+            var carry = s > 0;   // 首块没有可比对象
+            var batch = new List<string>(e - s + 1);
+            // 把上一块的末帧放在清单最前面当"对比帧"：判决只看相邻两帧，这样块内判决与整段一次跑完全一致，
+            // 也不用为每块复制一份帧文件。
+            if (carry) batch.Add(files[s - 1]);
+            for (var i = s; i < e; i++) batch.Add(files[i]);
+
+            void ReportDedup(FrameDedupService.AnalysisProgress pr)
+            {
+                // 进度中枢按"块内已完成帧数"累加，所以这里传本块内的判决数（含对比帧的要扣掉）；
+                // 预览标签用全局帧号，单独算。涡轮下一格一条流水，不给三联（FrameCompareMode=false）。
+                var off = carry ? 1 : 0;
+                var local = Math.Max(0, pr.Done - off);
+                hub.Advance("dedup", local, pr.CurrentFramePath, s + local);
+            }
+
+            var result = dedupAi is not null
+                ? await dedupAi.AnalyzeAsync(batch, dedupOpt!, ReportDedup, ct, applySmoothing: false)
+                : await FrameDedupService.AnalyzeAsync(batch, dedupOpt!, ReportDedup, ct, applySmoothing: false);
+
+            // 丢掉对比帧那一条（它属于上一块），其余按全局帧号补上索引
+            var skip = carry ? 1 : 0;
+            for (var k = skip; k < result.Decisions.Count; k++)
+                raw!.Add(result.Decisions[k] with { Index = s + (k - skip) + 1 });
+
+            hub.CommitBlock("dedup", e - s);   // 本块判决完毕
+        }
+
+        // 定稿一块：此时下一块已判完，本块末尾重复段的真实长度确定，可以做时序平滑；
+        // 随后把整块交给超分流水（勾选补帧时含全部帧，否则只含保留帧）。
+        async Task ReleaseDedupBlockAsync(int b)
+        {
+            var s = b * blockFrames;
+            var e = Math.Min((b + 1) * blockFrames, files.Length);
+            // 已知范围 = 本块 + 下一块。再往后的重复段光下一块就已经攒够 blockFrames 帧（≥32），
+            // 必定超过 MinRunLength（3），撤不撤销的结论不会再变，所以不必再等。
+            var horizon = Math.Min(Math.Min((b + 2) * blockFrames, files.Length), raw!.Count);
+            var smoothed = raw.GetRange(0, horizon);
+            FrameDedupService.SmoothIsolatedRuns(smoothed, dedupOpt!.MinRunLength);
+
+            // 勾选补帧时：重复帧留在原地给超分用（超分全算），只记下"保留帧在整块里的下标"，补帧按它取子集；
+            // 未勾选补帧时：重复帧移出 input_frames（保留在 removed 目录，便于排查/回退），
+            // 搬不动就改判为保留 —— 判决表、磁盘、超分产物三者必须一致，否则成品帧数会缩水。
+            var allFrames = new List<string>(e - s);
+            var keptOffsets = ctx.Options.Interpolation ? new List<int>() : null;
+            for (var i = s; i < e; i++)
+            {
+                var dup = smoothed[i].Duplicate;
+                if (dup && dedupMovesFrames && !TryMoveFrame(files[i], Path.Combine(removedDir, $"{i + 1:D8}.png")))
+                {
+                    dup = false;
+                    dedupMoveFailed++;
+                }
+                finalDup![i] = dup;
+                if (!dup)
+                {
+                    keptOffsets?.Add(allFrames.Count);   // 保留帧在整块里的下标
+                    allFrames.Add(files[i]);
+                }
+                else if (keptOffsets is not null)
+                {
+                    allFrames.Add(files[i]);             // 勾选补帧：重复帧也送超分
+                }
+            }
+            finalized = e;
+
+            var block = new TurboBlock(b + 1, allFrames, srNumber, ifNumber)
+            {
+                KeptOffsets = keptOffsets
+            };
+            srNumber += allFrames.Count;
+            ifNumber += ctx.Options.Interpolation ? keptOffsets!.Count * ifMult : allFrames.Count;
+
+            // CPU 侧准备：把块帧拷进独立目录（外部工具只吃目录），这一步与 GPU 的处理同时进行
+            await PrepareBlockAsync(block, turboRoot, ct);
+            await srQueue.Writer.WriteAsync(block, turboToken);   // 队列满 → 在这里等 GPU 追上来（worker 报错时靠联动取消解开）
+
+            // 被剔除的源帧不会再进补帧：对它视作已处理完。超分全算时超分不需要记账，否则超分也要记。
+            var dropped = (e - s) - (keptOffsets?.Count ?? allFrames.Count);
+            if (ctx.Options.Interpolation) hub.Credit("if", dropped);
+            else { hub.Credit("sr", dropped); hub.Credit("if", dropped); }
+        }
+
+        try
+        {
+            for (var b = 0; b < blockCount; b++)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                if (streamDedup)
+                {
+                    await DecideDedupBlockAsync(b);
+                    if (b > 0) await ReleaseDedupBlockAsync(b - 1);   // 上一块的末尾重复段长度已确定
+                    continue;
+                }
+
+                var frames = new List<string>();
+                for (var i = b * blockFrames; i < Math.Min((b + 1) * blockFrames, files.Length); i++)
+                    frames.Add(files[i]);
+
+                var block = new TurboBlock(b + 1, frames, srNumber, ifNumber);
+                srNumber += frames.Count;
+                ifNumber += ctx.Options.Interpolation ? frames.Count * ifMult : frames.Count;
+
+                // CPU 侧准备：把块帧拷进独立目录（外部工具只吃目录），这一步与 GPU 的处理同时进行
+                await PrepareBlockAsync(block, turboRoot, ct);
+
+                await srQueue.Writer.WriteAsync(block, turboToken);   // 队列满 → 在这里等 GPU 追上来（worker 报错时靠联动取消解开）
+            }
+
+            if (streamDedup) await ReleaseDedupBlockAsync(blockCount - 1);
+
+            srQueue.Writer.Complete();
+            // 优先抛出 worker 里的真实异常：一侧失败会联动取消另一侧，另一侧抛的是 OperationCanceledException，
+            // 直接 await Task.WhenAll 可能把"被取消"当成结论，用户就只看到"已取消"而不知道真实原因。
+            var workers = Task.WhenAll(srWorker, ifWorker);
+            try { await workers; }
+            catch
+            {
+                var real = workers.Exception?.InnerExceptions.FirstOrDefault(e => e is not OperationCanceledException);
+                if (real is not null) throw real;
+                throw;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            srQueue.Writer.TryComplete();
+            ifQueue.Writer.TryComplete();
+            // 联动取消（不是用户按停止）时，把 worker 里的真实异常捞出来抛：
+            // 否则用户看到的是"处理已取消"，完全不知道真实原因（也分不清该重试还是该清临时目录）。
+            if (!ct.IsCancellationRequested && turboCts.IsCancellationRequested)
+            {
+                var done = Task.WhenAll(srWorker, ifWorker);
+                try { await done; } catch { /* 只为取出真实异常 */ }
+                var real = done.Exception?.InnerExceptions.FirstOrDefault(e => e is not OperationCanceledException);
+                if (real is not null) throw real;
+            }
+            throw;
+        }
+        catch (Exception ex)
+        {
+            srQueue.Writer.TryComplete();
+            ifQueue.Writer.TryComplete();
+            try { await Task.WhenAll(srWorker, ifWorker); } catch { }
+            await RestoreDedupRemovedSafeAsync(streamDedup, inputFrames, removedDir, files.Length);
+            _logger.Warn($"[涡轮] {ex.Message}，回退逐阶段串行");
+            return (false, 0);
+        }
+
+        // 去重后 SR 只喂了保留帧，所以核对基准是"定稿后的保留帧数"而不是原始帧数
+        var expectedKept = files.Length;
+        if (streamDedup)
+        {
+            if (finalized != files.Length)
+            {
+                await RestoreDedupRemovedSafeAsync(true, inputFrames, removedDir, files.Length);
+                _logger.Warn($"[涡轮] 去重判决只定稿了 {finalized}/{files.Length} 帧，回退逐阶段串行");
+                return (false, 0);
+            }
+            expectedKept = 0;
+            foreach (var dup in finalDup!) if (!dup) expectedKept++;
+        }
+
+        // 勾选补帧时超分对全部源帧跑（去重只省补帧），未勾选补帧时超分只算保留帧
+        var expectedSr = ctx.Options.Interpolation ? files.Length : expectedKept;
+        var srDone = !ctx.Options.SuperResolution || CountFrames(srFrames) >= expectedSr;
+        var ifDone = !ctx.Options.Interpolation || CountFrames(ifFrames) >= expectedKept * ifMult;
+        if (!srDone || !ifDone)
+        {
+            // 判决表、超分产物、补帧产物对不上号：一个都不要用，整段回退串行重跑
+            _logger.Warn($"[涡轮] 产物数量对不上（超分 {CountFrames(srFrames)}/{expectedSr} 帧、补帧 {CountFrames(ifFrames)} 帧，" +
+                         $"应有 {expectedKept} × {ifMult}），回退逐阶段串行");
+            await RestoreDedupRemovedSafeAsync(streamDedup, inputFrames, removedDir, files.Length);
+            return (false, 0);
+        }
+
+        var dedupKept = 0;
+        if (streamDedup)
+        {
+            dedupKept = expectedKept;
+            // 回填位置表：第 k 个输出槽位应取"保留序列"里的第几帧（1 基）
+            var expandPos = new List<int>(finalDup!.Length);
+            // 保留帧的源序号（1 基）：补帧输入按它挑帧
+            var keptIndices = new List<int>(dedupKept);
+            var seenKept = 0;
+            for (var i = 0; i < finalDup!.Length; i++)
+            {
+                if (!finalDup[i])
+                {
+                    seenKept++;
+                    keptIndices.Add(i + 1);
+                }
+                expandPos.Add(Math.Max(1, seenKept));
+            }
+            var dropped = finalDup!.Length - dedupKept;
+            File.WriteAllText(DedupMapPath(tempRoot), System.Text.Json.JsonSerializer.Serialize(new
+            {
+                mode = ctx.Settings.DedupMode,
+                total = finalDup!.Length,
+                keptCount = dedupKept,
+                duplicateCount = dropped,
+                expandPos,
+                keptIndices
+            }));
+
+            _logger.Success(ctx.Options.Interpolation
+                ? $"[涡轮] 帧去重（{dedupModeShort}模式）判决已并入流水线：剔除 {dropped} 帧；" +
+                  $"超分仍处理全部 {finalDup!.Length} 帧，补帧只处理 {dedupKept} 帧（省 {(double)dropped / finalDup!.Length:P1}）"
+                : $"[涡轮] 帧去重（{dedupModeShort}模式）判决已并入流水线：剔除 {dropped} 帧，" +
+                  $"实际处理 {dedupKept} 帧（省 {(double)dropped / finalDup!.Length:P1}），重复帧保留在 {removedDir}");
+            if (dedupMoveFailed > 0)
+                _logger.Warn($"帧去重：{dedupMoveFailed} 帧因文件被占用无法移出，已改判为保留（成品帧数与时长不受影响）");
+            // 各阶淘汰量（论文四阶级联的可观测性：出问题时能一眼看出卡在哪一阶）
+            _logger.Info($"[涡轮] 各阶判决：像素差淘汰 {raw!.Where(d => d.Decided == FrameDedupService.Stage.PixelDiff).Count()}，" +
+                         $"dHash 淘汰 {raw!.Where(d => d.Decided == FrameDedupService.Stage.Hash).Count()}，" +
+                         $"QR 淘汰 {raw!.Where(d => d.Decided == FrameDedupService.Stage.Qr).Count()}，" +
+                         $"光流淘汰 {raw!.Where(d => d.Decided == FrameDedupService.Stage.Flow).Count()}，" +
+                         $"四阶全过判重 {raw!.Where(d => d.Decided == FrameDedupService.Stage.Duplicate).Count()}");
+        }
+
+        _logger.Success($"[涡轮] 块级流水完成：{blockCount} 块全部处理完毕，超分 {CountFrames(srFrames)} 帧、补帧 {CountFrames(ifFrames)} 帧");
+        return (true, dedupKept);
+    }
+
+    /// <summary>涡轮回退前把已搬走的重复帧搬回 input_frames。串行路径是用「帧数够不够」判断拆帧是否完整的，
+    /// 少了几十帧会被判成「拆帧不完整」从而跳过去重，接着超分只吃到保留帧、补帧却仍按原始帧数要结果，
+    /// 成品会错（实测过：235 帧喂进去、要求出 592 帧，RIFE 硬凑出来的后段全是废帧）。
+    /// 搬回去（含复制回退）之后串行路径才能干净重跑。这里不吃取消令牌 —— 收尾动作必须做完。</summary>
+    private async Task RestoreDedupRemovedSafeAsync(bool needed, string inputFrames, string removedDir, int expectedFrames)
+    {
+        if (!needed || !Directory.Exists(removedDir)) return;
+        try
+        {
+            await Task.Run(() =>
+            {
+                foreach (var f in Directory.GetFiles(removedDir, "*.png"))
+                    TryMoveFrame(f, Path.Combine(inputFrames, Path.GetFileName(f)));
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"[涡轮] 恢复被移出的重复帧失败：{ex.Message}");
+        }
+
+        var n = CountFrames(inputFrames);
+        if (n < expectedFrames)
+            _logger.Warn($"[涡轮] 被移出的重复帧只回到 {n}/{expectedFrames} 帧；" +
+                         "串行路径检测到拆帧不完整会自动重新拆帧后再处理");
+        else
+            _logger.Info($"[涡轮] 已把移出的重复帧放回 input_frames（{n} 帧），本次按逐阶段串行重跑");
+    }
+
+    /// <summary>CPU 侧准备：把块内帧拷进该块的输入目录（外部工具只吃目录，无法只处理指定的几帧），
+    /// 这一步在 CPU 上做，与 GPU 正在处理的上一块重叠。</summary>
+    private static async Task PrepareBlockAsync(TurboBlock block, string turboRoot, CancellationToken ct)
+    {
+        var srIn = Path.Combine(turboRoot, $"block_{block.Index:D4}", "sr_in");
+        await Task.Run(() =>
+        {
+            if (Directory.Exists(srIn)) Directory.Delete(srIn, true);
+            Directory.CreateDirectory(srIn);
+
+            var idx = 0;
+            foreach (var frame in block.Frames)
+            {
+                ct.ThrowIfCancellationRequested();
+                File.Copy(frame, Path.Combine(srIn, $"{++idx:D8}.png"), overwrite: true);
+            }
+        }, ct);
+    }
+
+    /// <summary>超分流水：处理一块，结果按全局连续编号并入 srFrames（未勾选超分时块帧直接并入）。
+    /// report：非空时（涡轮）把块内进度交给进度中枢汇总，不直接推给 UI。</summary>
+    private async Task<bool> SuperResBlockAsync(ProcessingContext ctx, TurboBlock block, string turboRoot,
+        string srFrames, string jThreads, bool cpu, CancellationToken ct, Action<ProcessProgress>? report = null)
+    {
+        var blockDir = Path.Combine(turboRoot, $"block_{block.Index:D4}");
+        var srIn = Path.Combine(blockDir, "sr_in");
+        var srOut = Path.Combine(blockDir, "sr_out");
+
+        try
+        {
+            if (!ctx.Options.SuperResolution)
+            {
+                await MergeBlockFramesAsync(srIn, srFrames, block.SrStartNumber, ct);
+                return true;
+            }
+
+            // 涡轮分块同样按模型所属算法分派引擎
+            var srExeBlock = SrCommandBuilder.ExeFor(ctx.Tools, ctx.SrModel);
+            if (string.IsNullOrEmpty(srExeBlock) || !File.Exists(srExeBlock))
+            {
+                _logger.Warn($"[涡轮] 超分块 {block.Index}：模型 {ctx.SrModel} 对应的引擎没有部署");
+                return false;
+            }
+            var args = SrCommandBuilder.Build(ctx.SrModel, ctx.SrScale, srIn, srOut, jThreads,
+                ctx.Settings.LowerQualityForVram, useCpu: cpu,
+                gpuIndex: Math.Clamp(ctx.Settings.PipelineGpuIndex, 0, 8));
+            var exit = await RunStageWithDirectoryPolling(ProcessStage.SuperRes,
+                $"[涡轮] 超分块 {block.Index}", block.Frames.Count, srExeBlock, args, srOut, ct,
+                report: report);
+            if (exit != 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                _logger.Warn($"[涡轮] 超分块 {block.Index} 失败（exit={exit}）");
+                return false;
+            }
+            await MergeBlockFramesAsync(srOut, srFrames, block.SrStartNumber, ct);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"[涡轮] 超分块 {block.Index} 异常：{ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>补帧流水：处理一块，结果按全局连续编号并入 ifFrames（未勾选补帧时跳过）；块目录用完即删省空间。
+    /// lookaheadFrame：下一块的首帧。借它当"下一帧"多算一份插值，本块末帧的结果才与整段处理一致；
+    /// 多算出来的那几帧丢掉不算（只并入前 Frames.Count × ifMult 帧）。
+    /// report：非空时（涡轮）把块内进度交给进度中枢汇总，不直接推给 UI。</summary>
+    private async Task<bool> InterpBlockAsync(ProcessingContext ctx, TurboBlock block, string turboRoot,
+        string ifFrames, int ifMult, string jThreads, bool cpu, string? lookaheadFrame, CancellationToken ct,
+        Action<ProcessProgress>? report = null)
+    {
+        var blockDir = Path.Combine(turboRoot, $"block_{block.Index:D4}");
+        var ifOut = Path.Combine(blockDir, "if_out");
+
+        try
+        {
+            if (!ctx.Options.Interpolation)
+            {
+                try { if (Directory.Exists(blockDir)) Directory.Delete(blockDir, true); } catch { }
+                return true;
+            }
+
+            // 整块都是重复帧（动画定格段）：超分照跑但没有帧要补，跳过补帧
+            if (block.KeptOffsets is { Count: 0 })
+                return true;
+
+            var srcForIf = ctx.Options.SuperResolution
+                ? Path.Combine(blockDir, "sr_out")
+                : Path.Combine(blockDir, "sr_in");
+            // 去重时补帧只喂"保留帧"子集：该块的超分产物是全部帧，这里按保留帧下标挑帧并重新连续编号，
+            // 否则 RIFE 会按全部帧数放大输出比例，回填时整块取帧会错位。
+            var ifInput = srcForIf;
+            var ifInputCount = block.IfFrameCount;
+            if (block.KeptOffsets is not null)
+            {
+                var subset = Path.Combine(blockDir, "if_in");
+                // 同样逐个删+带重试复制（整体 Directory.Delete 遇到一个被占用的文件就全失败）
+                await Task.Run(() =>
+                {
+                    if (Directory.Exists(subset))
+                    {
+                        foreach (var f in Directory.GetFiles(subset, "*.png")) TryDeleteWithRetry(f);
+                    }
+                    else Directory.CreateDirectory(subset);
+
+                    var n = 0;
+                    foreach (var off in block.KeptOffsets)
+                    {
+                        var src = Path.Combine(srcForIf, $"{off + 1:D8}.png");
+                        if (!File.Exists(src)) continue;
+                        CopyWithRetry(src, Path.Combine(subset, $"{++n:D8}.png"));
+                    }
+                }, ct);
+
+                var onDisk = Directory.GetFiles(subset, "*.png").Length;
+                if (onDisk != block.KeptOffsets.Count)
+                {
+                    _logger.Warn($"[涡轮] 补帧块 {block.Index} 的保留帧子集数量不符（{onDisk}/{block.KeptOffsets.Count}）");
+                    return false;
+                }
+                ifInput = subset;
+            }
+
+            var ifCount = ifInputCount * ifMult;
+            // 借下一块的首帧当"下一帧"：多喂一帧进去，末帧的插值就与整段处理一致。
+            // 结果多出来的那一份插值丢弃，只并入前 ifCount 帧。
+            var toolCount = ifCount;
+            if (!string.IsNullOrEmpty(lookaheadFrame) && File.Exists(lookaheadFrame))
+            {
+                toolCount = ifCount + ifMult;
+                File.Copy(lookaheadFrame, Path.Combine(ifInput, $"{ifInputCount + 1:D8}.png"), overwrite: true);
+            }
+            var useTorchBlock = ctx.IfDriverKey.Length > 0;
+            var args = useTorchBlock
+                // 与逐阶段路径保持一致：涡轮块里也要把「降低部分画质」落到 PyTorch 的 --fp16。
+                // 之前这里误把「安全帧率」当 sceneDetect 传进来，既开了不该开的切镜检测，又漏了 --fp16。
+                ? VfiTorchCommandBuilder.Build(ctx.Tools.VfiDriverScript, ctx.IfDriverKey, ifInput, ifOut, toolCount,
+                    VfiTorchCommandBuilder.ScaleFor(ctx.Video.Width), sceneDetect: false,
+                    threads: Math.Clamp(ctx.Settings.ThreadCount, 1, 32), fp16: ctx.Settings.LowerQualityForVram)
+                : RifeCommandBuilder.Build(ifInput, ifOut, ctx.IfModel, ifMult, toolCount, jThreads,
+                    ctx.Settings.LowerQualityForVram, useCpu: cpu,
+                    gpuIndex: Math.Clamp(ctx.Settings.PipelineGpuIndex, 0, 8));
+            var exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating,
+                $"[涡轮] 补帧块 {block.Index}", toolCount, useTorchBlock ? ctx.Tools.TorchPythonExe : ctx.Tools.RifeExe, args, ifOut, ct,
+                report: report);
+            if (exit != 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                _logger.Warn($"[涡轮] 补帧块 {block.Index} 失败（exit={exit}）");
+                return false;
+            }
+            await MergeBlockFramesAsync(ifOut, ifFrames, block.IfStartNumber, ct, ifCount);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"[涡轮] 补帧块 {block.Index} 异常：{ex.Message}");
+            return false;
+        }
+        finally
+        {
+            // 块产物已并入最终目录，删掉块目录（4K 帧很占地方）
+            try { if (Directory.Exists(blockDir)) Directory.Delete(blockDir, true); } catch { }
+        }
+    }
+
+    /// <summary>把块产物按全局连续编号并入最终目录（工具输出的是块内 1..N 连续编号，需要整体平移）。
+    /// maxCount：最多并入多少帧 —— 补帧借了下一块的首帧多算一份插值，多出来的要丢掉。</summary>
+    private static async Task MergeBlockFramesAsync(string srcDir, string dstDir, int startNumber,
+        CancellationToken ct, int maxCount = int.MaxValue)
+    {
+        var files = Directory.GetFiles(srcDir, "*.png");
+        Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+        Directory.CreateDirectory(dstDir);
+        await Task.Run(() =>
+        {
+            var n = Math.Min(files.Length, maxCount);
+            for (var i = 0; i < n; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                File.Copy(files[i], Path.Combine(dstDir, $"{startNumber + i:D8}.png"), overwrite: true);
+            }
+        }, ct);
+    }
+
+    private static int CountFrames(string dir)
+        => Directory.Exists(dir) ? Directory.GetFiles(dir, "*.png").Length : 0;
+
+    /// <summary>搬移帧文件：遇到"文件被其他进程占用"等瞬时错误时退避重试，最后再用复制+删除兜底。
+    /// 全部失败返回 false，由调用方把该帧改判为保留（保证判决表与磁盘文件数一致）。</summary>
+    private static bool TryMoveFrame(string src, string dst)
+    {
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            try
+            {
+                if (File.Exists(dst)) File.Delete(dst);
+                File.Move(src, dst);
+                return true;
+            }
+            catch (IOException) { /* 共享冲突：稍等再试（预览解码/杀毒扫描通常是瞬时的） */ }
+            catch (UnauthorizedAccessException) { }
+            Thread.Sleep(120 * (attempt + 1));
+        }
+
+        // 兜底：复制（只需读共享）成功后再删源文件；删源失败则回滚，避免两处都留有该帧
+        try
+        {
+            File.Copy(src, dst, overwrite: true);
+            try { File.Delete(src); return true; }
+            catch { try { File.Delete(dst); } catch { } return false; }
+        }
+        catch { return false; }
+    }
+
+    /// <summary>把外部帧文件夹复制到临时目录（增量：目标已存在同名帧则跳过），带进度推送。
+    /// 放在后台线程执行，避免大量文件复制阻塞 UI。</summary>
+    private async Task CopyFramesAsync(string srcDir, string dstDir, CancellationToken ct)
+    {
+        Directory.CreateDirectory(dstDir);
+        var files = Directory.GetFiles(srcDir, "*.png");
+        var total = files.Length;
+        var copied = 0;
+        await Task.Run(() =>
+        {
+            foreach (var f in files)
+            {
+                ct.ThrowIfCancellationRequested();
+                var dst = Path.Combine(dstDir, Path.GetFileName(f));
+                if (!File.Exists(dst)) File.Copy(f, dst, overwrite: false);
+                copied++;
+                if (copied % 100 == 0 || copied == total)
+                {
+                    ProgressChanged?.Invoke(new ProcessProgress
+                    {
+                        Stage = ProcessStage.Splitting,
+                        StageText = "复制外部帧",
+                        Current = copied,
+                        Total = total
+                    });
+                }
+            }
+        }, ct);
+    }
+
+    /// <summary>返回目录下最后写入的 PNG 帧路径（预览用，按最后写入时间判断，无则 null）</summary>
+    private static string? FindLatestFrame(string dir)
+    {
+        if (!Directory.Exists(dir)) return null;
+        try
+        {
+            string? latest = null;
+            var latestTicks = 0L;
+            foreach (var f in Directory.EnumerateFiles(dir, "*.png"))
+            {
+                var t = File.GetLastWriteTimeUtc(f).Ticks;
+                if (t > latestTicks) { latestTicks = t; latest = f; }
+            }
+            return latest;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>清理某阶段的残留帧（中断/崩溃后重跑时用）。删除量可达上万帧，必须在后台线程做并上报进度：
+    /// 这些调用都发生在 UI 线程上的 RunAsync 里，同步删几千个文件会把窗口卡成"未响应"。</summary>
+    private async Task CleanPartialOutputAsync(string dir, ProcessStage stage, string stageText, CancellationToken ct)
+    {
+        if (!Directory.Exists(dir)) return;
+        var files = Directory.GetFiles(dir, "*.png");
+        if (files.Length == 0) return;
+        // 先立刻推一条 0/N：否则大目录要删到第 200 个文件才有反馈，界面看起来像没反应
+        var startText = $"{stageText}（清理上次残留）0/{files.Length}";
+        _logger.Info(startText);
+        ProgressChanged?.Invoke(new ProcessProgress
+        {
+            Stage = stage,
+            StageText = stageText,
+            Current = 0,
+            Total = files.Length,
+            PercentDisplay = true,
+            CustomDetail = startText
+        });
+        await Task.Run(() =>
+        {
+            for (var i = 0; i < files.Length; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                try { TryDeleteWithRetry(files[i], attempts: 3); } catch { }
+                if ((i + 1) % 200 == 0 || i + 1 == files.Length)
+                {
+                    var text = $"{stageText}（清理上次残留）{i + 1}/{files.Length}";
+                    _logger.Info(text);
+                    ProgressChanged?.Invoke(new ProcessProgress
+                    {
+                        Stage = stage,
+                        StageText = stageText,
+                        Current = i + 1,
+                        Total = files.Length,
+                        PercentDisplay = true,
+                        CustomDetail = text
+                    });
+                }
+            }
+        }, ct);
+    }
+
+    private static string CleanPartialOutput(string dir)
+    {
+        if (Directory.Exists(dir))
+        {
+            foreach (var f in Directory.GetFiles(dir, "*.png")) File.Delete(f);
+        }
+        return dir;
+    }
+
+    private string? Fail(string msg)
+    {
+        LastStageText = msg;
+        ProgressChanged?.Invoke(new ProcessProgress { Stage = ProcessStage.Failed, StageText = msg });
+        _logger.Error(msg);
+        return null;
+    }
+
+    // ---- GPU 编码探测（合并阶段） ----
+
+    /// <summary>CPU 编码参数（通用回退方案）。crf 来自高级页「CPU CRF」：0~51，越小越不压缩、体积越大。</summary>
+    private static string CpuEncodeArgs(string preset, int crf) =>
+        $"libx265 -preset {preset} -crf {Math.Clamp(crf, 0, 51)}";
+
+    /// <summary>候选 GPU 硬件编码器（按 NVIDIA → AMD → Intel 顺序），失败时上层会自动回退 CPU。</summary>
+    private static readonly string[] HwEncoderCandidates = { "hevc_nvenc", "hevc_amf", "hevc_qsv" };
+
+    /// <summary>按「编码器 + 质量模式」生成参数。
+    /// mode："" = 默认档（与历史行为一致，CQ 18）/ "cq" = 恒定质量 / "qp" = 固定量化参数；quality 取 0~51，越小画质越好。
+    /// 注意 AMF 没有独立的 CQ 参数，CQ 与 QP 在 AMF 上都落到 cqp 的 qp_i/qp_p。</summary>
+    private static string HwEncodeArgs(string encoder, string mode, int quality)
+    {
+        var q = Math.Clamp(quality, 0, 51);
+        return encoder switch
+        {
+            "hevc_nvenc" => mode == "qp"
+                ? $"hevc_nvenc -preset p7 -tune hq -rc constqp -qp {q}"
+                : $"hevc_nvenc -preset p7 -tune hq -rc vbr -cq {q}",
+            "hevc_amf" => $"hevc_amf -quality quality -rc cqp -qp_i {q} -qp_p {q}",
+            "hevc_qsv" => mode == "qp"
+                ? $"hevc_qsv -preset medium -q {q}"
+                : $"hevc_qsv -preset medium -global_quality {q}",
+            _ => encoder
+        };
+    }
+
+    /// <summary>质量模式显示名（用于合并日志）</summary>
+    private static string QualityModeText(string mode) => mode switch
+    {
+        "cq" => "CQ 恒定质量",
+        "qp" => "QP 固定量化",
+        _ => "默认"
+    };
+
+    /// <summary>「保留原视频内嵌字幕」生效时的字幕来源：成片是从帧序列重建的，原文件的字幕不会自己跟过来，
+    /// 必须把原文件当第二个输入映射。未勾选 / 原文件没有字幕流 / 没有输入文件时返回 null（不映射，行为与历史一致）。</summary>
+    private static string? SubtitleSource(ProcessingContext ctx) =>
+        ctx.Options.KeepSubtitles && ctx.Video.HasSubtitles && !string.IsNullOrWhiteSpace(ctx.InputVideo)
+            ? ctx.InputVideo
+            : null;
+
+    /// <summary>写进成品 comment 的音频处理细节（纯 ASCII，避免媒体工具按本地代码页解码成乱码）：
+    /// AudioSR 是否介入、精度档、推理后端、源采样率与最终音频规格，方便核对“这一版音频到底怎么处理的”。</summary>
+    private string AudioProcessDetail(ProcessingContext ctx, bool engaged)
+    {
+        var backend = _audioSrBackend switch
+        {
+            null or "" => engaged ? "unknown" : "none",
+            var b when b.Contains("CUDA", StringComparison.OrdinalIgnoreCase) => "CUDA",
+            var b when b.Contains("DirectML", StringComparison.OrdinalIgnoreCase) => "DirectML",
+            var b when b.Contains("CPU", StringComparison.OrdinalIgnoreCase) => "CPU",
+            _ => "unknown"
+        };
+        var precision = engaged ? ctx.Options.AudioSrPrecision : "none";
+        var src = ctx.Video.AudioSampleRate > 0 ? $"{ctx.Video.AudioSampleRate}Hz" : "unknown";
+        return $" [Easy4K audio: AudioSR={(engaged ? "used" : "not used")}; precision={precision}; backend={backend}; "
+            + $"source={src}->48000Hz; output=pcm_s24le 48kHz stereo]";
+    }
+
+    private static string? _detectedHwEncoder;
+
+    /// <summary>探测 FFmpeg 可用的 GPU 硬件编码器（NVENC → AMF → QSV，覆盖 NVIDIA/AMD/Intel），返回编码器名。
+    /// 编码器由显卡自动决定（N 卡 NVENC / A 卡 AMF / Intel QSV），界面不再提供手动选择。
+    /// 探测结果静态缓存，仅首次运行 ffmpeg -encoders 查询一次；探测不到返回 null（调用方回退 CPU）。
+    /// 注意：编码器"编译进 FFmpeg"不代表硬件可用，实际失败时上层会自动回退 CPU 重试。</summary>
+    private static string? DetectHardwareEncoder(string ffmpegExe, GpuInfo gpu)
+    {
+        if (_detectedHwEncoder is not null)
+            return string.IsNullOrEmpty(_detectedHwEncoder) ? null : _detectedHwEncoder;
+        try
+        {
+            using var p = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = ffmpegExe,
+                    Arguments = "-hide_banner -encoders",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                }
+            };
+            p.Start();
+            var text = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+            p.WaitForExit(5000);
+            foreach (var name in HwEncoderCandidates)
+            {
+                // 非 NVIDIA 显卡直接跳过 NVENC（否则每次合并都会白尝试失败再回退）
+                if (!gpu.IsNvidia && name.StartsWith("hevc_nvenc", StringComparison.OrdinalIgnoreCase)) continue;
+                if (text.Contains(name, StringComparison.OrdinalIgnoreCase))
+                {
+                    _detectedHwEncoder = name;
+                    return name;
+                }
+            }
+        }
+        catch { }
+        _detectedHwEncoder = "";
+        return null;
+    }
+
+    /// <summary>ffprobe 读产物的音轨规格 + 文件信息里的 comment 标记，用于"音频到底怎么处理的"的最终实测。
+    /// 这是判断 AudioSR 有没有真正介入最直接的依据：
+    /// 介入 → pcm_s24le / 48000 Hz / Comment = AudioSR 标记；未介入 → 重采样 96000 Hz + "未使用"标记。</summary>
+    private static string? ProbeAudioSummary(string ffprobeExe, string path)
+    {
+        try
+        {
+            using var p = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = ffprobeExe,
+                    Arguments = "-v error -select_streams a:0 -show_entries stream=codec_name,sample_rate,channels "
+                              + $"-show_entries format_tags=comment -of default=nw=1 \"{path}\"",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                    StandardOutputEncoding = System.Text.Encoding.UTF8
+                }
+            };
+            p.Start();
+            var text = p.StandardOutput.ReadToEnd().Trim();
+            p.WaitForExit(5000);
+            if (string.IsNullOrWhiteSpace(text)) return null;
+            return text.Replace("\r\n", " / ").Replace("\n", " / ");
+        }
+        catch { return null; }
+    }
+}

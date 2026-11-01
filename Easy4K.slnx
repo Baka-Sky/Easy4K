@@ -2,6 +2,6 @@
   <Folder Name="/src/">
     <Project Path="src/Easy4K/Easy4K.csproj" />
     <Project Path="src/Easy4K.Orphan/Easy4K.Orphan.csproj" />
-    <Project Path="src/Easy4K.SFDP/Easy4K.SFDP.csproj" />
+    <Project Path="src/Easy4K.LuminolCore/Easy4K.LuminolCore.csproj" />
   </Folder>
 </Solution>
