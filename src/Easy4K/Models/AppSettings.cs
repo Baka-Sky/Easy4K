@@ -18,8 +18,18 @@ public sealed class AppSettings
     /// <summary>补帧目标帧率（&gt;0 时优先于倍率，输出 fps 精确等于该值）；0 = 用倍率</summary>
     public double TargetFps { get; set; }
 
-    /// <summary>用户自定义线程数（proc/save），命令 -j 1:{n}:{n}，范围 1-32</summary>
+    /// <summary>用户自定义线程数（proc/save），命令 -j 1:{n}:{n}，范围 1-32（旧字段，保留做迁移）</summary>
     public int ThreadCount { get; set; } = 2;
+    /// <summary>超分解码（-j 的 load 段）线程</summary>
+    public int SrDecodeThreads { get; set; } = 1;
+    /// <summary>超分推理+编码（-j 的 proc:save 段）线程</summary>
+    public int SrEncodeThreads { get; set; } = 2;
+    /// <summary>补帧解码（-j 的 load 段）线程</summary>
+    public int IfDecodeThreads { get; set; } = 1;
+    /// <summary>补帧推理+编码（-j 的 proc:save 段）线程</summary>
+    public int IfEncodeThreads { get; set; } = 2;
+    /// <summary>流水线使用的 Vulkan 设备序号：0=默认设备，1/2=指定设备（核显机器可手动选独显）</summary>
+    public int PipelineGpuIndex { get; set; } = 0;
     /// <summary>安全帧率：遇到 Vulkan 设备丢失/显存溢出时自动停止处理（不降级重试）</summary>
     public bool UseSafeFrameRate { get; set; } = true;
     /// <summary>降低部分画质以降低显存占用（-u UHD 模式），可与安全帧率共存</summary>
@@ -29,10 +39,18 @@ public sealed class AppSettings
     /// <summary>使用 CPU 处理所有模型（超分/补帧 NCNN -g -1），速度慢，仅在 GPU 不可用/不稳定时使用</summary>
     public bool UseCpuProcessing { get; set; }
 
+    /// <summary>崩溃时尝试使用老版本处理架构：拆帧/合并先用新版 FFmpeg，失败自动改用老版本 FFmpeg；
+    /// SDR→HDR 先用新版 NVEncC，失败自动改用老版本 NVEncC。老版本对旧驱动兼容性更好。</summary>
+    public bool TryOldFfmpegOnCrash { get; set; }
+
     /// <summary>HDR 转换饱和度（NVEncC --vpp-ngx-truehdr saturation，最高 200）</summary>
     public int HdrSaturation { get; set; } = 200;
     /// <summary>HDR 转换对比度（NVEncC --vpp-ngx-truehdr contrast，最高 200）</summary>
     public int HdrContrast { get; set; } = 200;
+
+    /// <summary>AI HDR 重建的亮度强度（百分比，50~150，100 = 模型原始映射）。
+    /// 只作用于 HDRTVNet++ 路径：在 PQ 线性光域整体乘一个增益，再重新编码回 PQ。</summary>
+    public int HdrAiStrength { get; set; } = 100;
 
     /// <summary>以后不再爆红：勾选后不再显示红色级警告（如显卡显存不足）</summary>
     public bool SuppressRedWarning { get; set; }
@@ -50,6 +68,12 @@ public sealed class AppSettings
 
     /// <summary>保留原视频内嵌字幕：合并成片时把原文件里的字幕流复制过去（仅检测到字幕时可开）</summary>
     public bool KeepSubtitles { get; set; }
+
+    /// <summary>嵌入原视频元数据：出片前把原文件的标题/艺人/注释等标签写回成品（仅检测到元数据时可开）</summary>
+    public bool EmbedMetadata { get; set; }
+
+    /// <summary>嵌入原视频封面：出片前把原文件的封面图写回成品（仅检测到封面时可开）</summary>
+    public bool EmbedCover { get; set; }
 
     public string Language { get; set; } = "zh-CN";
     public string Theme { get; set; } = "system";
@@ -108,6 +132,11 @@ public sealed class AppSettings
     /// 跑完按顺序汇总帧再统一合并。1 = 不分段。</summary>
     public int TurboSegments { get; set; } = 2;
 
+    /// <summary>转场保护（PySceneDetect）：补帧时检测镜头切换，转场处不做插值（复制上一帧），
+    /// 消除跨镜混合产生的鬼影；也消除帧去重回填后跨段插值的异常鬼影。
+    /// 默认关闭：需要额外解码一遍源视频，且部分片源（图片式/幻灯片式）容易误判。</summary>
+    public bool SceneGuardEnabled { get; set; } = false;
+
     // ===================== 远程控制 =====================
     /// <summary>每次启动 Easy4K 自动进入远程连接模式（等价于启动时附加 --remote）。
     /// 开启后启动即监听 11451 并进入等待客户端连接界面，不用每次手动点「启动远程控制」。</summary>
@@ -126,7 +155,11 @@ public sealed class ToolPathConfig
 {
     public string FFmpegDir { get; set; } = "FFmpeg-Lei";
     public string FFprobeDir { get; set; } = "FFmpeg-Lei";
+    /// <summary>老版本 FFmpeg 目录（崩溃兜底用，FFmpeg 8.x，兼容老显卡驱动）</summary>
+    public string FFmpegOldDir { get; set; } = "FFmpeg-Old";
     public string RealEsrganDir { get; set; } = "realesrgan-ncnn";
     public string RifeDir { get; set; } = "rife";
     public string NvEncDir { get; set; } = "NVEncC_9.32_x64";
+    /// <summary>老版本 NVEncC 目录（HDR 崩溃兜底用）</summary>
+    public string NvEncOldDir { get; set; } = "NVEncC-Old";
 }

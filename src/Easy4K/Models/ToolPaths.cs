@@ -6,6 +6,11 @@ public sealed class ToolPaths
     public string ToolsRoot { get; set; } = "";
     public string FFmpegExe { get; set; } = "";
     public string FFprobeExe { get; set; } = "";
+    /// <summary>老版本 FFmpeg（Tools\FFmpeg-Old\bin\ffmpeg.exe，FFmpeg 8.x）。
+    /// 新版在部分老显卡驱动上会崩溃，拆帧/合并失败时用它兜底重试。</summary>
+    public string FFmpegOldExe { get; set; } = "";
+    /// <summary>老版本 ffprobe（Tools\FFmpeg-Old\bin\ffprobe.exe）</summary>
+    public string FFprobeOldExe { get; set; } = "";
     public string RealEsrganExe { get; set; } = "";
     public string RealEsrganModelsRoot { get; set; } = "";
     /// <summary>Real-CUGAN 引擎（ Tools\realcugan-ncnn\realcugan-ncnn-vulkan.exe，动漫超分）</summary>
@@ -19,6 +24,8 @@ public sealed class ToolPaths
     public string RifeExe { get; set; } = "";
     public string RifeModelsRoot { get; set; } = "";
     public string NvEncExe { get; set; } = "";
+    /// <summary>老版本 NVEncC（Tools\NVEncC-Old\NVEncC64.exe，7.74）。新版在部分老驱动上跑不起来时兜底。</summary>
+    public string NvEncOldExe { get; set; } = "";
     /// <summary>便携 Python（Tools\python\python.exe）：音频超分（AudioSR）驱动脚本用它运行，
     /// 不存在时回退系统 python。补帧已统一走 NCNN（Vulkan），不再需要 PyTorch。</summary>
     public string PortablePythonExe { get; set; } = "";
@@ -40,11 +47,22 @@ public sealed class ToolPaths
     /// <summary>PyTorch 轨统一驱动 vfi_driver.py</summary>
     public string VfiDriverScript { get; set; } = "";
 
+    /// <summary>PySceneDetect 转场检测脚本（Tools\SceneDetect\scene_detect.py）</summary>
+    public string SceneDetectScript { get; set; } = "";
+
     public bool FFmpegExists => File.Exists(FFmpegExe);
     public bool FFprobeExists => File.Exists(FFprobeExe);
+    /// <summary>老版本 FFmpeg 是否已部署（兜底重试的前提）</summary>
+    public bool FFmpegOldExists => File.Exists(FFmpegOldExe);
     public bool RealEsrganExists => File.Exists(RealEsrganExe);
     public bool RifeExists => File.Exists(RifeExe);
     public bool NvEncExists => File.Exists(NvEncExe);
+    /// <summary>老版本 NVEncC 是否已部署（HDR 兜底重试的前提）</summary>
+    public bool NvEncOldExists => File.Exists(NvEncOldExe);
+
+    /// <summary>AI SDR→HDR 模型（HDRTVNet++ AGCM+LE，ONNX）。存在即表示可用 DirectML 做 HDR 重建。</summary>
+    public string HdrAiModel => Path.Combine(ToolsRoot, "HDRTVNet", "hdr_ensemble.onnx");
+    public bool HdrAiExists => File.Exists(HdrAiModel);
 
     /// <summary>AudioSR 驱动脚本是否就绪</summary>
     public bool AudioSrScriptExists => File.Exists(AudioSrScript);
@@ -79,4 +97,7 @@ public sealed class ToolPaths
 
     /// <summary>PyTorch 轨是否就绪（解释器 + 驱动脚本都在）。模型权重单独判断。</summary>
     public bool VfiTorchReady => File.Exists(TorchPythonExe) && File.Exists(VfiDriverScript);
+
+    /// <summary>转场检测是否可用（PySceneDetect 脚本 + 带 cv2 的 Python 解释器）</summary>
+    public bool SceneDetectReady => File.Exists(SceneDetectScript) && File.Exists(TorchPythonExe);
 }

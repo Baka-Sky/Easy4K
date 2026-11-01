@@ -11,6 +11,11 @@ public sealed class ProcessingOptions
     public bool SdrToHdr { get; set; } = false;
     /// <summary>保留原视频内嵌字幕：合并成片时把原文件里的字幕流映射并复制过去（仅原视频检测到字幕时可勾）</summary>
     public bool KeepSubtitles { get; set; }
+    /// <summary>嵌入原视频元数据：出片前把原文件的格式标签（标题/艺人/注释/创建时间等）写回成品
+    /// （仅原视频检测到用户元数据时可勾）</summary>
+    public bool EmbedMetadata { get; set; }
+    /// <summary>嵌入原视频封面：出片前把原文件的封面图作为附件写回成品（仅原视频检测到封面时可勾）</summary>
+    public bool EmbedCover { get; set; }
     /// <summary>补帧目标帧率（&gt;0 时优先于倍率：输出 fps 精确等于该值，总帧数按 源帧数×比例 四舍五入；
     /// 用于避免 23.976×2=47.952 这种带小数的成片帧率）。0 = 按倍率。</summary>
     public double TargetFps { get; set; }
