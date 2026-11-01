@@ -4,9 +4,9 @@
 AudioSR ONNX 推理驱动（Easy4K 内置）
 
 用 numpy + onnxruntime 复现 haoheliu/audiosr_basic 的官方推理流程：
-    读音频 → 重采样 48k → 归一化（不做带限，保留原始带宽）
+    读音频 → 重采样 48k → 归一化 → 官方低通滤波（audiosr/lowpass.py，供低频回填用）
     → log-mel → VAE 条件编码 → DDIM(eta=1, CFG 3.5) → VAE 解码 → vocoder 重建
-    → mel / 波形低频段回填（低音用回原音频，保证不跑调）→ 写 48k WAV
+    → mel / 波形低频段回填（低音用低通后的原音频，保证不跑调）→ 写 48k WAV
 
 后端：NVIDIA 显卡优先 CUDA(GPU)，其次 DirectML；其它显卡用 DirectML（A/N/I 通吃）；
 逐级尝试，三级（CUDA / DirectML / CPU）都起不来才报错退出。
@@ -38,12 +38,30 @@ EXIT_ALL_BACKENDS_FAILED = 3     # CUDA / DirectML / CPU 三级后端全部无�
 EXIT_VRAM_OOM = 4                # 显存不足，且窗口已缩到最小值仍然失败
 
 
+_LIVE = os.environ.get("AUDIOSR_LIVE_LOG")
+
+
+def _emit(s):
+    try:
+        print(s, flush=True)
+    except Exception:
+        pass
+    if _LIVE:
+        # 逐行写、写完立刻关闭：外部（监控 CMD / 资源管理器 / 远程共享）随时可读，
+        # 不会像常驻句柄那样把文件独占锁住
+        try:
+            with open(_LIVE, "a", encoding="utf-8") as f:
+                f.write(s + "\n")
+        except Exception:
+            pass
+
+
 def log(m):
-    print(f"[AudioSR] {m}", flush=True)
+    _emit(f"[AudioSR] {m}")
 
 
 def warn(m):
-    print(f"[AudioSR][警告] {m}", flush=True)
+    _emit(f"[AudioSR][警告] {m}")
 
 
 class VramOOM(RuntimeError):
@@ -192,6 +210,49 @@ def find_cutoff_bin(energy, percentile):
     return int(idx[-1]) if idx.size else 0
 
 
+# ---------- 官方 AudioSR 低通滤波（audiosr/lowpass.py 的 numpy 等价实现） ----------
+
+def _lowpass_sos(highcut, fs, order, ftype):
+    """按官方 ftype 选滤波器，返回二阶节。hz→归一化时夹到 0.99，避免 highcut=24000 时 scipy 报错。"""
+    from scipy.signal import butter, cheby1, ellip, bessel
+    nyq = 0.5 * fs
+    hi = min(max(float(highcut) / nyq, 1e-4), 0.99)
+    order = int(min(max(order, 2), 10))                 # 官方 limit(order, high=10, low=2)
+    if ftype == "cheby1":
+        return cheby1(order, 0.1, hi, btype="low", output="sos")
+    if ftype == "ellip":
+        return ellip(order, 0.1, 60, hi, btype="low", output="sos")
+    if ftype == "bessel":
+        return bessel(order, hi, btype="low", output="sos")
+    return butter(order, hi, btype="low", output="sos")
+
+
+def lowpass_official(data, highcut, fs, order=8, ftype="butter"):
+    """官方 audiosr.lowpass.lowpass：零相位 SOS 滤波 → 硬降采样到 highcut 再升回原采样率 → 再滤一次。
+    只接受 1 维输入（官方同样拒绝 (samples, 1)）。"""
+    from scipy.signal import sosfiltfilt, resample_poly
+    x = np.asarray(data, dtype=np.float64).ravel()
+    sos = _lowpass_sos(highcut, fs, order, ftype)
+    y = sosfiltfilt(sos, x)
+    # 官方 stft_hard_lowpass：lowpass_ratio = highcut/nyq，fs_down = ratio * fs
+    fs_down = int((min(highcut, fs * 0.5 - 1.0) / (0.5 * fs)) * fs)
+    if 0 < fs_down < fs:
+        y2 = resample_poly(resample_poly(y, fs_down, fs), fs, fs_down)
+        y = y2[:len(x)] if len(y2) >= len(x) else np.pad(y2, (0, len(x) - len(y2)))
+    y = sosfiltfilt(sos, y)
+    if len(y) != len(x):
+        y = y[:len(x)] if len(y) > len(x) else np.pad(y, (0, len(x) - len(y)))
+    return y.astype(np.float32)
+
+
+def audio_bandwidth_hz(stft, percentile=0.985, n_bins=1024):
+    """官方 lowpass_filtering_prepare_inference 的截止频率：bin/1024*24000；低于 1kHz 视为空音频放行。"""
+    magnitude = np.abs(stft)
+    energy = np.cumsum(np.sum(magnitude, axis=1))       # stft 是 [freq, time]，先按时间求和再沿频率累积
+    cutoff = find_cutoff_bin(energy, percentile) / float(n_bins) * 24000.0
+    return 24000.0 if cutoff < 1000 else cutoff
+
+
 class MelFront:
     """官方 mel_spectrogram_train 的 numpy 版：
     reflect pad 784 + hann(2048) + hop 480 + mel_basis + ln(clamp(x,1e-5))"""
@@ -267,74 +328,112 @@ def librosa_istft(S, length):
     return y[:length].astype(np.float32)
 
 
-# ==================== 高频护栏（Easy4K 自研后处理） ====================
-# 为什么需要：扩散模型补出来的 8kHz 以上高频是"凭空生成"的。在源音频本来没有对应高频的
-# 时频位置，模型可能吐出一簇窄带尖峰，听感就是刺耳的高频哨声/嘶声。
-# 判定必须逐时频对照源音频，不能假设所有自然音乐的高频都平滑衰减。
-# 做法：8kHz 以下不处理；8kHz 以上，凡是明显超过源音频同一时频位置能量的部分才衰减；其余原样保留。
-HF_GUARD_FLOOR_HZ = 8000      # 保护带起点
-HF_GUARD_SOURCE_HEADROOM = 2.0  # 原始输入高频允许的额外余量（+6 dB）
-HF_GUARD_EDGE_BINS = 6           # 保护带起点处的过渡宽度，避免硬边
+# ==================== 高频整形（Easy4K 自研后处理） ====================
+# AudioSR 只在源带宽之外“生成”高频，生成物有两个通病：
+#   1) 过量：谱能量甚至比中频还高（听感像“高频墙”/嘶声）；
+#   2) 底噪：安静段也被填满宽带噪声。
+# 这里不做硬砍，而是把生成的高频整形成“由源频谱自然外推”的包络：
+#   · 只处理源带宽 edge 以上（带 0.35 倍频程过渡），edge 以下一个采样都不碰；
+#   · 目标 = 本帧中频能量 × 源在 edge 处的 HF/中频比，再按源自身斜率继续滚降；
+#   · 逐时频增益（时间 30ms / 频率 3 bin 平滑，快攻慢放），只衰减、不提升；
+#   · 目标跟随中频动态 → 安静段自然归零，不会留下底噪。
+HF_EDGE_TRANSITION_OCT = 0.10    # edge 以上过渡宽度（倍频程，约 1 kHz）
+HF_SLOPE_MIN_DB_OCT = -6.0       # 源斜率下限（再缓就会过亮）
+HF_SLOPE_MAX_DB_OCT = -30.0      # 源斜率上限（再陡高频会消失）
 
 
-def _moving_average(a, half):
-    """边界重复的滑动平均（用于趋势估计）。"""
-    if half < 1:
-        return a.astype(np.float64)
-    pad = np.pad(a.astype(np.float64), (half, half), mode="edge")
-    c = np.concatenate([[0.0], np.cumsum(pad)])
-    w = 2 * half + 1
-    return (c[w:] - c[:-w]) / w
-
-
-def suppress_hf_artifacts(y, x_ref, floor_hz=HF_GUARD_FLOOR_HZ, enabled=True):
-    """只抑制相对源音频新增的高频能量，避免误伤源音频已有音色。"""
-    if not enabled:
-        return y
+def shape_generated_hf(y, x_ref, edge_hz, sr=SR):
+    """把模型生成的高频整形成源频谱自然外推的包络；只衰减不提升，edge 以下不动。
+    返回 (整形后的波形, 统计信息)。"""
+    from scipy.ndimage import uniform_filter1d
     n = min(y.shape[1], x_ref.shape[1])
-    if n < LIB_N_FFT * 4:
-        return y
-    bin_floor = int(floor_hz * LIB_N_FFT / SR)
+    F = np.fft.rfftfreq(LIB_N_FFT, 1.0 / sr)
+    i_edge = int(np.clip(edge_hz * LIB_N_FFT / sr, 1, len(F) - 2))
+    i_ref = max(1, int(i_edge / 1.35))
+    f_hi, f_lo = max(F[i_edge], 1.0), max(F[i_ref], 1.0)
+    hf_mask = F >= edge_hz
+
     out = []
-    max_cut = 1.0
+    stats = {"edge_hz": float(edge_hz), "slope": 0.0, "ratio_db": 0.0, "max_cut_db": 0.0}
     for c in range(y.shape[0]):
-        o = y[c, :n].astype(np.float64)
-        r = x_ref[c if c < x_ref.shape[0] else 0, :n].astype(np.float64)
-        so = librosa_stft(o)
-        sr = librosa_stft(r)
-        ao, ar = np.abs(so), np.abs(sr)
-        # 用同一时间-频率格比较源与成品；源中已有的频率只保留，不按全曲趋势误删。
-        limit = np.maximum(ar * HF_GUARD_SOURCE_HEADROOM, 1e-8)
-        gain = np.minimum(1.0, limit / np.maximum(ao, 1e-8))
-        gain[:bin_floor, :] = 1.0
-        ramp = np.ones(ao.shape[0])
-        ramp[:bin_floor] = 0.0
-        for i in range(HF_GUARD_EDGE_BINS):
-            b = bin_floor + i
-            if b < ramp.size:
-                ramp[b] = (i + 1) / HF_GUARD_EDGE_BINS
-        gain = 1.0 - (1.0 - gain) * ramp[:, None]
-        if np.all(gain >= 0.999):
-            out.append(y[c, :n])
-            continue
-        max_cut = min(max_cut, float(gain.min()))
-        out.append(librosa_istft(so * gain, n))
-    cut_db = -20 * math.log10(max(max_cut, 1e-9))
-    log(f"高频护栏：仅限制相对源音频新增的 8kHz 以上能量，最大衰减 {cut_db:.1f} dB")
-    return np.stack(out).astype(np.float32)
+        yc = y[c, :n].astype(np.float64)
+        xc = x_ref[c if c < x_ref.shape[0] else 0, :n].astype(np.float64)
+        Y = librosa_stft(yc)
+        X = librosa_stft(xc)
+        A = np.abs(Y)
+
+        # 源长时平均谱（1/6 倍频程平滑）→ edge 处的 HF/中频比 + 局部斜率
+        ltas = uniform_filter1d(np.mean(np.abs(X), axis=1), size=9, mode="nearest")
+        mid_src = float(np.mean(ltas[(F >= 2000) & (F < 8000)])) + 1e-12
+        slope = 20.0 * np.log10((ltas[i_edge] + 1e-12) / (ltas[i_ref] + 1e-12)) / max(np.log2(f_hi / f_lo), 1e-6)
+        slope = float(np.clip(slope, HF_SLOPE_MAX_DB_OCT, HF_SLOPE_MIN_DB_OCT))
+        ratio_edge = float(ltas[i_edge]) / mid_src
+        # 先按源自身斜率外推，再套一层「自然音乐高频上限」：
+        # 16k 处不高于中频 -22 dB，之后每倍频程再回落 24 dB。
+        # 只靠源斜率会把 mp3 通带内的平缓斜率一路推上去，导致 16k 以上过亮。
+        ratio_db = 20.0 * np.log10(np.maximum(
+            ratio_edge * (10.0 ** (slope * np.log2(np.maximum(F, 1.0) / f_hi) / 20.0)), 1e-12))
+        cap_db = -22.0 - 24.0 * np.log2(np.maximum(F, 16000.0) / 16000.0)
+        ratio = 10.0 ** (np.minimum(ratio_db, cap_db) / 20.0)
+
+        # 目标幅度 = 逐帧中频能量 × 目标 HF/中频比 × 动态门控。
+        # 门控只看这一帧音乐有多响（源是带限的，不能拿“源有没有 16k 以上内容”做门控，
+        # 否则会把补出来的高频全掐掉）；安静段自然归零，等于把底噪删掉。
+        mid_t = uniform_filter1d(np.mean(A[(F >= 2000) & (F < 8000)], axis=0), size=9, mode="nearest")
+        ref = float(np.percentile(mid_t, 95)) + 1e-12
+        dyn = np.clip((mid_t / ref) ** 0.5, 0.02, 1.0)
+        target = ratio[:, None] * mid_t[None, :] * dyn[None, :]
+        # 源本身在该频点就有的能量必须原样保留：整形只能压“多出来的”，不能把原有高频也压掉。
+        # 这条保证 mp3 通带边缘（例如 16k~17k）的既有内容不被误伤。
+        target = np.maximum(target, uniform_filter1d(np.abs(X), 9, axis=1, mode="nearest") * 1.05)
+
+        # 逐 bin 只衰减增益；频率做 min 滤波防止窄带尖峰漏出，时间快攻慢放保住瞬态
+        g = np.minimum(1.0, target / np.maximum(A, 1e-9))
+        g = uniform_filter1d(g, 3, axis=0, mode="nearest")
+        g = np.minimum(g, uniform_filter1d(g, 3, axis=0, mode="nearest"))
+        g = uniform_filter1d(g, 5, axis=1, mode="nearest")
+        g = np.minimum(g, uniform_filter1d(g, 3, axis=1, mode="nearest"))
+
+        # edge 以下完全不动，edge 以上 0.35 倍频程内淡入
+        w = np.zeros(len(F))
+        i_end = int(np.clip(i_edge * (2.0 ** HF_EDGE_TRANSITION_OCT), i_edge + 1, len(F)))
+        w[i_edge:i_end] = np.linspace(0.0, 1.0, i_end - i_edge)
+        w[i_end:] = 1.0
+        gain = 1.0 - w[:, None] * (1.0 - g)
+
+        if hf_mask.any():
+            stats["max_cut_db"] = max(stats["max_cut_db"],
+                                      float(-20 * np.log10(max(float(g[hf_mask].min()), 1e-9))))
+        stats["slope"], stats["ratio_db"] = slope, float(20 * np.log10(max(ratio_edge, 1e-12)))
+        out.append(librosa_istft(Y * gain, n))
+
+    return np.stack(out).astype(np.float32), stats
 
 
 def restore_output_level(y, reference, reference_peak):
-    """恢复输入在重采样后的峰值；只在超过 PCM 范围时保留余量并限幅。"""
-    current_peak = float(np.max(np.abs(y)))
-    if current_peak <= 1e-8:
-        return y.astype(np.float32)
-    target_peak = min(float(reference_peak), 0.98)
-    y = y * (target_peak / current_peak)
-    peak = float(np.max(np.abs(y)))
-    if peak > 0.999:
-        y *= 0.999 / peak
-    return y.astype(np.float32)
+    """按 0–8kHz 的 RMS 对齐源音频（保住低频/中频响度，不被高频尖峰拖低），再软限幅。"""
+    F = np.fft.rfftfreq(LIB_N_FFT, 1.0 / SR)
+    body = F < 8000
+
+    def rms_body(z):
+        Z = np.abs(librosa_stft(z))
+        return float(np.sqrt(np.mean(Z[body] ** 2))) + 1e-12
+
+    out = []
+    for c in range(y.shape[0]):
+        yc = y[c].astype(np.float64)
+        xc = reference[c if c < reference.shape[0] else 0, :len(yc)].astype(np.float64)
+        r = float(np.clip(rms_body(xc) / rms_body(yc), 0.5, 2.0))
+        out.append(yc * r)
+    y2 = np.stack(out)
+    # 软限幅：只压 0.9 以上的峰，不再整体降电平（否则新增高频一顶到峰值，低频就被拖低 2 dB）
+    lim = 0.9
+    over = np.abs(y2) > lim
+    if over.any():
+        y2 = np.where(over,
+                      np.sign(y2) * (lim + 0.08 * np.tanh((np.abs(y2) - lim) / 0.08)),
+                      y2)
+    return y2.astype(np.float32)
 
 
 # ============================ ONNX ============================
@@ -533,8 +632,10 @@ class AudioSR:
                 on_step(i + 1)
         return x
 
-    def run_window(self, cond_mel, gt_wave, mel_cutoff, wave_cutoff, on_step=None):
-        """单声道一个窗口：cond_mel [1,frames,256]（输入音频的 log-mel）；gt_wave [1,N]（输入音频）"""
+    def run_window(self, cond_mel, fill_mel, gt_wave, mel_cutoff, wave_cutoff, on_step=None,
+                   regen_all=False):
+        """单声道一个窗口：cond_mel [1,frames,256] 原始全带宽 log-mel（条件输入）；
+        fill_mel 官方低通版 log-mel（mel 域低频回填）；gt_wave [1,N] 官方低通版波形（波形域低频回填）"""
         frames = cond_mel.shape[1]
         lat_t = frames // self.vae_down
         noise = self.rng.standard_normal((1, self.n_latent, lat_t, self.f_size)).astype(np.float32)
@@ -545,16 +646,19 @@ class AudioSR:
         z = self.ddim(cond, uncond, lat_t, on_step)
 
         mel = self.sess["decoder"].run(["mel"], {"z": z.astype(np.float32)})[0]      # [1,1,frames,256]
-        mel[:, :, :, :mel_cutoff] = cond_mel[:, None, :, :mel_cutoff]                # 低频回填（mel 域）
+        if not regen_all:
+            # 官方做法：mel 低频段回填源音频（防跑调）。全频重建模式下整段交给模型。
+            mel[:, :, :, :mel_cutoff] = fill_mel[:, None, :, :mel_cutoff]
         voc_in = mel[0, 0].T.astype(np.float32)[None]                                # [1,256,frames]
         wav = self.sess["vocoder"].run(["wav"], {"mel": voc_in})[0][0, 0]            # [N]
 
+        if regen_all:
+            return wav.astype(np.float32)          # 全频重建：不做波形域低频回填
         o, g = wav.astype(np.float64), gt_wave[0].astype(np.float64)                 # 低频回填（波形域）
         n = min(len(o), len(g))
         S_out, S_gt = librosa_stft(o[:n]), librosa_stft(g[:n])
         k = min(wave_cutoff, S_out.shape[0])
-        ratio = np.mean(np.sum(np.abs(S_gt[:k])) / (np.sum(np.abs(S_out[:k])) + 1e-12))
-        S_out[:k] = S_gt[:k] / min(max(float(ratio), 0.8), 1.2)
+        S_out[:k] = S_gt[:k]          # 低频段直接等于源，避免逐窗能量比缩放造成电平抽动
         r = librosa_istft(S_out, len(o))
         return (np.pad(r, (0, len(o) - len(r))) if len(r) < len(o) else r[:len(o)]).astype(np.float32)
 
@@ -563,8 +667,8 @@ class AudioSR:
 
 def process_file(input_path, output_path, models_dir=None, steps=50, guidance=3.5, seed=42,
                  overlap=0.5, channels="auto", device="auto",
-                 bits=24, window=None, no_hf_guard=False):
-    """可调用的完整流程：读音频 → 分窗推理 → 低频回填 → 高频护栏 → 写 48kHz WAV。
+                 bits=24, window=None):
+    """可调用的完整流程：读音频 → 分窗推理 → 低频回填 → 写 48kHz WAV。
     （命令行入口 main() 只是解析参数后调用本函数，两条路径行为完全一致。）
     """
     models_dir = models_dir or os.path.dirname(os.path.abspath(__file__))
@@ -572,7 +676,7 @@ def process_file(input_path, output_path, models_dir=None, steps=50, guidance=3.
     a = argparse.Namespace(
         input=input_path, output=output_path, models=models_dir,
         steps=steps, guidance=guidance, seed=seed, overlap=overlap,
-        channels=channels, device=device, bits=bits, window=window, no_hf_guard=no_hf_guard)
+        channels=channels, device=device, bits=bits, window=window)
 
     t0 = time.time()
     precision = read_precision(a.models)
@@ -583,8 +687,10 @@ def process_file(input_path, output_path, models_dir=None, steps=50, guidance=3.
         eng.window_seconds = float(os.environ["EASY4K_SR_WINDOW"])
     log(f"权重包 {precision} / 后端 {eng.backend} / DDIM {eng.steps} 步 / CFG {eng.guidance} / "
         f"窗口 {eng.window_seconds}s / 重叠 {a.overlap:.0%} / 种子 {a.seed}")
-    log("高频护栏：已启用（限制相对源音频新增的 8kHz 以上能量）" if not a.no_hf_guard
-        else "高频护栏：已按参数关闭")
+    regen_all = os.environ.get("EASY4K_SR_REGEN_ALL", "0") == "1"
+    log("全频段重建：已启用（低/中/高频都由模型重新生成，不做官方低频回填）" if regen_all
+        else "全频段重建：已关闭（官方行为：只补高频，低频回填源音频）")
+    log("高频整形：已启用（生成的高频按源频谱自然外推的包络整形，安静段不产生底噪）")
 
     x, sr = read_wav(a.input)
     log(f"读入 {os.path.basename(a.input)}：{sr} Hz / {x.shape[0]} 声道 / {x.shape[1] / sr:.1f} s")
@@ -599,7 +705,14 @@ def process_file(input_path, output_path, models_dir=None, steps=50, guidance=3.
     x = (x - x.mean(axis=-1, keepdims=True)).astype(np.float32)
     x = (x / (float(np.max(np.abs(x))) + 1e-8) * 0.5).astype(np.float32)
 
-    # 不做低通：按完整带宽送进模型，保留原始高频（低通会把截止频率以上的内容整段砍掉）
+    # 官方 AudioSR 低通滤波（audiosr/lowpass.py → lowpass_filtering_prepare_inference）：
+    # 用输入能量 0.985 分位求截止频率，再按官方随机滤波器族做 8 阶零相位低通，并硬降采样再升回 48k。
+    # 低通结果 x_lp 专门用于低频回填（mel 域 + 波形域），条件输入仍用原始全带宽 mel —— 与官方一致。
+    lp_cut_hz = audio_bandwidth_hz(librosa_stft(x.mean(axis=0)))
+    lp_type = str(np.random.default_rng(int(a.seed)).choice(["butter", "cheby1", "ellip", "bessel"]))
+    x_lp = np.stack([lowpass_official(x[c], lp_cut_hz, SR, order=8, ftype=lp_type)
+                     for c in range(x.shape[0])]).astype(np.float32)
+    log(f"官方低通滤波：截止 {lp_cut_hz:.0f} Hz / 8 阶 {lp_type}（零相位 + 硬降采样再升采样）")
 
     # 分窗：窗口 = win_frames 个 mel 帧（帧数必须能被 VAE 下采样 8 整除）
     win_frames = int(round(eng.window_seconds * 100))            # 100 mel 帧/秒
@@ -615,20 +728,27 @@ def process_file(input_path, output_path, models_dir=None, steps=50, guidance=3.
     n_tail = max(0, n_pad - x.shape[1])
     if n_tail:
         x = np.pad(x, ((0, 0), (0, n_tail)), mode="edge")
-    # 每声道分别取 log-mel（对齐官方 wav_feature_extraction + pad_spec）
-    in_mel = []
-    for c in range(x.shape[0]):
-        m = eng.front.log_mel(x[c])
-        if m.shape[0] < total_frames:
-            m = np.pad(m, ((0, total_frames - m.shape[0]), (0, 0)))
-        in_mel.append(m[:total_frames])
-    in_mel = np.stack(in_mel)                                    # [C, frames, 256]
+        x_lp = np.pad(x_lp, ((0, 0), (0, n_tail)), mode="edge")
+
+    def _mel_stack(sig):
+        """每声道分别取 log-mel（对齐官方 wav_feature_extraction + pad_spec）"""
+        out = []
+        for c in range(sig.shape[0]):
+            m = eng.front.log_mel(sig[c])
+            if m.shape[0] < total_frames:
+                m = np.pad(m, ((0, total_frames - m.shape[0]), (0, 0)))
+            out.append(m[:total_frames])
+        return np.stack(out)                                    # [C, frames, 256]
+
+    in_mel = _mel_stack(x)                                      # 条件输入：原始全带宽
+    lp_mel = _mel_stack(x_lp)                                   # 低频回填：官方低通版（waveform_lowpass）
     log("模型输入特征提取完成")
 
-    # 低频回填截止（mel 域：官方 mel_replace_ops；波形域：官方 _get_cutoff_index_np）
-    lin = np.exp(in_mel.astype(np.float64))
-    mel_cutoff = find_cutoff_bin(np.cumsum(lin.sum(axis=1).mean(axis=0)), 0.985)
-    wave_cutoff = find_cutoff_bin(librosa_freq_energy(x.mean(axis=0)), 0.985)
+    # 低频回填截止（mel 域：官方 mel_replace_ops 用 lowpass_mel 算；
+    # 波形域：官方 postprocessing 用 waveform_lowpass 算）
+    mel_cutoff = find_cutoff_bin(
+        np.cumsum(np.exp(lp_mel.astype(np.float64)).sum(axis=1).mean(axis=0)), 0.985)
+    wave_cutoff = find_cutoff_bin(librosa_freq_energy(x_lp.mean(axis=0)), 0.985)
     log(f"低频回填：mel bin {mel_cutoff}/256、STFT bin {wave_cutoff}/1024"
         f"（≈{wave_cutoff * SR / 2048.0:.0f} Hz）")
 
@@ -644,12 +764,21 @@ def process_file(input_path, output_path, models_dir=None, steps=50, guidance=3.
     wsum = np.zeros(x.shape[1], np.float64)
     ramp = np.maximum(hann_periodic(win_len).astype(np.float64), 1e-3)   # 交叉淡入淡出权重
 
+    _shape_logged = [False]
+
     def finalize():
-        """交叉淡入淡出归一化、高频保护、去均值并恢复输入响度。"""
+        """交叉淡入淡出归一化 → 高频整形 → 去均值 → 按中频响度对齐源。"""
         y = (acc / np.where(wsum < 1e-6, 1.0, wsum))[:, :int(round(dur * SR))]
-        y = suppress_hf_artifacts(y, x[:, :y.shape[1]], enabled=not a.no_hf_guard)
+        y, st = shape_generated_hf(y, x[:, :y.shape[1]], wave_cutoff * SR / 2048.0)
+        if not _shape_logged[0]:
+            _shape_logged[0] = True
+            log(f"高频整形：边缘 {st['edge_hz']:.0f} Hz / 源斜率 {st['slope']:.1f} dB/oct / "
+                f"边缘处 HF 比中频 {st['ratio_db']:.1f} dB / 最大衰减 {st['max_cut_db']:.1f} dB")
         y = y - y.mean(axis=-1, keepdims=True)
-        return restore_output_level(y, x[:, :y.shape[1]], source_peak)
+        # x 在进模型前被归一化到 0.5 峰值（官方做法），这里换算回原始电平再对齐响度，
+        # 否则整曲会比源低 20*log10(0.5/源峰值) dB —— 表现为“低频/中频被压了”。
+        k = 2.0 * float(source_peak)
+        return restore_output_level(y * k, (x * k)[:, :y.shape[1]], source_peak)
 
     # 步级进度：把「第几窗 × 第几个声道 × 第几步」折算成整体百分比。
     # 单个窗口就要跑几十秒，只按窗口上报的话进度条会长时间钉在 0%；
@@ -675,12 +804,14 @@ def process_file(input_path, output_path, models_dir=None, steps=50, guidance=3.
         for n, f0 in enumerate(starts):
             ts = time.time()
             s0 = f0 * 480
-            gt = x[:, s0:s0 + win_len]
+            gt = x_lp[:, s0:s0 + win_len]
             if gt.shape[1] < win_len:
                 gt = np.pad(gt, ((0, 0), (0, win_len - gt.shape[1])))
             try:
                 outs = [eng.run_window(in_mel[c, f0:f0 + win_frames][None].astype(np.float32),
-                                       gt[c:c + 1], mel_cutoff, wave_cutoff, step_cb(n, c))
+                                       lp_mel[c, f0:f0 + win_frames][None].astype(np.float32),
+                                       gt[c:c + 1], mel_cutoff, wave_cutoff, step_cb(n, c),
+                                       regen_all=regen_all)
                         for c in range(x.shape[0])]
             except Exception as e:
                 if is_oom(e):
@@ -740,11 +871,9 @@ def main():
     ap.add_argument("--device", default="auto", choices=["auto", "cuda", "dml", "cpu"])
     ap.add_argument("--bits", type=int, default=24, choices=[16, 24, 32])
     ap.add_argument("--window", type=float, default=None, help="窗口秒数，默认取 manifest")
-    ap.add_argument("--no-hf-guard", action="store_true",
-                    help="关闭高频护栏（默认开启；仅在需要原始产物做 A/B 对比时使用）")
     a = ap.parse_args()
     process_file(a.input, a.output, a.models, a.steps, a.guidance, a.seed, a.overlap,
-                 a.channels, a.device, a.bits, a.window, a.no_hf_guard)
+                 a.channels, a.device, a.bits, a.window)
 
 
 if __name__ == "__main__":
