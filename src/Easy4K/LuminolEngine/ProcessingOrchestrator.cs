@@ -134,6 +134,18 @@ public sealed class ProcessingOrchestrator
         var st = PreparePipeline(ctx);
         if (st is null) return null;
 
+        // 转场检测（PySceneDetect）：只勾了补帧才需要；结果在合并阶段用于"转场处不插值"。
+        // 放在最前面（马上就能看到进度），但拆帧若会重跑，先作废旧切点，避免"复用旧结果配新帧"。
+        if (ctx.Options.Interpolation && ctx.Settings.SceneGuardEnabled)
+        {
+            if (WillResplitSplitStage(ctx, st))
+            {
+                _logger.Warn("检测到上次拆帧残留：旧的转场检测结果一并作废，重新扫描镜头切换点");
+                CleanSceneArtifacts(st);
+            }
+            await DetectSceneCutsAsync(st, ct);
+        }
+
         if (CanSegmentTurbo(ctx, st))
         {
             // 涡轮分段：N 条完整流水线并行，产出帧汇总到主临时目录后统一合并
@@ -155,12 +167,6 @@ public sealed class ProcessingOrchestrator
             // ============ 阶段4：补帧 ============
             if (!await InterpolationStageAsync(st, ct)) return null;
         }
-
-        // 转场检测（PySceneDetect）：只勾了补帧才需要；结果在合并阶段用于"转场处不插值"。
-        // 必须放在拆帧之后：拆帧重跑时会连带清掉旧的检测结果，这里才会重新扫描，
-        // 不会再出现"刚提示已清理中间文件，下面又复用了旧转场结果"的自相矛盾。
-        if (ctx.Options.Interpolation && ctx.Settings.SceneGuardEnabled)
-            await DetectSceneCutsAsync(st, ct);
 
         // ============ 阶段5：AudioSR 分支 ============
         if (!await AudioSrStageAsync(st, ct)) return null;
@@ -369,14 +375,13 @@ public sealed class ProcessingOrchestrator
             return true;
         }
 
-        // 上次拆帧未完整结束（中断/被停止）：本次自动清理残留并从该步骤重新开始，属正常恢复
+        // 上次拆帧未完整结束（中断/被停止）：本次自动清理残留并从该步骤重新开始，属正常恢复。
+        // 转场相关的旧结果已在 RunAsync 开头（检测之前）由 WillResplitSplitStage 判定并清掉，
+        // 这里不能再清：检测已经跑完并写回了新结果，再删会把本次切点抹掉。
         if (existing > 0)
         {
             _logger.Warn("检测到上次拆帧未完整结束留下的中间文件，已自动清理，本次从拆帧重新开始");
             await CleanPartialOutputAsync(inputFrames, ProcessStage.Splitting, "拆帧中", ct);
-            // 转场检测结果/工作目录也一起清掉：拆帧都重来了，旧切点和旧工作帧没有意义，
-            // 否则会出现"已清理中间文件"却仍然复用上次转场结果的矛盾状态（分段涡轮内部不清，避免各段互删）
-            if (!st.Segmented) CleanSceneArtifacts(st);
         }
 
         _logger.Info($"开始拆帧: {Path.GetFileName(ctx.InputVideo)}");
@@ -602,6 +607,18 @@ public sealed class ProcessingOrchestrator
         }
         catch { }
         return list;
+    }
+
+    /// <summary>本次拆帧是否一定会重跑（有残留但不够数）：用于在转场检测前先作废旧切点。
+    /// 与 SplitStageAsync 里的判断条件保持一致。</summary>
+    private static bool WillResplitSplitStage(ProcessingContext ctx, PipelineState st)
+    {
+        if (!ctx.Options.SplitFrames) return false;
+        if (st.Segmented || st.SplitFrom >= 0) return false;
+        if (!string.IsNullOrEmpty(ctx.ExternalFramesDir) && Directory.Exists(ctx.ExternalFramesDir)) return false;
+        var need = st.CachedDedupKept > 0 ? st.CachedDedupKept : st.TotalFrames;
+        var existing = CountFrames(st.InputFrames);
+        return existing > 0 && existing < need;
     }
 
     /// <summary>删掉转场保护相关的中间产物：工作帧目录（scene_guard_frames）与检测结果（scene_cuts.json）。
