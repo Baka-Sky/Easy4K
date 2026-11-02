@@ -134,10 +134,6 @@ public sealed class ProcessingOrchestrator
         var st = PreparePipeline(ctx);
         if (st is null) return null;
 
-        // 转场检测（PySceneDetect）：只勾了补帧才需要；结果在合并阶段用于"转场处不插值"
-        if (ctx.Options.Interpolation && ctx.Settings.SceneGuardEnabled)
-            await DetectSceneCutsAsync(st, ct);
-
         if (CanSegmentTurbo(ctx, st))
         {
             // 涡轮分段：N 条完整流水线并行，产出帧汇总到主临时目录后统一合并
@@ -159,6 +155,12 @@ public sealed class ProcessingOrchestrator
             // ============ 阶段4：补帧 ============
             if (!await InterpolationStageAsync(st, ct)) return null;
         }
+
+        // 转场检测（PySceneDetect）：只勾了补帧才需要；结果在合并阶段用于"转场处不插值"。
+        // 必须放在拆帧之后：拆帧重跑时会连带清掉旧的检测结果，这里才会重新扫描，
+        // 不会再出现"刚提示已清理中间文件，下面又复用了旧转场结果"的自相矛盾。
+        if (ctx.Options.Interpolation && ctx.Settings.SceneGuardEnabled)
+            await DetectSceneCutsAsync(st, ct);
 
         // ============ 阶段5：AudioSR 分支 ============
         if (!await AudioSrStageAsync(st, ct)) return null;
@@ -372,6 +374,9 @@ public sealed class ProcessingOrchestrator
         {
             _logger.Warn("检测到上次拆帧未完整结束留下的中间文件，已自动清理，本次从拆帧重新开始");
             await CleanPartialOutputAsync(inputFrames, ProcessStage.Splitting, "拆帧中", ct);
+            // 转场检测结果/工作目录也一起清掉：拆帧都重来了，旧切点和旧工作帧没有意义，
+            // 否则会出现"已清理中间文件"却仍然复用上次转场结果的矛盾状态（分段涡轮内部不清，避免各段互删）
+            if (!st.Segmented) CleanSceneArtifacts(st);
         }
 
         _logger.Info($"开始拆帧: {Path.GetFileName(ctx.InputVideo)}");
@@ -597,6 +602,25 @@ public sealed class ProcessingOrchestrator
         }
         catch { }
         return list;
+    }
+
+    /// <summary>删掉转场保护相关的中间产物：工作帧目录（scene_guard_frames）与检测结果（scene_cuts.json）。
+    /// 拆帧重跑时要一起清，否则会复用上一次的切点，等于"旧结果配新帧"。</summary>
+    private void CleanSceneArtifacts(PipelineState st)
+    {
+        st.SceneCuts.Clear();
+        var dir = Path.Combine(st.TempRoot, "scene_guard_frames");
+        try
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+        catch { }
+        var json = Path.Combine(st.TempRoot, "scene_cuts.json");
+        try
+        {
+            if (File.Exists(json)) File.Delete(json);
+        }
+        catch { }
     }
 
     /// <summary>转场处不插值：把每个剪切点前面的插值帧替换成上一帧的复制，消除跨镜头混合鬼影。
