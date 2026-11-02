@@ -324,6 +324,8 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SrFamilyScene))]
     [NotifyPropertyChangedFor(nameof(SrSceneText))]
+    [NotifyPropertyChangedFor(nameof(SrScaleEnabled))]
+    [NotifyPropertyChangedFor(nameof(SrScaleHint))]
     private int _srEngineIndex;
 
     /// <summary>超分算法名称（UI「算法」下拉框用）</summary>
@@ -371,12 +373,23 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(OutputResolutionText));
         OnPropertyChanged(nameof(FinalOutputName));
         OnPropertyChanged(nameof(SrSceneText));
+        OnPropertyChanged(nameof(SrScaleEnabled));
+        OnPropertyChanged(nameof(SrScaleHint));
     }
 
     /// <summary>当前算法支持的倍率档（升序）。RealSR 只有 4x、waifu2x 只有 2x。</summary>
     private IReadOnlyList<int> SupportedSrScales() =>
         (SrCatalog.At(SrEngineIndex)?.Variants.SelectMany(v => v.Scales) ?? Enumerable.Empty<int>())
         .Distinct().OrderBy(x => x).ToList();
+
+    /// <summary>倍率下拉框是否可用：只有一档倍率的算法（waifu2x 仅 ×2、RealSR 仅 ×4）直接禁用，
+    /// 避免用户在一个"改不动的倍率"上来回点却没有任何变化。</summary>
+    public bool SrScaleEnabled => SupportedSrScales().Count > 1;
+
+    /// <summary>倍率不可用时的提示文案（显示在禁用状态下，说明为什么改不了）</summary>
+    public string SrScaleHint => SrScaleEnabled
+        ? ""
+        : $"该算法只支持 ×{SupportedSrScales().FirstOrDefault()}，倍率已锁定";
 
     // ===================== 补帧设置 =====================
     [ObservableProperty]

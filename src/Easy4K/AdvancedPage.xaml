@@ -133,7 +133,9 @@
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel Spacing="6">
                         <TextBlock Text="转场优化" Style="{StaticResource SectionTitle}"/>
+                        <!-- ToggleSwitch 自带上下留白，加上标题的下间距会在两者之间多出约 20px；这里用负边距压紧 -->
                         <ToggleSwitch x:Name="SceneGuardSwitch" OnContent="已开启" OffContent="已关闭"
+                                      Margin="0,-6,0,-2" MinHeight="0" VerticalAlignment="Top"
                                       IsOn="{x:Bind Vm.SceneGuardEnabled, Mode=TwoWay}" FontSize="12"/>
                         <TextBlock TextWrapping="Wrap" FontSize="11" Opacity="0.6"
                                    Text="补帧前用 PySceneDetect 扫描镜头切换点，转场处不生成插值帧（保持上一帧），消除跨镜头混合产生的鬼影；帧数、帧率、时长都不变。对 RIFE 与各 PyTorch 补帧模型、帧去重回填、涡轮与分段处理同样生效。"/>

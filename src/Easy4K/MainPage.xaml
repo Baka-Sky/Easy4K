@@ -177,7 +177,10 @@
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="倍率" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
-                                <ComboBox Grid.Column="1" SelectedItem="{x:Bind Vm.SrScale, Mode=TwoWay}" MinWidth="200" HorizontalAlignment="Stretch" Style="{StaticResource GlassComboBox}">
+                                <ComboBox Grid.Column="1" SelectedItem="{x:Bind Vm.SrScale, Mode=TwoWay}"
+                                          IsEnabled="{x:Bind Vm.SrScaleEnabled, Mode=OneWay}"
+                                          ToolTipService.ToolTip="{x:Bind Vm.SrScaleHint, Mode=OneWay}"
+                                          MinWidth="200" HorizontalAlignment="Stretch" Style="{StaticResource GlassComboBox}">
                                     <x:Int32>2</x:Int32>
                                     <x:Int32>3</x:Int32>
                                     <x:Int32>4</x:Int32>
