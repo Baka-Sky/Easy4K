@@ -366,6 +366,11 @@ public partial class MainViewModel : ObservableObject
             SrScale = scales[0];   // 赋值会触发 OnSrScaleChanged → RefreshSrModels
         else
             RefreshSrModels();
+
+        // 算法/模型/倍率可能只是"看起来没变"，但输出分辨率与成片名依赖它们，这里统一再通知一次
+        OnPropertyChanged(nameof(OutputResolutionText));
+        OnPropertyChanged(nameof(FinalOutputName));
+        OnPropertyChanged(nameof(SrSceneText));
     }
 
     /// <summary>当前算法支持的倍率档（升序）。RealSR 只有 4x、waifu2x 只有 2x。</summary>
@@ -2263,6 +2268,20 @@ public partial class MainViewModel : ObservableObject
     {
         _app.DefaultSrModel = value;
         _settings.Save(_app, _pathConfig);
+
+        // 单倍率模型的权重自带倍率（Real-ESRGAN / waifu2x / RealSR / SRMD 都是"一个模型对应一个倍率"）：
+        // 模型变了就把倍率同步过去。否则从 ×3/×4 切到 waifu2x（只有 ×2）时，倍率框和「输出分辨率」
+        // 还停在旧值，看起来像提示不刷新，实际是按错误的倍率在显示。
+        var scales = SrCatalog.ScalesOf(value);
+        if (scales.Count == 1 && scales[0] != SrScale)
+        {
+            SrScale = scales[0];   // 触发 OnSrScaleChanged → 输出分辨率/成片名等通知
+            return;
+        }
+
+        // 倍率没变也要通知一次：模型与倍率可能同时被刷新，确保「输出分辨率/成片名」跟着重算
+        OnPropertyChanged(nameof(OutputResolutionText));
+        OnPropertyChanged(nameof(FinalOutputName));
     }
 
     partial void OnSrScaleChanged(int value)
@@ -3348,14 +3367,8 @@ public partial class MainViewModel : ObservableObject
     /// <summary>按目录清理中间产物（含 cache.json 元信息），白名单制。</summary>
     public string CleanTempIn(string dir)
     {
-        // 软件产生的全部中间产物名（不含输出视频）
-        string[] tempDirs = { "input_frames", "4k_frames", "output_frames",
-                              "expanded_frames", "input_frames_dedup_removed",
-                              "if_input_kept", "if_input_kept_b" };
-        string[] tempFiles = { "audio.flac", "temp_video.mkv", "hdr_video.mkv", "audio_embedded.mkv", "cache.json",
-                               "dedup_map.json", "audiosr_in_48k.wav", "audiosr_out_48k.wav", "audiosr_out_48k.wav.partial.wav",
-                               // 补帧输入子集的完成标记（放在帧目录外面，防止 RIFE 把它当图片解码而崩溃）
-                               "if_input_kept.done.json", "if_input_kept_b.done.json" };
+        var tempDirs = TempArtifactDirs;
+        var tempFiles = TempArtifactFiles.Append("cache.json").ToArray();
 
         try
         {
@@ -3404,12 +3417,8 @@ public partial class MainViewModel : ObservableObject
         _logger.Info($"开始强制清理临时目录: {dir}");
         LogDebug($"CLEAN START dir={dir}");
 
-        string[] tempDirs = { "input_frames", "4k_frames", "output_frames",
-                              "expanded_frames", "input_frames_dedup_removed",
-                              "if_input_kept", "if_input_kept_b" };
-        string[] tempFiles = { "audio.flac", "temp_video.mkv", "hdr_video.mkv", "audio_embedded.mkv", "cache.json",
-                               "dedup_map.json", "audiosr_in_48k.wav", "audiosr_out_48k.wav", "audiosr_out_48k.wav.partial.wav",
-                               "if_input_kept.done.json", "if_input_kept_b.done.json" };
+        string[] tempDirs = TempArtifactDirs;
+        string[] tempFiles = TempArtifactFiles.Append("cache.json").ToArray();
 
         IsCleaning = true;
         CleanProgressPercent = 0;
@@ -3604,19 +3613,23 @@ public partial class MainViewModel : ObservableObject
     /// <summary>临时目录缓存检测结果</summary>
     public enum TempCacheStatus { None, Match, Mismatch }
 
-    /// <summary>临时目录里的「中间产物」白名单：与清理逻辑用的是同一份目录/文件名。
+    /// <summary>临时目录里的「中间产物」白名单：与清理逻辑共用同一份目录/文件名。
     /// 判断"有没有老文件"不能只看 cache.json —— 上次被强杀、手工删过 cache.json、或清理了一半时，
     /// 目录里可能剩着上万帧却没有 cache.json。</summary>
     private static readonly string[] TempArtifactDirs =
     {
         "input_frames", "4k_frames", "output_frames", "expanded_frames",
-        "input_frames_dedup_removed", "if_input_kept", "if_input_kept_b"
+        "input_frames_dedup_removed", "if_input_kept", "if_input_kept_b",
+        // 转场保护的工作目录 / 涡轮块目录（以前漏在白名单外，清理时一直残留）
+        "scene_guard_frames", "turbo_blocks"
     };
 
     private static readonly string[] TempArtifactFiles =
     {
         "audio.flac", "temp_video.mkv", "hdr_video.mkv", "audio_embedded.mkv",
-        "dedup_map.json", "audiosr_in_48k.wav", "audiosr_out_48k.wav",
+        "dedup_map.json", "audiosr_in_48k.wav", "audiosr_out_48k.wav", "audiosr_out_48k.wav.partial.wav",
+        // 转场检测结果、封面抽取图、元数据写回产物、VFR 转换产物
+        "scene_cuts.json", "cover.png", "final_metadata.mkv", "input_cfr.mkv",
         "if_input_kept.done.json", "if_input_kept_b.done.json"
     };
 
