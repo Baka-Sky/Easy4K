@@ -3765,12 +3765,25 @@ public partial class MainViewModel : ObservableObject
                 var cached = v.GetString() ?? "";
                 // 与当前输入（视频文件或帧文件夹）一致 → 匹配（可安全复用该目录），否则 → 不符（需询问）
                 var fingerprint = HasExternalFrames ? ExternalFramesDir : InputVideo;
-                var match = string.Equals(cached, fingerprint, StringComparison.OrdinalIgnoreCase);
+                // 遥控/手机端传来的路径是正斜杠（H:/a/b.mp4），cache.json 里是反斜杠（H:\a\b.mp4），
+                // 直接字符串比较会误判成「缓存来自其他视频」，这里先统一分隔符再比。
+                var match = string.Equals(NormalizePathForCompare(cached),
+                                          NormalizePathForCompare(fingerprint),
+                                          StringComparison.OrdinalIgnoreCase);
                 return (match ? TempCacheStatus.Match : TempCacheStatus.Mismatch, cached);
             }
         }
         catch { }
         return (TempCacheStatus.Mismatch, "");
+    }
+
+    /// <summary>路径比较用归一化：统一分隔符并尽量转成完整路径（遥控端传正斜杠时避免误判）。</summary>
+    private static string NormalizePathForCompare(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "";
+        var s = path.Trim().Replace('/', '\\');
+        try { s = Path.GetFullPath(s); } catch { }
+        return s.TrimEnd('\\');
     }
 
     /// <summary>接受临时目录并覆盖其旧缓存（清空该目录中间产物后设置）</summary>
