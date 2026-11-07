@@ -1612,13 +1612,20 @@ public sealed partial class MainWindow : Window
     /// <summary>渲染帧回调：界面真有变化才打点；写文本自身产生的帧要忽略，否则会自己刷自己。</summary>
     private void OnDebugRendering(object? sender, object e)
     {
-        // 只统计 Easy4K 自己的界面，窗口失活时不打点
-        if (!_isActivated) return;
-        if (!AppWindow.IsVisible) return;
+        try
+        {
+            // 只统计 Easy4K 自己的界面，窗口失活时不打点
+            if (!_isActivated) return;
+            if (!AppWindow.IsVisible) return;
 
-        // 刚写过文本 → 紧随其后的几帧是这次写入引起的，跳过
-        if ((DateTime.Now - _lastDebugTextAt).TotalMilliseconds < 400) return;
-        MarkUiUpdated();
+            // 刚写过文本 → 紧随其后的几帧是这次写入引起的，跳过
+            if ((DateTime.Now - _lastDebugTextAt).TotalMilliseconds < 400) return;
+            MarkUiUpdated();
+        }
+        catch
+        {
+            // 关窗/自动测试子进程退出期间 AppWindow 可能已释放，这里不能抛（会刷爆 crash.log）
+        }
     }
 
     private void RefreshDebugInfo()

@@ -540,6 +540,7 @@ public sealed class RemoteSession
 
     public async Task StartAsync()
     {
+        if (!IsConnected) { _vm.Logger.Warn("尚未连接远端，忽略启动请求"); return; }
         await PushConfigAsync(null);
         // 先乐观进入处理态并切页：远端校验失败时会立刻回一条 state=idle 把状态撤销，
         // 否则用户点了「开始处理」界面毫无反应，只能去日志里找原因。
@@ -687,6 +688,13 @@ public sealed class RemoteSession
             if (!Directory.Exists(dir)) dir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             Directory.CreateDirectory(dir);
             var local = Path.Combine(dir, Path.GetFileName(remotePath));
+            // 同名成品已存在时加时间戳，避免把用户之前下载的片子直接覆盖掉
+            if (File.Exists(local))
+            {
+                var stem = Path.GetFileNameWithoutExtension(local);
+                var ext = Path.GetExtension(local);
+                local = Path.Combine(dir, $"{stem}_{DateTime.Now:yyyyMMdd_HHmmss}{ext}");
+            }
 
             _vm.Logger.Info($"开始下载远端成品到本机：{local}");
             var lastDecile = -1;
@@ -726,7 +734,14 @@ public sealed class RemoteSession
 
     private void OnNotice(JsonElement e) => _vm.Logger.Info($"[远端] {RemoteControlClient.GetStr(e, "text")}");
 
-    private void OnError(JsonElement e) => _vm.Logger.Error($"[远端] {RemoteControlClient.GetStr(e, "message")}");
+    private void OnError(JsonElement e)
+    {
+        var message = RemoteControlClient.GetStr(e, "message");
+        if (message.Length == 0) return;
+        _vm.Logger.Error($"[远端] {message}");
+        // 启动被拒等错误只写日志的话用户看不到（主页没有日志区），补一条通知条
+        _ui.TryEnqueue(() => App.MainWindow?.ShowNotice("远端提示", message));
+    }
 
     /// <summary>远端处理失败、服务端已写好完整报错文件 → 自动分块拉回本机报告目录。</summary>
     private void OnFailureReport(JsonElement e)
