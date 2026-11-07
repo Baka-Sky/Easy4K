@@ -29,7 +29,7 @@
             <RowDefinition Height="Auto"/>      <!-- 降级横幅 -->
             <RowDefinition Height="Auto"/>      <!-- 顶部进度条 -->
             <RowDefinition Height="*"/>         <!-- 预览图占满剩余 -->
-            <RowDefinition Height="280"/>       <!-- 底部固定280px -->
+            <RowDefinition Height="320"/>       <!-- 底部固定320px（放得下 CPU/GPU 圆环与操作按钮） -->
         </Grid.RowDefinitions>
 
         <!-- 降级横幅（安全帧率降级时显示） -->

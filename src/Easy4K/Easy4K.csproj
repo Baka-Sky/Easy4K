@@ -104,9 +104,7 @@
        构建主程序时一并构建并复制到输出目录，保证 Debug/Release/publish 产物依旧是自包含的一份，
        不需要额外的构建步骤；孤儿模式在没有这个 exe 时会明确提示而不是静默失败。 -->
   <Target Name="BuildOrphanDaemon" AfterTargets="Build" Condition="Exists('$(MSBuildThisFileDirectory)..\Easy4K.Orphan\Easy4K.Orphan.csproj')">
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Easy4K.Orphan\Easy4K.Orphan.csproj"
-             Targets="Build"
-             Properties="Configuration=$(Configuration);Platform=$(Platform)">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Easy4K.Orphan\Easy4K.Orphan.csproj" Targets="Build" Properties="Configuration=$(Configuration);Platform=$(Platform)">
       <Output TaskParameter="TargetOutputs" ItemName="OrphanDaemonAssembly" />
     </MSBuild>
     <!-- TargetOutputs 只给到主程序集（.dll），apphost / runtimeconfig / deps 在同目录，单独补上 -->

@@ -183,6 +183,7 @@ public sealed class RemoteControlServer
 
         // 处理结果/日志/失败事件 → 转发给客户端
         _vm.ProcessingCompleted += OnProcessingCompleted;
+        _vm.FailureReportSaved += OnFailureReportSaved;
         _vm.StartFailed += OnStartFailed;
         _vm.TurboDisabledRequired += OnTurboDisabledRequired; // 开跑前复检到机械盘 → 推给客户端
         _vm.Logs.CollectionChanged += OnLogAdded;
@@ -195,6 +196,7 @@ public sealed class RemoteControlServer
         IsRunning = false;
 
         _vm.ProcessingCompleted -= OnProcessingCompleted;
+        _vm.FailureReportSaved -= OnFailureReportSaved;
         _vm.StartFailed -= OnStartFailed;
         _vm.TurboDisabledRequired -= OnTurboDisabledRequired;
         _vm.Logs.CollectionChanged -= OnLogAdded;
@@ -252,16 +254,28 @@ public sealed class RemoteControlServer
         try
         {
             client.NoDelay = true;
-            var stream = client.GetStream();
+            // 全链路加密：先做 TLS 握手，之后的 hello/auth/进度/文件回传都在密文里跑
+            Stream stream;
+            try
+            {
+                stream = await RemoteTls.AcceptAsync(client.GetStream(), ct);
+            }
+            catch
+            {
+                // TLS 握手失败（多半是没更新的旧版客户端），直接断开这条连接
+                try { client.Close(); } catch { }
+                return;
+            }
             var reader = new StreamReader(stream, new UTF8Encoding(false), false, 1 << 16, leaveOpen: true);
             var writer = new StreamWriter(stream, new UTF8Encoding(false), 1 << 16, leaveOpen: true) { AutoFlush = true, NewLine = "\n" };
 
             ch = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
             _outbound = ch;
 
-            HasClient = true;
-            SetStatus("客户端已连接");
-            StartPushLoop(ct);
+            var requiresKey = _vm.HasRemoteKey;
+            var authorized = !requiresKey;
+
+            SetStatus(requiresKey ? "客户端已连接，等待安全密钥验证" : "客户端已连接");
             _writerTask = Task.Run(async () =>
             {
                 try
@@ -275,7 +289,13 @@ public sealed class RemoteControlServer
                 catch { }
             });
 
-            Send(new { type = "hello_ack", app = "Easy4K", version = _vm.Version, protocol = ProtocolVersion });
+            Send(new { type = "hello_ack", app = "Easy4K", version = _vm.Version, protocol = ProtocolVersion, authRequired = requiresKey });
+            if (requiresKey) Send(new { type = "auth_required", protocol = ProtocolVersion });
+            else
+            {
+                HasClient = true;
+                StartPushLoop(ct);
+            }
 
             while (!ct.IsCancellationRequested)
             {
@@ -283,6 +303,18 @@ public sealed class RemoteControlServer
                 if (line is null) break;
                 line = line.Trim();
                 if (line.Length == 0) continue;
+
+                if (!authorized)
+                {
+                    // 未通过密钥验证前只接受 auth，其余指令一律拒绝
+                    if (!await TryAuthorizeAsync(line)) break;
+                    authorized = true;
+                    HasClient = true;
+                    SetStatus("客户端已连接");
+                    StartPushLoop(ct);
+                    continue;
+                }
+
                 try { await DispatchAsync(line); }
                 catch (Exception ex) { SendError(ex.Message); }
             }
@@ -312,6 +344,36 @@ public sealed class RemoteControlServer
     }
 
     // ===================== 协议分发 =====================
+
+    /// <summary>安全密钥验证：接受 {"type":"auth","key":"..."}，成功回 auth_ok，失败回 auth_failed 并断开。</summary>
+    private async Task<bool> TryAuthorizeAsync(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var id = root.TryGetProperty("id", out var idEl) ? idEl : default;
+            if (!root.TryGetProperty("type", out var t) || t.GetString() != "auth")
+            {
+                Send(new { type = "error", message = "需要安全密钥" }, id);
+                return false;
+            }
+
+            var key = root.TryGetProperty("key", out var k) ? k.GetString() ?? "" : "";
+            if (await _vm.VerifyRemoteKeyAsync(key))
+            {
+                Send(new { type = "auth_ok", protocol = ProtocolVersion }, id);
+                return true;
+            }
+
+            Send(new { type = "auth_failed", message = "安全密钥错误" }, id);
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     private async Task DispatchAsync(string json)
     {
@@ -608,7 +670,30 @@ public sealed class RemoteControlServer
                 dedupMode = _vm.DedupMode,
                 audioSrPrecision = _vm.AudioSrPrecision,
                 hdrEnabled = _vm.IsHdrEnabled,
-                ifMultiplierLocked = _vm.IfMultiplierLocked
+                ifMultiplierLocked = _vm.IfMultiplierLocked,
+                // —— 高级页全部可选项（手机端要能看齐桌面端）——
+                sceneGuard = _vm.SceneGuardEnabled,
+                turboSegments = _vm.TurboSegments,
+                srDecodeThreads = _vm.SrDecodeThreads,
+                srEncodeThreads = _vm.SrEncodeThreads,
+                ifDecodeThreads = _vm.IfDecodeThreads,
+                ifEncodeThreads = _vm.IfEncodeThreads,
+                pipelineGpuIndex = _vm.PipelineGpuIndex,
+                pipelineGpuOptions = _vm.PipelineGpuOptions.ToArray(),
+                hdrSaturation = _vm.HdrSaturation,
+                hdrContrast = _vm.HdrContrast,
+                hdrAiStrength = _vm.HdrAiStrength,
+                hdrAiPath = _vm.HdrAiPath,
+                skipStartupSelfTest = _vm.SkipStartupSelfTest,
+                useSafeFrameRate = _vm.UseSafeFrameRate,
+                lowerQualityForVram = _vm.LowerQualityForVram,
+                useGpuAcceleration = _vm.UseGpuAcceleration,
+                useCpuProcessing = _vm.UseCpuProcessing,
+                tryOldFfmpegOnCrash = _vm.TryOldFfmpegOnCrash,
+                noReport = _vm.NoReport,
+                reportAutoOpen = _vm.ReportAutoOpen,
+                reportDir = _vm.ReportDir,
+                preventAutoSleep = _vm.PreventAutoSleep
             },
             config = new
             {
@@ -754,30 +839,67 @@ public sealed class RemoteControlServer
         return BuildVideoInfo(path);
     });
 
+    /// <summary>视频信息的完整协议载荷：客户端据此把「视频详细信息」整卡还原，
+    /// 不能只给宽高帧率（否则远端视频的编码/色彩/音轨/字幕/封面一行都显示不出来）。</summary>
+    private static object VideoPayload(string path, Easy4K.Models.VideoInfo v) => new
+    {
+        type = "video_info",
+        valid = true,
+        path,
+        width = v.Width,
+        height = v.Height,
+        resolution = v.ResolutionText,
+        fps = v.FrameRate,
+        fpsText = v.FpsText,
+        frameRateRaw = v.FrameRateRaw,
+        averageFps = v.AverageFrameRate,
+        isVfr = v.IsVariableFrameRate,
+        duration = v.Duration.TotalSeconds,
+        durationText = v.DurationText,
+        totalFrames = v.TotalFrames,
+        bitrate = v.BitRate,
+        videoBitRate = v.VideoBitRate,
+        fileSize = v.FileSize,
+        displayAspectRaw = v.DisplayAspectRaw,
+        videoCodec = v.VideoCodec,
+        profile = v.Profile,
+        pixelFormat = v.PixelFormat,
+        colorSpace = v.ColorSpace,
+        colorTransfer = v.ColorTransfer,
+        colorRange = v.ColorRange,
+        fieldOrder = v.FieldOrder,
+        videoStreamCount = v.VideoStreamCount,
+        audioCodec = v.AudioCodec,
+        audioProfile = v.AudioProfile,
+        audioSampleRate = v.AudioSampleRate,
+        audioChannels = v.AudioChannels,
+        audioChannelLayout = v.AudioChannelLayout,
+        audioBitRate = v.AudioBitRate,
+        audioTrackCount = v.AudioTrackCount,
+        audioLanguages = v.AudioLanguages,
+        hasAudio = v.HasAudio,
+        hasSubtitles = v.HasSubtitles,
+        subtitleCount = v.SubtitleCount,
+        subtitleLanguages = v.SubtitleLanguages,
+        subtitleCodecs = v.SubtitleCodecs,
+        formatName = v.FormatName,
+        chapterCount = v.ChapterCount,
+        attachmentCount = v.AttachmentCount,
+        metadataTagCount = v.MetadataTagCount,
+        encoderTag = v.EncoderTag,
+        coverStreamIndex = v.CoverStreamIndex,
+        coverCodec = v.CoverCodec,
+        coverWidth = v.CoverWidth,
+        coverHeight = v.CoverHeight,
+        coverIsAttachment = v.CoverIsAttachment
+    };
+
     private object BuildVideoInfo(string path)
     {
         var v = _vm.Video;
         if (v is null || !v.IsValid)
             return new { type = "video_info", valid = false, path, error = "视频信息检测失败（FFprobe 不可用或文件不可读）" };
-        return new
-        {
-            type = "video_info",
-            valid = true,
-            path,
-            width = v.Width,
-            height = v.Height,
-            resolution = v.ResolutionText,
-            fps = v.FrameRate,
-            fpsText = v.FpsText,
-            duration = v.Duration.TotalSeconds,
-            durationText = v.DurationText,
-            totalFrames = v.TotalFrames,
-            bitrate = v.BitRate,
-            audioCodec = v.AudioCodec,
-            hasAudio = v.HasAudio,
-            // 有没有字幕流：客户端据此解锁「保留原视频内嵌字幕」（没字幕就该禁用）
-            hasSubtitles = v.HasSubtitles
-        };
+        return VideoPayload(path, v);
     }
 
     // ===================== 上传（手机视频 → 电脑） =====================
@@ -931,8 +1053,33 @@ public sealed class RemoteControlServer
         });
     }
 
+    private long _lastCfrPushTick;
+
     private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        // 动态帧率 → 静态帧率 的预处理转换发生在流水线启动之前，没有 ProcessProgress 事件，
+        // 远端（手机）本来收不到任何进度；这里按 VM 的进度变化单独推一条 progress。
+        if (_vm.CfrConverting &&
+            e.PropertyName is nameof(MainViewModel.ProgressPercent) or nameof(MainViewModel.ProgressDetail))
+        {
+            var now = Environment.TickCount64;
+            if (now - _lastCfrPushTick >= 200)
+            {
+                _lastCfrPushTick = now;
+                Send(new
+                {
+                    type = "progress",
+                    stage = "Cfr",
+                    stageText = "转换静态帧率",
+                    detail = _vm.ProgressDetail,
+                    percent = Math.Round(_vm.ProgressPercent, 1),
+                    current = 0,
+                    total = 0,
+                    percentDisplay = true
+                });
+            }
+        }
+
         // 只在单文件任务相关属性变化时推送，避免主管线的高频进度事件把通道刷爆
         var relevant = e.PropertyName is nameof(MainViewModel.SfRunning)
             or nameof(MainViewModel.SfStatus)
@@ -1047,6 +1194,30 @@ public sealed class RemoteControlServer
         var audioPrec = Str("audioSrPrecision", _vm.AudioSrPrecision);
         if (audioPrec is "fp16" or "fp32") _vm.AudioSrPrecision = audioPrec;
 
+        // —— 高级页全部可选项 ——
+        _vm.SceneGuardEnabled = Bool("sceneGuard", _vm.SceneGuardEnabled);
+        _vm.TurboSegments = Math.Clamp(Int("turboSegments", _vm.TurboSegments), 1, 5);
+        _vm.SrDecodeThreads = Math.Clamp(Int("srDecodeThreads", _vm.SrDecodeThreads), 1, 32);
+        _vm.SrEncodeThreads = Math.Clamp(Int("srEncodeThreads", _vm.SrEncodeThreads), 1, 32);
+        _vm.IfDecodeThreads = Math.Clamp(Int("ifDecodeThreads", _vm.IfDecodeThreads), 1, 32);
+        _vm.IfEncodeThreads = Math.Clamp(Int("ifEncodeThreads", _vm.IfEncodeThreads), 1, 32);
+        _vm.PipelineGpuIndex = Math.Clamp(Int("pipelineGpuIndex", _vm.PipelineGpuIndex), 0,
+            Math.Max(0, _vm.PipelineGpuOptions.Count - 1));
+        _vm.HdrSaturation = Math.Clamp(Int("hdrSaturation", _vm.HdrSaturation), 0, 200);
+        _vm.HdrContrast = Math.Clamp(Int("hdrContrast", _vm.HdrContrast), 0, 200);
+        _vm.HdrAiStrength = Math.Clamp(Int("hdrAiStrength", _vm.HdrAiStrength), 50, 150);
+        _vm.SkipStartupSelfTest = Bool("skipStartupSelfTest", _vm.SkipStartupSelfTest);
+        _vm.UseSafeFrameRate = Bool("useSafeFrameRate", _vm.UseSafeFrameRate);
+        _vm.LowerQualityForVram = Bool("lowerQualityForVram", _vm.LowerQualityForVram);
+        _vm.UseGpuAcceleration = Bool("useGpuAcceleration", _vm.UseGpuAcceleration);
+        _vm.UseCpuProcessing = Bool("useCpuProcessing", _vm.UseCpuProcessing);
+        _vm.TryOldFfmpegOnCrash = Bool("tryOldFfmpegOnCrash", _vm.TryOldFfmpegOnCrash);
+        _vm.NoReport = Bool("noReport", _vm.NoReport);
+        _vm.ReportAutoOpen = Bool("reportAutoOpen", _vm.ReportAutoOpen);
+        var reportDir = Str("reportDir", "");
+        if (reportDir.Length > 0) _vm.ReportDir = reportDir;
+        _vm.PreventAutoSleep = Bool("preventAutoSleep", _vm.PreventAutoSleep);
+
         // 路径
         var outRoot = Str("outputRoot", "");
         if (!string.IsNullOrWhiteSpace(outRoot)) _vm.SetOutputRoot(outRoot);
@@ -1095,20 +1266,8 @@ public sealed class RemoteControlServer
             type = "config",
             // 同上：重连后补发上一次结果；另外把是否正在处理也带上，客户端据此纠正「一直显示进行中」
             lastResult = LastResultPayload,
-            // 远端当前探测到的视频信息：客户端据此显示分辨率/帧率/时长（帧文件夹模式也靠它同步手工填的参数）
-            video = (object?)(_vm.Video is { IsValid: true } vv
-                ? new
-                {
-                    valid = true,
-                    width = vv.Width,
-                    height = vv.Height,
-                    fps = vv.FrameRate,
-                    duration = vv.Duration.TotalSeconds,
-                    totalFrames = vv.TotalFrames,
-                    audioCodec = vv.AudioCodec,
-                    hasSubtitles = vv.HasSubtitles
-                }
-                : null),
+            // 远端当前探测到的视频信息（完整字段）：客户端据此还原整张「视频详细信息」卡
+            video = (object?)(_vm.Video is { IsValid: true } vv ? VideoPayload(_vm.InputVideo, vv) : null),
             options = new
             {
                 superResolution = _vm.SuperResolution,
@@ -1131,7 +1290,30 @@ public sealed class RemoteControlServer
                 dedupMode = _vm.DedupMode,
                 audioSrPrecision = _vm.AudioSrPrecision,
                 // RIFE v2/v3 这类老模型只支持 ×2，客户端据此把「补帧倍率」按钮隐藏/禁用
-                ifMultiplierLocked = _vm.IfMultiplierLocked
+                ifMultiplierLocked = _vm.IfMultiplierLocked,
+                // 高级页全部可选项（与 capabilities.options 保持一致）
+                sceneGuard = _vm.SceneGuardEnabled,
+                turboSegments = _vm.TurboSegments,
+                srDecodeThreads = _vm.SrDecodeThreads,
+                srEncodeThreads = _vm.SrEncodeThreads,
+                ifDecodeThreads = _vm.IfDecodeThreads,
+                ifEncodeThreads = _vm.IfEncodeThreads,
+                pipelineGpuIndex = _vm.PipelineGpuIndex,
+                pipelineGpuOptions = _vm.PipelineGpuOptions.ToArray(),
+                hdrSaturation = _vm.HdrSaturation,
+                hdrContrast = _vm.HdrContrast,
+                hdrAiStrength = _vm.HdrAiStrength,
+                hdrAiPath = _vm.HdrAiPath,
+                skipStartupSelfTest = _vm.SkipStartupSelfTest,
+                useSafeFrameRate = _vm.UseSafeFrameRate,
+                lowerQualityForVram = _vm.LowerQualityForVram,
+                useGpuAcceleration = _vm.UseGpuAcceleration,
+                useCpuProcessing = _vm.UseCpuProcessing,
+                tryOldFfmpegOnCrash = _vm.TryOldFfmpegOnCrash,
+                noReport = _vm.NoReport,
+                reportAutoOpen = _vm.ReportAutoOpen,
+                reportDir = _vm.ReportDir,
+                preventAutoSleep = _vm.PreventAutoSleep
             },
             config = new
             {
@@ -1248,6 +1430,13 @@ public sealed class RemoteControlServer
             steps = r.StepsText,
             elapsed = r.Elapsed.TotalSeconds
         });
+    }
+
+    /// <summary>服务端写好失败报告 → 通知客户端报告路径，客户端可用 download_* 拉回去。</summary>
+    private void OnFailureReportSaved(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        Send(new { type = "failure_report", path });
     }
 
     private void OnStartFailed(string msg) => Send(new { type = "error", message = msg });

@@ -374,23 +374,26 @@
                 <Border Style="{StaticResource CardBorder}" Visibility="{x:Bind Vm.SdrToHdrVis, Mode=OneWay}">
                     <StackPanel Spacing="6">
                         <TextBlock Text="HDR 参数" Style="{StaticResource SectionTitle}"/>
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="饱和度" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
-                            <NumberBox Grid.Column="1" Value="{x:Bind Vm.HdrSaturation, Mode=TwoWay}"
-                                       Minimum="0" Maximum="200" SpinButtonPlacementMode="Compact"
-                                       SmallChange="1" LargeChange="10" FontSize="12" Style="{StaticResource GlassNumberBox}"/>
-                            <TextBlock Grid.Column="2" Text="对比度" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
-                            <NumberBox Grid.Column="3" Value="{x:Bind Vm.HdrContrast, Mode=TwoWay}"
-                                       Minimum="0" Maximum="200" SpinButtonPlacementMode="Compact"
-                                       SmallChange="1" LargeChange="10" FontSize="12" Style="{StaticResource GlassNumberBox}"/>
-                        </Grid>
-                        <TextBlock Text="范围 0 ~ 200（NVEncC 最高 200，默认 200）" FontSize="11" Opacity="0.6"/>
+                        <!-- NVEncC 路径（TrueHDR）才有饱和度/对比度 -->
+                        <StackPanel Spacing="6" Visibility="{x:Bind Vm.HdrNvEncVis, Mode=OneWay}">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="饱和度" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
+                                <NumberBox Grid.Column="1" Value="{x:Bind Vm.HdrSaturation, Mode=TwoWay}"
+                                           Minimum="0" Maximum="200" SpinButtonPlacementMode="Compact"
+                                           SmallChange="1" LargeChange="10" FontSize="12" Style="{StaticResource GlassNumberBox}"/>
+                                <TextBlock Grid.Column="2" Text="对比度" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource AppFontMediumFamily}"/>
+                                <NumberBox Grid.Column="3" Value="{x:Bind Vm.HdrContrast, Mode=TwoWay}"
+                                           Minimum="0" Maximum="200" SpinButtonPlacementMode="Compact"
+                                           SmallChange="1" LargeChange="10" FontSize="12" Style="{StaticResource GlassNumberBox}"/>
+                            </Grid>
+                            <TextBlock Text="范围 0 ~ 200（NVEncC 最高 200，默认 200）" FontSize="11" Opacity="0.6"/>
+                        </StackPanel>
                         <!-- AI 路径（非 RTX）没有 NVEncC 的饱和度/对比度，改为整体亮度强度 -->
                         <Grid ColumnSpacing="12" Visibility="{x:Bind Vm.HdrAiStrengthVis, Mode=OneWay}">
                             <Grid.ColumnDefinitions>

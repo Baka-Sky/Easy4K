@@ -55,6 +55,9 @@ public sealed class AppSettings
     /// <summary>以后不再爆红：勾选后不再显示红色级警告（如显卡显存不足）</summary>
     public bool SuppressRedWarning { get; set; }
 
+    /// <summary>远程链接安全密钥（DPAPI 当前用户加密后的 Base64）。为空表示未设置。</summary>
+    public string RemoteAccessKeyProtected { get; set; } = "";
+
     public string EncodePreset { get; set; } = "medium";
 
     /// <summary>CPU 编码（libx265）的 CRF 质量档 0~51：越小越不压缩，画质越好但成片体积越大（默认 18）</summary>

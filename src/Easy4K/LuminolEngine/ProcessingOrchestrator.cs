@@ -143,7 +143,7 @@ public sealed class ProcessingOrchestrator
                 _logger.Warn("检测到上次拆帧残留：旧的转场检测结果一并作废，重新扫描镜头切换点");
                 CleanSceneArtifacts(st);
             }
-            await DetectSceneCutsAsync(st, ct);
+            if (!await DetectSceneCutsAsync(st, ct)) return null;
         }
 
         if (CanSegmentTurbo(ctx, st))
@@ -526,14 +526,14 @@ public sealed class ProcessingOrchestrator
     // ===================== 转场保护（PySceneDetect） =====================
 
     /// <summary>用 PySceneDetect 扫一遍源视频的剪切点，结果缓存到临时目录（续跑直接复用）。
-    /// 失败/未部署只告警，不影响正常补帧出片。</summary>
-    private async Task DetectSceneCutsAsync(PipelineState st, CancellationToken ct)
+    /// 工具缺失或检测失败都直接停止任务（不能悄悄跳过转场保护）。</summary>
+    private async Task<bool> DetectSceneCutsAsync(PipelineState st, CancellationToken ct)
     {
         var ctx = st.Ctx;
         if (!ctx.Tools.SceneDetectReady)
         {
-            _logger.Warn("转场保护已开启，但未找到 Tools/SceneDetect/scene_detect.py 或 python-torch 解释器，本次跳过转场检测");
-            return;
+            Fail("转场保护已开启，但缺少 Tools/SceneDetect/scene_detect.py 或 python-torch，已停止处理");
+            return false;
         }
 
         var cutJson = Path.Combine(st.TempRoot, "scene_cuts.json");
@@ -543,7 +543,7 @@ public sealed class ProcessingOrchestrator
             {
                 st.SceneCuts = ParseSceneCuts(cutJson);
                 _logger.Info($"转场保护：复用已有检测结果（{st.SceneCuts.Count} 个剪切点）");
-                return;
+                return true;
             }
 
             ProgressChanged?.Invoke(new ProcessProgress
@@ -581,17 +581,19 @@ public sealed class ProcessingOrchestrator
                 }, ct: ct);
             if (exit != 0 || !File.Exists(cutJson))
             {
-                _logger.Warn($"转场检测失败（exit={exit}），本次不做转场保护");
-                return;
+                Fail($"转场检测失败（exit={exit}）：无法生成剪切点，已停止处理");
+                return false;
             }
 
             st.SceneCuts = ParseSceneCuts(cutJson);
             _logger.Success($"转场检测完成：{st.SceneCuts.Count} 个剪切点");
+            return true;
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            _logger.Warn($"转场检测异常，本次不做转场保护：{ex.Message}");
+            Fail($"转场检测异常，已停止处理：{ex.Message}");
+            return false;
         }
     }
 
@@ -1664,16 +1666,21 @@ public sealed class ProcessingOrchestrator
     {
         var ctx = st.Ctx;
         var expected = st.ExpectedFrames;
-        ProgressChanged?.Invoke(new ProcessProgress
+
+        void Report(int percent) => ProgressChanged?.Invoke(new ProcessProgress
         {
             Stage = ProcessStage.Auditing,
             StageText = "视频审查中",
-            Current = 0,
+            Current = percent,
             Total = 100,
             PercentDisplay = true
         });
 
-        var actual = await Task.Run(() => ProbeVideoFrameCount(ctx.Tools.FFprobeExe, st.CurrentVideo), ct);
+        Report(5);
+
+        var actual = await Task.Run(
+            () => ProbeVideoFrameCount(ctx.Tools.FFprobeExe, st.CurrentVideo, expected, Report, ct), ct);
+        Report(100);
         _logger.Info($"视频审查：产出视频 {actual?.ToString() ?? "无法读取"} 帧 / 帧目录期望 {expected} 帧");
         if (actual is null)
         {
@@ -1772,16 +1779,77 @@ public sealed class ProcessingOrchestrator
         return finalPath;
     }
 
-    /// <summary>读取视频帧数：优先容器元数据 nb_frames（毫秒级）；缺失时退回 -count_frames 精确统计（较慢）。</summary>
-    private static long? ProbeVideoFrameCount(string ffprobeExe, string path)
+    /// <summary>读取视频帧数：优先容器元数据 nb_frames（毫秒级）；缺失时用 ffmpeg 逐包统计并持续上报进度；
+    /// 最后才退回 ffprobe -count_frames（没有中间进度）。</summary>
+    private static long? ProbeVideoFrameCount(string ffprobeExe, string path, long expected,
+        Action<int>? report, CancellationToken ct)
     {
         var fast = RunFfprobeText(ffprobeExe,
             $"-v error -select_streams v:0 -show_entries stream=nb_frames -of default=nw=1:nk=1 \"{path}\"", 20000);
-        if (long.TryParse(fast?.Trim(), out var n) && n > 0) return n;
-        // -count_frames 要真正解码一遍，长片可能几十秒；给 10 分钟上限，超时就放弃比对（不再无限等待）
+        if (long.TryParse(fast?.Trim(), out var n) && n > 0)
+        {
+            report?.Invoke(95);
+            return n;
+        }
+
+        // 容器没写 nb_frames（mkv 常见）：用 ffmpeg 只解复用、不编码地数包。
+        // -progress 会按 stats_period 持续输出 frame=，可以把进度细化到接近逐帧。
+        var counted = CountPacketsWithProgress(ffprobeExe, path, expected, report, ct);
+        if (counted > 0) return counted;
+
+        // 最后才真正解码统计；给 10 分钟上限，超时就放弃比对（不再无限等待）
+        report?.Invoke(50);
         var slow = RunFfprobeText(ffprobeExe,
             $"-v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of default=nw=1:nk=1 \"{path}\"", 600000);
         return long.TryParse(slow?.Trim(), out var m) && m > 0 ? m : null;
+    }
+
+    /// <summary>用 ffmpeg 复制流到 null，逐包计数并持续上报百分比。
+    /// 只解复用、不解码，速度接近 ffprobe -count_packets，但能拿到中间进度。</summary>
+    private static long CountPacketsWithProgress(string ffprobeExe, string path, long expected,
+        Action<int>? report, CancellationToken ct)
+    {
+        try
+        {
+            var ffmpeg = Path.Combine(Path.GetDirectoryName(ffprobeExe) ?? "", "ffmpeg.exe");
+            if (!File.Exists(ffmpeg)) return -1;
+
+            using var p = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = ffmpeg,
+                    Arguments = $"-nostats -stats_period 0.2 -progress pipe:1 -v error -i \"{path}\" " +
+                                "-map 0:v:0 -c copy -f null -",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                    StandardOutputEncoding = System.Text.Encoding.UTF8
+                }
+            };
+            p.Start();
+            var errTask = p.StandardError.ReadToEndAsync(ct);
+            using var reg = ct.Register(() => { try { if (!p.HasExited) p.Kill(true); } catch { } });
+
+            long last = -1;
+            string? line;
+            while ((line = p.StandardOutput.ReadLine()) is not null)
+            {
+                ct.ThrowIfCancellationRequested();
+                // 进度行形如 frame=1234
+                if (!line.StartsWith("frame=", StringComparison.Ordinal)) continue;
+                if (!long.TryParse(line.AsSpan(6), out var frame) || frame <= last) continue;
+                last = frame;
+                if (expected > 0)
+                    report?.Invoke((int)Math.Clamp(5 + frame * 90 / expected, 5, 95));
+            }
+            try { p.WaitForExit(); } catch { }
+            _ = errTask;
+            return last;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { return -1; }
     }
 
     /// <summary>读取原文件某个格式层标签（如 comment）。没设置或读取失败返回空串。</summary>
@@ -2706,7 +2774,10 @@ public sealed class ProcessingOrchestrator
             // 模型缺失/加载失败时返回 null，本次回退四阶判决器，不影响正常出片。
             var ai = await WarmupDedupAiAsync(ctx, ct);
 
-            void ReportDedup(FrameDedupService.AnalysisProgress pr) =>
+            void ReportDedup(FrameDedupService.AnalysisProgress pr)
+            {
+                // 帧去重是应用内托管计算（没有外部进程可挂起），在每帧回调处协作暂停
+                _runner.WaitIfPaused(ct);
                 ProgressChanged?.Invoke(new ProcessProgress
                 {
                     Stage = ProcessStage.Splitting,
@@ -2723,12 +2794,30 @@ public sealed class ProcessingOrchestrator
                     VerdictFramePath = pr.VerdictFramePath,
                     VerdictFrameIndex = pr.VerdictIndex
                 });
+            }
 
             var result = ai is not null
                 ? await ai.AnalyzeAsync(inputFrames, opt, ReportDedup, ct)
                 : await FrameDedupService.AnalyzeAsync(inputFrames, opt, ReportDedup, ct);
 
             var decisions = result.Decisions.ToList();
+
+            // 补帧至少要 2 帧输入：整段画面几乎不变时（涡轮分段后每段只有十几帧很常见），
+            // 判决会把除首帧外全判成重复，保留帧只剩 1 张；RIFE 拿到 1 张图会直接
+            // 访问越界崩溃（exit=-1073741819），整条流水线跟着失败。
+            // 这里强制至少保留 2 帧（只在"去重仅服务补帧"时改判，画面不变时多补一帧不影响观感）。
+            if (dedupOnlyForIf && ctx.Options.Interpolation && decisions.Count >= 2)
+            {
+                var keptCount = decisions.Count(d => !d.Duplicate);
+                for (var i = 0; i < decisions.Count && keptCount < 2; i++)
+                {
+                    if (!decisions[i].Duplicate) continue;
+                    decisions[i] = decisions[i] with { Duplicate = false };
+                    keptCount++;
+                }
+                if (keptCount < 2)
+                    _logger.Warn("帧去重：整段画面几乎完全一致，已强制保留 2 帧以保证补帧可执行");
+            }
             var moveFailed = 0;
             if (!dedupOnlyForIf)
             {
@@ -2750,6 +2839,7 @@ public sealed class ProcessingOrchestrator
                 {
                     for (var i = 0; i < decisions.Count; i++)
                     {
+                        _runner.WaitIfPaused(ct);
                         var d = decisions[i];
                         if (!d.Duplicate) continue;
                         var src = Path.Combine(inputFrames, $"{d.Index:D8}.png");

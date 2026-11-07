@@ -629,6 +629,11 @@ public partial class MainViewModel
     {
         var result = new ApiCaseResult();
         ApiCaseSpec? spec = null;
+        // 用例会把临时/输出目录改成 autotest_api\runXXX 下的独立目录，
+        // 这些只是测试用的，绝不能落盘覆盖用户自己的配置（否则自动测试跑完，
+        // 用户下次处理就写完到测试目录里去了）。
+        var prevSuppressWrites = _settings.SuppressWrites;
+        _settings.SuppressWrites = true;
         try
         {
             spec = System.Text.Json.JsonSerializer.Deserialize<ApiCaseSpec>(await File.ReadAllTextAsync(jsonPath));
@@ -665,6 +670,7 @@ public partial class MainViewModel
         {
             HeadlessAutoTest = false;
             SuppressCompletionDialog = false;
+            _settings.SuppressWrites = prevSuppressWrites;
             if (spec is not null && !string.IsNullOrEmpty(spec.ResultPath))
             {
                 try

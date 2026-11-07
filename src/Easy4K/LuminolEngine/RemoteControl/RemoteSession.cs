@@ -1,4 +1,7 @@
 using System;
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Easy4K.Models;
@@ -24,6 +27,13 @@ public sealed class RemoteSession
     /// <summary>是否正在遥控远端（用于抑制本机弹窗、分流操作）</summary>
     public static bool IsActive => Current is { IsConnected: true };
 
+    /// <summary>远端已进入处理状态（客户端据此切到「进行中」页；不依赖 IsProcessing 属性变化，
+    /// 因为重连/残留状态下该值可能本来就是 true，属性不会触发变更通知）。</summary>
+    public static event Action? EnteredProcessing;
+
+    /// <summary>会话结束（对端关闭、网络中断、或本机主动断开）。参数为原因文字。</summary>
+    public static event Action<string>? SessionEnded;
+
     private readonly MainViewModel _vm;
     private readonly DispatcherQueue _ui;
     private readonly RemoteControlClient _client = new();
@@ -33,6 +43,8 @@ public sealed class RemoteSession
 
     private bool _paused;
     private long _lastFrame = -1;
+    /// <summary>远端临时目录旧缓存触发的自动清理次数（防死循环，最多 2 次）</summary>
+    private int _autoCleanAttempt;
 
     /// <summary>连上之前本机的输出/临时目录 + 输入视频：断开时要把页面换回它们，
     /// 否则会一直显示对方电脑的路径与视频信息</summary>
@@ -57,10 +69,10 @@ public sealed class RemoteSession
 
     // ===================== 连接 / 断开 =====================
 
-    public async Task<JsonElement> ConnectAsync(string host, int port)
+    public async Task<JsonElement> ConnectAsync(string host, int port, Func<Task<string?>>? requestKey = null)
     {
         _client.Step += s => Step?.Invoke(s);
-        var caps = await _client.ConnectAsync(host, port, Environment.MachineName);
+        var caps = await _client.ConnectAsync(host, port, Environment.MachineName, requestKey);
         Host = host;
         Port = port;
         Current = this;
@@ -71,6 +83,8 @@ public sealed class RemoteSession
         _client.ResultReceived += OnResult;
         _client.NoticeReceived += OnNotice;
         _client.ErrorReceived += OnError;
+        _client.FailureReportReceived += OnFailureReport;
+        _client.TempCacheReceived += OnTempCache;
         _client.Disconnected += OnDisconnected;
         _vm.PropertyChanged += OnVmPropertyChanged;
 
@@ -81,13 +95,45 @@ public sealed class RemoteSession
         _localVideo = _vm.Video;
 
         ApplyOptions(caps);
-        // 占用每秒一条小消息，默认开；图片预览默认关（公网持续上传有 PCDN 风险）
-        await _client.SetStreamAsync(preview: false, stats: true);
+        // 内外网区分（与手机端规则一致）：
+        //  · 内网连接：占用每秒一条小消息，默认开；图片预览默认关；
+        //  · 外网连接：预览与占用都默认关（持续上传有被运营商判定为 PCDN 的风险）。
+        var lan = IsLanHost(host);
+        await _client.SetStreamAsync(preview: false, stats: lan);
+        _vm.Logger.Info(lan
+            ? "内网连接：已开启 CPU/GPU 占用推流（图片预览默认关闭）"
+            : "外网连接：已关闭图片预览与 CPU/GPU 占用推流，避免持续上传被判定为 PCDN");
         // 首次下发配置：顺带把远端的模型列表拉回来填进页面
         await PushConfigAsync(null);
 
         _vm.Logger.Info($"已接管远端 Easy4K {Address}（v{RemoteControlClient.GetStr(caps, "version")}）");
         return caps;
+    }
+
+    /// <summary>对端是否为内网地址：回环 / 10.0.0.0/8 / 172.16.0.0/12 / 192.168.0.0/16 /
+    /// 169.254.0.0/16 / 100.64.0.0/10(CGNAT) / IPv6 链路本地与 fc00::/7。
+    /// 域名与其它公网 IP 一律按外网处理（保守：外网不推预览与占用）。</summary>
+    private static bool IsLanHost(string host)
+    {
+        if (string.IsNullOrWhiteSpace(host)) return true;
+        var h = host.Trim().Trim('[', ']');
+        if (h.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return true;
+        if (h.EndsWith(".local", StringComparison.OrdinalIgnoreCase)) return true;
+        if (!IPAddress.TryParse(h, out var ip)) return false;
+        if (IPAddress.IsLoopback(ip)) return true;
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        if (ip.AddressFamily == AddressFamily.InterNetwork)
+        {
+            var b = ip.GetAddressBytes();
+            return b[0] == 10
+                || (b[0] == 172 && b[1] >= 16 && b[1] <= 31)
+                || (b[0] == 192 && b[1] == 168)
+                || (b[0] == 169 && b[1] == 254)
+                || (b[0] == 100 && b[1] >= 64 && b[1] <= 127);
+        }
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+            return ip.IsIPv6LinkLocal || (ip.GetAddressBytes()[0] & 0xFE) == 0xFC;
+        return false;
     }
 
     public async Task DisconnectAsync()
@@ -99,6 +145,8 @@ public sealed class RemoteSession
         _client.ResultReceived -= OnResult;
         _client.NoticeReceived -= OnNotice;
         _client.ErrorReceived -= OnError;
+        _client.FailureReportReceived -= OnFailureReport;
+        _client.TempCacheReceived -= OnTempCache;
         _client.Disconnected -= OnDisconnected;
 
         await _client.DisconnectAsync();
@@ -117,12 +165,23 @@ public sealed class RemoteSession
 
     private void OnDisconnected(string reason)
     {
+        // 对端关闭 / 网络中断：本机必须立刻回到「未连接」状态，
+        // 否则横幅一直显示已连接、主页仍显示对方路径，操作全部打在空气里。
         Run(() =>
         {
             _vm.Logger.Warn($"远端连接已断开：{reason}");
             _vm.IsProcessing = false;
             _vm.IsPaused = false;
+            _vm.Stage = ProcessStage.Idle;
+            _vm.ProgressDetail = "远端连接已断开";
+            _vm.InputVideo = _localInputVideo;
+            _vm.Video = _localVideo;
+            if (!string.IsNullOrEmpty(_localOutputRoot)) _vm.OutputRoot = _localOutputRoot;
+            if (!string.IsNullOrEmpty(_localTempRoot)) _vm.TempRoot = _localTempRoot;
+            _vm.ApplyGpu(null);
         });
+        if (Current == this) Current = null;
+        SessionEnded?.Invoke(reason);
     }
 
     // ===================== 能力 / 配置 =====================
@@ -238,6 +297,8 @@ public sealed class RemoteSession
                 var resPaths = RemoteControlClient.Sub(res, "paths");
                 var outRoot = RemoteControlClient.GetStr(resPaths, "outputRoot");
                 if (outRoot.Length > 0) _vm.OutputRoot = outRoot;
+                // 远端当前输入视频：输入框要跟着显示对方路径，否则界面看起来像「没选视频」
+                _vm.InputVideo = RemoteControlClient.GetStr(resPaths, "input");
                 var tRoot = RemoteControlClient.GetStr(resPaths, "tempRoot");
                 if (tRoot.Length > 0) _vm.TempRoot = tRoot;
                 var extFrames = RemoteControlClient.GetStr(resPaths, "externalFramesDir");
@@ -372,6 +433,8 @@ public sealed class RemoteSession
         return res;
     }
 
+    /// <summary>把远端推来的视频信息还原成完整 VideoInfo（编码/色彩/音轨/字幕/封面都要带上，
+    /// 否则「视频详细信息」卡只有分辨率和帧率，其余全是空）。</summary>
     private static VideoInfo? ToVideoInfo(JsonElement e)
     {
         if (!RemoteControlClient.GetBool(e, "valid")) return null;
@@ -380,13 +443,55 @@ public sealed class RemoteSession
             Width = RemoteControlClient.GetInt(e, "width"),
             Height = RemoteControlClient.GetInt(e, "height"),
             FrameRate = RemoteControlClient.GetDbl(e, "fps"),
-            AudioCodec = RemoteControlClient.GetStr(e, "audioCodec"),
-            TotalFrames = (long)RemoteControlClient.GetDbl(e, "totalFrames"),
+            FrameRateRaw = RemoteControlClient.GetStr(e, "frameRateRaw"),
+            AverageFrameRate = RemoteControlClient.GetDbl(e, "averageFps"),
+            IsVariableFrameRate = RemoteControlClient.GetBool(e, "isVfr"),
             Duration = TimeSpan.FromSeconds(RemoteControlClient.GetDbl(e, "duration")),
-            // 远端视频有没有字幕流：决定本机那行「保留原视频内嵌字幕」能不能勾
+            TotalFrames = (long)RemoteControlClient.GetDbl(e, "totalFrames"),
+            BitRate = (long)RemoteControlClient.GetDbl(e, "bitrate"),
+            VideoBitRate = (long)RemoteControlClient.GetDbl(e, "videoBitRate"),
+            FileSize = (long)RemoteControlClient.GetDbl(e, "fileSize"),
+            DisplayAspectRaw = RemoteControlClient.GetStr(e, "displayAspectRaw"),
+            VideoCodec = RemoteControlClient.GetStr(e, "videoCodec"),
+            Profile = RemoteControlClient.GetStr(e, "profile"),
+            PixelFormat = RemoteControlClient.GetStr(e, "pixelFormat"),
+            ColorSpace = RemoteControlClient.GetStr(e, "colorSpace"),
+            ColorTransfer = RemoteControlClient.GetStr(e, "colorTransfer"),
+            ColorRange = RemoteControlClient.GetStr(e, "colorRange"),
+            FieldOrder = RemoteControlClient.GetStr(e, "fieldOrder"),
+            VideoStreamCount = Math.Max(1, RemoteControlClient.GetInt(e, "videoStreamCount")),
+            AudioCodec = RemoteControlClient.GetStr(e, "audioCodec"),
+            AudioProfile = RemoteControlClient.GetStr(e, "audioProfile"),
+            AudioSampleRate = RemoteControlClient.GetInt(e, "audioSampleRate"),
+            AudioChannels = RemoteControlClient.GetInt(e, "audioChannels"),
+            AudioChannelLayout = RemoteControlClient.GetStr(e, "audioChannelLayout"),
+            AudioBitRate = (long)RemoteControlClient.GetDbl(e, "audioBitRate"),
+            AudioTrackCount = RemoteControlClient.GetInt(e, "audioTrackCount"),
             HasSubtitles = RemoteControlClient.GetBool(e, "hasSubtitles"),
+            SubtitleCount = RemoteControlClient.GetInt(e, "subtitleCount"),
+            FormatName = RemoteControlClient.GetStr(e, "formatName"),
+            ChapterCount = RemoteControlClient.GetInt(e, "chapterCount"),
+            AttachmentCount = RemoteControlClient.GetInt(e, "attachmentCount"),
+            MetadataTagCount = RemoteControlClient.GetInt(e, "metadataTagCount"),
+            EncoderTag = RemoteControlClient.GetStr(e, "encoderTag"),
+            CoverStreamIndex = e.TryGetProperty("coverStreamIndex", out var csi) && csi.TryGetInt32(out var csiV) ? csiV : -1,
+            CoverCodec = RemoteControlClient.GetStr(e, "coverCodec"),
+            CoverWidth = RemoteControlClient.GetInt(e, "coverWidth"),
+            CoverHeight = RemoteControlClient.GetInt(e, "coverHeight"),
+            CoverIsAttachment = RemoteControlClient.GetBool(e, "coverIsAttachment")
         };
+        FillList(info.AudioLanguages, e, "audioLanguages");
+        FillList(info.SubtitleLanguages, e, "subtitleLanguages");
+        FillList(info.SubtitleCodecs, e, "subtitleCodecs");
         return info;
+    }
+
+    private static void FillList(List<string> target, JsonElement e, string key)
+    {
+        target.Clear();
+        if (!e.TryGetProperty(key, out var arr) || arr.ValueKind != JsonValueKind.Array) return;
+        foreach (var item in arr.EnumerateArray())
+            if (item.ValueKind == JsonValueKind.String) target.Add(item.GetString() ?? "");
     }
 
     /// <summary>浏览远端目录（kind: video / image / audio；path 为空返回盘符）。</summary>
@@ -436,6 +541,16 @@ public sealed class RemoteSession
     public async Task StartAsync()
     {
         await PushConfigAsync(null);
+        // 先乐观进入处理态并切页：远端校验失败时会立刻回一条 state=idle 把状态撤销，
+        // 否则用户点了「开始处理」界面毫无反应，只能去日志里找原因。
+        Run(() =>
+        {
+            _vm.IsProcessing = true;
+            _vm.IsPaused = false;
+            _vm.ProgressPercent = 0;
+            _vm.ProgressDetail = "正在让远端开始处理…";
+        });
+        EnteredProcessing?.Invoke();
         await _client.RequestAsync("start", null, 20000);
     }
 
@@ -462,6 +577,7 @@ public sealed class RemoteSession
 
     private void OnProgress(JsonElement e)
     {
+        if (!ReferenceEquals(Current, this)) return;
         Run(() =>
         {
             var pct = RemoteControlClient.GetDbl(e, "percent");
@@ -475,14 +591,19 @@ public sealed class RemoteSession
 
     private void OnState(JsonElement e)
     {
+        // 已断开/被新会话顶掉：旧连接残留的消息不能再改界面
+        if (!ReferenceEquals(Current, this)) return;
+        var state = RemoteControlClient.GetStr(e, "state");
         Run(() =>
         {
-            var state = RemoteControlClient.GetStr(e, "state");
             switch (state)
             {
                 case "processing":
                     _vm.IsProcessing = true;
                     _vm.IsPaused = false;
+                    _autoCleanAttempt = 0;
+                    if (_vm.Stage is ProcessStage.Done or ProcessStage.Failed or ProcessStage.Stopped)
+                        _vm.Stage = ProcessStage.Idle;   // 清掉上一轮的终态标记
                     break;
                 case "done":
                 case "failed":
@@ -491,17 +612,106 @@ public sealed class RemoteSession
                     _vm.IsProcessing = false;
                     _vm.IsPaused = false;
                     _paused = false;
+                    // 失败的留在「进行中」页看日志（与本地失败一致），其余回主页
+                    _vm.Stage = state switch
+                    {
+                        "done" => ProcessStage.Done,
+                        "failed" => ProcessStage.Failed,
+                        "stopped" => ProcessStage.Stopped,
+                        _ => ProcessStage.Idle
+                    };
                     break;
             }
         });
+        if (state == "processing") EnteredProcessing?.Invoke();
     }
 
     private void OnResult(JsonElement e)
     {
-        if (RemoteControlClient.GetBool(e, "success"))
-            _vm.Logger.Info($"远端处理完成：{RemoteControlClient.GetStr(e, "output")}");
-        else
+        if (!ReferenceEquals(Current, this)) return;
+        var ok = RemoteControlClient.GetBool(e, "success");
+        var output = RemoteControlClient.GetStr(e, "output");
+        if (!ok)
+        {
             _vm.Logger.Warn("远端处理未产出成品");
+            return;
+        }
+
+        _vm.Logger.Info($"远端处理完成：{output}");
+        if (output.Length == 0) return;
+
+        var name = Path.GetFileName(output);
+        _ui.TryEnqueue(() => App.MainWindow?.ShowNotice(
+            "远端处理完成", $"成品在远端：{name}", "下载成品到本机",
+            () => _ = DownloadOutputAsync(output)));
+    }
+
+    /// <summary>远端拒绝启动：临时目录里有别的视频留下的旧缓存。
+    /// 桌面客户端无人值守 → 自动清远端缓存后重试一次，避免「点了开始没反应」。</summary>
+    private void OnTempCache(JsonElement e)
+    {
+        var source = RemoteControlClient.GetStr(e, "source");
+        var tempRoot = RemoteControlClient.GetStr(e, "tempRoot");
+        if (_autoCleanAttempt >= 2)
+        {
+            _vm.Logger.Error($"远端临时目录仍有旧缓存（{tempRoot}），已取消启动；请在远端手动清理临时目录");
+            Run(() => _vm.ProgressDetail = "远端临时目录有旧缓存，已取消启动");
+            return;
+        }
+        _autoCleanAttempt++;
+        _vm.Logger.Warn($"远端临时目录里有旧缓存（来源：{(source.Length > 0 ? source : "未知")}），正在自动清理后重试…");
+        Run(() => _vm.ProgressDetail = "正在清理远端旧缓存…");
+        _ = CleanAndStartAsync();
+    }
+
+    private async Task CleanAndStartAsync()
+    {
+        try
+        {
+            await CleanTempAsync();
+            await StartAsync();
+        }
+        catch (Exception ex)
+        {
+            _vm.Logger.Error($"清理远端缓存后重启失败：{ex.Message}");
+        }
+    }
+
+
+    /// <summary>把远端成品下载到本机「下载」目录（对应手机端的「下载成品到手机」）。</summary>
+    private async Task DownloadOutputAsync(string remotePath)
+    {
+        try
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+            if (!Directory.Exists(dir)) dir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            Directory.CreateDirectory(dir);
+            var local = Path.Combine(dir, Path.GetFileName(remotePath));
+
+            _vm.Logger.Info($"开始下载远端成品到本机：{local}");
+            var lastDecile = -1;
+            var bytes = await _client.DownloadFileAsync(remotePath, local, default, (done, total) =>
+            {
+                if (total <= 0) return;
+                var decile = (int)(done * 100 / total) / 10;
+                if (decile == lastDecile) return;
+                lastDecile = decile;
+                _vm.Logger.Info($"正在下载成品到本机… {done * 100 / total}%");
+            });
+
+            _vm.Logger.Info($"成品已下载到本机：{local}（{bytes} 字节）");
+            _ui.TryEnqueue(() => App.MainWindow?.ShowNotice("成品已下载到本机", local, "打开所在文件夹",
+                () => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{local}\"",
+                    UseShellExecute = true
+                })));
+        }
+        catch (Exception ex)
+        {
+            _vm.Logger.Error($"下载远端成品失败：{ex.Message}");
+        }
     }
 
     private void OnLog(JsonElement e)
@@ -517,6 +727,36 @@ public sealed class RemoteSession
     private void OnNotice(JsonElement e) => _vm.Logger.Info($"[远端] {RemoteControlClient.GetStr(e, "text")}");
 
     private void OnError(JsonElement e) => _vm.Logger.Error($"[远端] {RemoteControlClient.GetStr(e, "message")}");
+
+    /// <summary>远端处理失败、服务端已写好完整报错文件 → 自动分块拉回本机报告目录。</summary>
+    private void OnFailureReport(JsonElement e)
+    {
+        var remote = RemoteControlClient.GetStr(e, "path");
+        if (remote.Length == 0) return;
+        _ = DownloadReportAsync(remote);
+    }
+
+    private async Task DownloadReportAsync(string remotePath)
+    {
+        try
+        {
+            var dir = _vm.ResolveReportDir();
+            Directory.CreateDirectory(dir);
+            var name = Path.GetFileName(remotePath);
+            if (string.IsNullOrEmpty(name)) name = $"Easy4K_远端失败报告_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+            var local = Path.Combine(dir, name);
+
+            var bytes = await _client.DownloadFileAsync(remotePath, local);
+            _vm.Logger.Warn($"远端失败报告已下载到本机：{local}（{bytes} 字节）");
+            _ui.TryEnqueue(() => App.MainWindow?.ShowNotice(
+                "远端处理失败", $"完整报错已下载到本机：{local}", "打开报告",
+                () => Easy4K.LuminolEngine.CrashReportService.Open(local)));
+        }
+        catch (Exception ex)
+        {
+            _vm.Logger.Warn($"远端失败报告下载失败：{ex.Message}");
+        }
+    }
 
     // ===================== 工具 =====================
 

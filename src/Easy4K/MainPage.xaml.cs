@@ -663,6 +663,14 @@ public sealed partial class MainPage : Page
     /// <summary>启动处理：帧文件夹模式下参数未设置时先弹出参数窗口，确认后再启动</summary>
     private async Task StartWithFrameParamsAsync()
     {
+        // 遥控远端：本机不做任何预检/处理前测试（那会拿远端路径在本机跑一遍流程，表现为点了就卡死），
+        // 直接把配置推给远端并让它开跑。
+        if (LuminolEngine.RemoteControl.RemoteSession.IsActive)
+        {
+            await Vm.StartAsync();
+            return;
+        }
+
         // 启动前强制把下拉框当前选中值同步到 VM，防御 UI/VM 不同步（"选了 A 实际跑 B"）
         if (IfModelCombo.SelectedItem is string m && m != Vm.IfModel)
             Vm.IfModel = m;

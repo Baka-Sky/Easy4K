@@ -46,18 +46,19 @@ public sealed class ProcessRunner
 
     private readonly Logger _logger;
     private readonly object _procLock = new();
-    private Process? _current; // 当前正在运行的进程（单例 runner，同一时刻只有一个）
+    private readonly HashSet<Process> _active = new();          // 当前所有在跑的工具进程（涡轮模式会并行多个）
+    private readonly ManualResetEventSlim _resumeGate = new(true); // false = 暂停中（托管阶段协作暂停用）
 
     public ProcessRunner(Logger logger) => _logger = logger;
 
-    /// <summary>挂起当前正在运行的工具进程（暂停处理，进程状态保留，可恢复）</summary>
+    /// <summary>挂起当前正在运行的工具进程（含其子进程；涡轮模式下会挂起全部并行进程）</summary>
     public void SuspendCurrent()
     {
+        _resumeGate.Reset();
         lock (_procLock)
         {
-            var p = _current;
-            if (p is null || p.HasExited) return;
-            try { NtSuspendProcess(p.Handle); } catch { }
+            foreach (var p in _active.ToArray())
+                SuspendTree(p, 0);
         }
     }
 
@@ -66,27 +67,184 @@ public sealed class ProcessRunner
     {
         lock (_procLock)
         {
-            var p = _current;
-            if (p is null || p.HasExited) return;
-            try { NtResumeProcess(p.Handle); } catch { }
+            foreach (var p in _active.ToArray())
+                ResumeTree(p, 0);
         }
+        _resumeGate.Set();
+    }
+
+    /// <summary>托管阶段（如帧去重、帧搬移）的协作暂停：暂停期间阻塞当前工作线程，恢复后继续。</summary>
+    public void WaitIfPaused(CancellationToken ct = default)
+    {
+        if (_resumeGate.IsSet) return;
+        _resumeGate.Wait(ct);
     }
 
     /// <summary>强制终止当前工具进程（Vulkan 设备丢失等致命错误时快速失败，让降级逻辑接管）</summary>
     public void KillCurrent()
     {
+        _resumeGate.Set();
         lock (_procLock)
         {
-            var p = _current;
-            if (p is null || p.HasExited) return;
-            try { p.Kill(entireProcessTree: true); } catch { }
+            foreach (var p in _active.ToArray())
+            {
+                try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { }
+            }
         }
+    }
+
+    /// <summary>挂起进程及其全部子进程（python 等工具会再拉起子进程）</summary>
+    private static void SuspendTree(Process root, int depth)
+    {
+        if (depth > 4) return;
+        try
+        {
+            foreach (var childId in GetChildProcessIds(root.Id))
+            {
+                try
+                {
+                    using var child = Process.GetProcessById(childId);
+                    SuspendTree(child, depth + 1);
+                }
+                catch { }
+            }
+            SuspendOne(root);
+        }
+        catch { }
+    }
+
+    /// <summary>优先用 NtSuspendProcess；失败时退回到逐个线程 SuspendThread（与 pssuspend 同思路）。</summary>
+    private static void SuspendOne(Process p)
+    {
+        try
+        {
+            if (!p.HasExited && NtSuspendProcess(p.Handle) == 0) return;
+        }
+        catch { }
+        SuspendAllThreads(p.Id);
+    }
+
+    /// <summary>恢复进程及其全部子进程</summary>
+    private static void ResumeTree(Process root, int depth)
+    {
+        if (depth > 4) return;
+        try
+        {
+            if (!root.HasExited) NtResumeProcess(root.Handle);
+            foreach (var childId in GetChildProcessIds(root.Id))
+            {
+                try
+                {
+                    using var child = Process.GetProcessById(childId);
+                    ResumeTree(child, depth + 1);
+                }
+                catch { }
+            }
+        }
+        catch { }
     }
 
     [DllImport("ntdll.dll")]
     private static extern int NtSuspendProcess(IntPtr hProcess);
     [DllImport("ntdll.dll")]
     private static extern int NtResumeProcess(IntPtr hProcess);
+
+    private const uint TH32CS_SNAPPROCESS = 0x00000002;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct PROCESSENTRY32W
+    {
+        public uint dwSize;
+        public uint cntUsage;
+        public uint th32ProcessID;
+        public IntPtr th32DefaultHeapID;
+        public uint th32ModuleID;
+        public uint cntThreads;
+        public uint th32ParentProcessID;
+        public int pcPriClassBase;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szExeFile;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool Process32FirstW(IntPtr hSnapshot, ref PROCESSENTRY32W lppe);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool Process32NextW(IntPtr hSnapshot, ref PROCESSENTRY32W lppe);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    private static List<int> GetChildProcessIds(int parentId)
+    {
+        var result = new List<int>();
+        var snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return result;
+        try
+        {
+            var entry = new PROCESSENTRY32W { dwSize = (uint)Marshal.SizeOf<PROCESSENTRY32W>() };
+            if (Process32FirstW(snap, ref entry))
+            {
+                do
+                {
+                    if (entry.th32ParentProcessID == (uint)parentId)
+                        result.Add((int)entry.th32ProcessID);
+                } while (Process32NextW(snap, ref entry));
+            }
+        }
+        catch { }
+        finally { CloseHandle(snap); }
+        return result;
+    }
+
+    private const uint TH32CS_SNAPTHREAD = 0x00000004;
+    private const uint THREAD_SUSPEND_RESUME = 0x0002;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct THREADENTRY32
+    {
+        public uint dwSize;
+        public uint cntUsage;
+        public uint th32ThreadID;
+        public uint th32OwnerProcessID;
+        public int tpBasePri;
+        public int tpDeltaPri;
+        public uint dwFlags;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenThread(uint dwDesiredAccess, bool bInheritHandle, uint dwThreadId);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint SuspendThread(IntPtr hThread);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool Thread32First(IntPtr hSnapshot, ref THREADENTRY32 lpte);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool Thread32Next(IntPtr hSnapshot, ref THREADENTRY32 lpte);
+
+    /// <summary>逐个线程挂起（NtSuspendProcess 不可用时的兜底）。</summary>
+    private static void SuspendAllThreads(int pid)
+    {
+        var snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return;
+        try
+        {
+            var entry = new THREADENTRY32 { dwSize = (uint)Marshal.SizeOf<THREADENTRY32>() };
+            if (Thread32First(snap, ref entry))
+            {
+                do
+                {
+                    if (entry.th32OwnerProcessID != (uint)pid) continue;
+                    var h = OpenThread(THREAD_SUSPEND_RESUME, false, entry.th32ThreadID);
+                    if (h == IntPtr.Zero) continue;
+                    try { SuspendThread(h); } catch { }
+                    finally { CloseHandle(h); }
+                } while (Thread32Next(snap, ref entry));
+            }
+        }
+        catch { }
+        finally { CloseHandle(snap); }
+    }
 
     /// <summary>运行一个进程，逐行回调。返回 exit code。</summary>
     public async Task<int> RunAsync(
@@ -107,6 +265,19 @@ public sealed class ProcessRunner
         }
 
         var exeAbsolute = Path.GetFullPath(exe);
+
+        // 暂停期间不要启动新进程：等恢复后再真正开跑（避免托管阶段暂停后又偷偷跑起外部工具）
+        if (!_resumeGate.IsSet)
+        {
+            try { await Task.Run(() => _resumeGate.Wait(ct), ct); }
+            catch (OperationCanceledException)
+            {
+                LastStdout = "";
+                LastStderr = "暂停期间已取消";
+                LastExitCode = -1;
+                return -1;
+            }
+        }
 
         var workDir = Path.GetDirectoryName(exeAbsolute) ?? "";
 
@@ -155,8 +326,8 @@ public sealed class ProcessRunner
             return -1;
         }
 
-        // 记录当前进程，供暂停/恢复/停止使用
-        lock (_procLock) _current = p;
+        // 记录当前进程，供暂停/恢复/停止使用（涡轮模式可能同时有多个）
+        lock (_procLock) _active.Add(p);
 
         // 必须先 Start() 再访问 StandardOutput/StandardError（否则抛 "hasn't started yet"，
         // 读取线程崩溃 → stderr 管道无人消费 → 进程写满管道缓冲后永久卡死，表现为"卡在第 N 帧"）
@@ -206,7 +377,7 @@ public sealed class ProcessRunner
         try { await p.WaitForExitAsync(ct); } catch (OperationCanceledException) { }
 
         var exit = p.HasExited ? p.ExitCode : -1;
-        lock (_procLock) _current = null;
+        lock (_procLock) _active.Remove(p);
         var stderrText = stderrBuf.ToString().Trim();
         var stdoutText = stdoutBuf.ToString().Trim();
         LastStdout = stdoutText;

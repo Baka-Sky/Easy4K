@@ -55,7 +55,7 @@ public sealed partial class RemoteClientPage : Page
 
             session = new RemoteSession(vm, DispatcherQueue);
             session.Step += s => DispatcherQueue.TryEnqueue(() => ConnectStep.Text = s);
-            await session.ConnectAsync(host, port);
+            await session.ConnectAsync(host, port, App.MainWindow.PromptRemoteKeyInputAsync);
 
             SaveHost(host, port);
             App.MainWindow.ShowRemoteConnectedBanner(session.Address);

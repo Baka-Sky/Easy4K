@@ -152,6 +152,23 @@ public sealed partial class MainWindow : Window
             Vm.Logger.Info(ok ? "自动测试全部通过" : "自动测试结束（存在失败项），请查看 Res\\autotest_summary.txt 与失败保留目录");
         });
 
+        // 遥控远端：进入处理 → 切「进行中」；会话结束（对端关闭/网络中断）→ 收起横幅回主页。
+        // 不走 IsProcessing 属性通知：重连或残留状态下该值可能本来就是 true，不会触发变更。
+        RemoteSession.EnteredProcessing += () => DispatcherQueue.TryEnqueue(() =>
+        {
+            ThinProgressBar.IsIndeterminate = false;
+            ThinProgressBar.Visibility = Visibility.Visible;
+            NavigateToProgress();
+        });
+        RemoteSession.SessionEnded += reason => DispatcherQueue.TryEnqueue(() =>
+        {
+            HideRemoteConnectedBanner();
+            ProgressNavItem.Visibility = Visibility.Collapsed;
+            ThinProgressBar.Visibility = Visibility.Collapsed;
+            NavigateToHome();
+            ShowNotice("远端连接已断开", reason);
+        });
+
         // 清理临时文件：主页进度条显示清理进度（不定进度转圈，避免 0→100→0 跳变抽搐；不切换进行中页）
         Vm.PropertyChanged += (s, e) => DispatcherQueue.TryEnqueue(() =>
         {
@@ -169,6 +186,29 @@ public sealed partial class MainWindow : Window
             else if (e.PropertyName == nameof(Vm.BackdropAcrylicPercent) && Vm.SavedTheme == "image")
             {
                 ApplyBackdropOpacity(); // 拖动浓度条立即生效
+            }
+            // 遥控远端时本机没有 ProcessingStarted 事件，靠远端推来的 IsProcessing 打开/收起「进行中」页
+            else if (e.PropertyName == nameof(Vm.IsProcessing) && RemoteSession.IsActive)
+            {
+                if (Vm.IsProcessing)
+                {
+                    ThinProgressBar.IsIndeterminate = false;
+                    ThinProgressBar.Visibility = Visibility.Visible;
+                    NavigateToProgress();
+                }
+                else
+                {
+                    // 远端失败时留在「进行中」页，方便直接看报错日志与已下载的报错文件
+                    if (Vm.Stage == Easy4K.Models.ProcessStage.Failed) return;
+                    ThinProgressBar.Visibility = Visibility.Collapsed;
+                    ProgressNavItem.Visibility = Visibility.Collapsed;
+                    NavigateToHome();
+                }
+            }
+            // 远端进度不走本机 ProgressChanged，主页细进度条单独跟着 Vm.ProgressPercent 走
+            else if (e.PropertyName == nameof(Vm.ProgressPercent) && RemoteSession.IsActive)
+            {
+                if (Vm.IsProcessing) ThinProgressBar.Value = Vm.ProgressPercent;
             }
         });
 
@@ -524,8 +564,12 @@ public sealed partial class MainWindow : Window
             };
             var zoom = maximized ? _uiZoom : 1.0;
 
+            // 标题栏已经移到 ZoomBox 之外，不再参与缩放，可用高度要先扣掉它
+            var titleHeight = AppTitleBar.Height;
+            if (double.IsNaN(titleHeight) || titleHeight <= 0) titleHeight = 48;
+
             RootLayout.Width = size.Width / scale / zoom;
-            RootLayout.Height = size.Height / scale / zoom;
+            RootLayout.Height = Math.Max(1, size.Height / scale - titleHeight) / zoom;
         }
         catch { /* 窗口尚未就绪时忽略，Loaded/Activated 会再补一次 */ }
     }
@@ -740,6 +784,19 @@ public sealed partial class MainWindow : Window
     {
         if ((RemoteControlServer.IsActive || RemoteSession.IsActive)) { RemoteOverlay.Visibility = Visibility.Visible; return; }
 
+        // 首次启动远程控制：先让用户创建链接安全密钥（取消则不启动）
+        if (!Vm.HasRemoteKey)
+        {
+            var key = await ShowRemoteKeyDialogAsync(
+                "创建链接安全密钥",
+                "首次启动远程控制需要创建安全密钥。手机或另一台 Easy4K 连接时必须输入该密钥。\n"
+                + "密钥只保存在本机；忘记后无法找回，只能重装 Easy4K 或清除配置文件。",
+                askOld: false);
+            if (string.IsNullOrEmpty(key)) return;
+            await Vm.SetRemoteKeyAsync(key);
+            await ShowInfoDialogAsync("您的数据安全是我们的第一要务", SecurityNoticeText);
+        }
+
         var server = new RemoteControlServer(Vm, DispatcherQueue);
         server.StatusChanged += () => DispatcherQueue.TryEnqueue(UpdateRemoteOverlay);
         try
@@ -769,6 +826,7 @@ public sealed partial class MainWindow : Window
         var ips = RemoteControlServer.GetLocalIPv4Candidates();
         RemoteAddress.Text = $"{(ips.Count > 0 ? ips[0] : "127.0.0.1")}:{RemoteControlServer.Port}";
         RemotePort.Text = "连接方式: 使用本IP连接";
+        _ = RefreshRemoteKeyTextAsync();
 
         if (s.HasClient)
         {
@@ -779,6 +837,124 @@ public sealed partial class MainWindow : Window
         {
             RemoteTitle.Text = "正在等待客户端设备链接";
             RemoteHint.Text = "请在同一局域网内，用 Easy4K 手机客户端连接以下地址";
+        }
+    }
+
+    /// <summary>把本机安全密钥显示在「连接方式」下方，方便在手机端输入。</summary>
+    private async Task RefreshRemoteKeyTextAsync()
+    {
+        var key = await Vm.GetRemoteKeyAsync();
+        if (string.IsNullOrEmpty(key))
+        {
+            RemoteKeyText.Text = "";
+            RemoteKeyText.Visibility = Visibility.Collapsed;
+            return;
+        }
+        RemoteKeyText.Text = $"本机安全密钥：{key}";
+        RemoteKeyText.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>设置页「修改安全密钥」：先验证原密钥，再设置新密钥。</summary>
+    public async Task ChangeRemoteKeyAsync()
+    {
+        var key = await ShowRemoteKeyDialogAsync(
+            "修改安全密钥",
+            "修改前需要验证当前安全密钥。\n如果已经忘记原密钥，无法找回，只能重装 Easy4K 或清除配置文件。",
+            askOld: true);
+        if (string.IsNullOrEmpty(key)) return;
+        await Vm.SetRemoteKeyAsync(key);
+        await ShowInfoDialogAsync("您的数据安全是我们的第一要务", SecurityNoticeText);
+        await RefreshRemoteKeyTextAsync();
+    }
+
+    private const string SecurityNoticeText =
+        "已设置好链接安全密钥。以下是你的数据在传输过程中的保护方式：\n\n" +
+        "· 全链路加密：手机端 / 另一台电脑与本机之间的所有通信（指令、进度、日志、图片预览、成品文件）" +
+        "都走 TLS 加密通道，局域网内其他人抓包只能看到密文。\n" +
+        "· 密钥验证：连接时必须先通过安全密钥验证，验证通过后才会建立加密通道；密钥只保存在本机，不上传任何服务器。\n" +
+        "· 防冒充：每台电脑的加密证书会在客户端第一次连接时被记住（指纹固定），" +
+        "之后发现证书指纹变了会直接拒绝连接，避免有人伪装成你的电脑。\n" +
+        "· 本地留存：处理日志与失败报告只保存在本机，不会自动外发。";
+
+    /// <summary>遥控另一台 Easy4K 时，对方要求安全密钥 → 弹出输入框。</summary>
+    public async Task<string?> PromptRemoteKeyInputAsync()
+    {
+        var box = new PasswordBox { PlaceholderText = "对方 Easy4K 的安全密钥" };
+        var panel = new StackPanel { Spacing = 8 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "对方已启用远程控制安全密钥，请输入后连接。",
+            TextWrapping = TextWrapping.Wrap
+        });
+        panel.Children.Add(box);
+
+        var dialog = new ContentDialog
+        {
+            Title = "输入安全密钥",
+            Content = panel,
+            PrimaryButtonText = "连接",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = RootLayout.XamlRoot
+        };
+        var result = await dialog.ShowAsync();
+        return result == ContentDialogResult.Primary ? box.Password : null;
+    }
+
+    /// <summary>创建 / 修改安全密钥对话框；askOld=true 时先验证旧密钥。</summary>
+    private async Task<string?> ShowRemoteKeyDialogAsync(string title, string message, bool askOld)
+    {
+        var error = new TextBlock
+        {
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.OrangeRed),
+            Visibility = Visibility.Collapsed
+        };
+        var oldBox = new PasswordBox { PlaceholderText = "原安全密钥" };
+        var newBox = new PasswordBox { PlaceholderText = $"新安全密钥（至少 {RemoteKeyStore.MinLength} 位）" };
+        var confirmBox = new PasswordBox { PlaceholderText = "再次输入新密钥" };
+
+        var panel = new StackPanel { Spacing = 8 };
+        panel.Children.Add(new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap });
+        if (askOld) panel.Children.Add(oldBox);
+        panel.Children.Add(newBox);
+        panel.Children.Add(confirmBox);
+        panel.Children.Add(error);
+
+        while (true)
+        {
+            var dialog = new ContentDialog
+            {
+                Title = title,
+                Content = panel,
+                PrimaryButtonText = "确定",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = RootLayout.XamlRoot
+            };
+            var result = await dialog.ShowAsync();
+            if (result != ContentDialogResult.Primary) return null;
+
+            if (askOld && !await Vm.VerifyRemoteKeyAsync(oldBox.Password))
+            {
+                error.Text = "原安全密钥不正确";
+                error.Visibility = Visibility.Visible;
+                continue;
+            }
+            if (newBox.Password.Length < RemoteKeyStore.MinLength)
+            {
+                error.Text = $"新密钥至少 {RemoteKeyStore.MinLength} 位";
+                error.Visibility = Visibility.Visible;
+                continue;
+            }
+            if (newBox.Password != confirmBox.Password)
+            {
+                error.Text = "两次输入的新密钥不一致";
+                error.Visibility = Visibility.Visible;
+                continue;
+            }
+            return newBox.Password;
         }
     }
 
@@ -1360,13 +1536,23 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var height = AppWindow.TitleBar.Height;
-            if (height <= 0) return;
+            var raw = AppWindow.TitleBar.Height;
+            if (raw <= 0) return;
+
+            // RDP 切换分辨率/DPI 后，系统可能返回物理像素而不是 DIP；
+            // 直接赋给 XAML 会被再缩放一次，标题栏就会变得巨大。这里换算后夹到合理范围。
+            var scale = RootLayout.XamlRoot?.RasterizationScale ?? 1.0;
+            double height = raw;
+            if (scale > 1.0 && raw > 60) height = raw / scale;
+            height = Math.Clamp(height, 32.0, 56.0);
 
             AppTitleBar.Height = height;
             var icon = height >= 44 ? 24 : 20;
             TitleBarIcon.Width = icon;
             TitleBarIcon.Height = icon;
+
+            // 标题栏高度变了，内容区可用高度也要重算（标题栏不参与界面缩放）
+            UpdateZoomLayout();
         }
         catch { /* 取不到标题栏高度时保持 XAML 里的默认值 */ }
     }

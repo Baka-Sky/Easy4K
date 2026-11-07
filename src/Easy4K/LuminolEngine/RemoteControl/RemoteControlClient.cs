@@ -28,6 +28,10 @@ public sealed class RemoteControlClient
     public event Action<JsonElement>? ErrorReceived;
     public event Action<JsonElement>? NoticeReceived;
     public event Action<JsonElement>? StreamReceived;
+    /// <summary>服务端生成了失败报告（带 path），客户端可用 <see cref="DownloadFileAsync"/> 拉回本地。</summary>
+    public event Action<JsonElement>? FailureReportReceived;
+    /// <summary>服务端拒绝启动：临时目录里有别的视频留下的旧缓存（带 source / tempRoot）。</summary>
+    public event Action<JsonElement>? TempCacheReceived;
     public event Action<byte[]>? PreviewReceived;
 
     /// <summary>连接已断开（含对端关闭、网络中断）</summary>
@@ -53,7 +57,8 @@ public sealed class RemoteControlClient
 
     /// <summary>连接 → 握手 → 拉取能力清单，返回 capabilities 响应（由调用方直接应用，
     /// 不走事件，避免「事件已入队但界面还没构建完」的时序问题）。任一步失败都抛异常。</summary>
-    public async Task<JsonElement> ConnectAsync(string host, int port, string clientName, CancellationToken ct = default)
+    public async Task<JsonElement> ConnectAsync(string host, int port, string clientName,
+        Func<Task<string?>>? requestKey = null, CancellationToken ct = default)
     {
         await DisconnectAsync();
 
@@ -76,20 +81,69 @@ public sealed class RemoteControlClient
         }
 
         var stream = _client.GetStream();
-        _reader = new StreamReader(stream, new UTF8Encoding(false), false, 1 << 16, leaveOpen: true);
-        _writer = new StreamWriter(stream, new UTF8Encoding(false), 1 << 16, leaveOpen: true) { AutoFlush = true, NewLine = "\n" };
+        // 全链路加密：先做 TLS 握手（并校验服务端证书指纹），之后的协议都跑在密文里
+        Step?.Invoke("正在建立加密通道 …");
+        Stream secure = await RemoteTls.ConnectAsync(stream, Host, ct);
+        _reader = new StreamReader(secure, new UTF8Encoding(false), false, 1 << 16, leaveOpen: true);
+        _writer = new StreamWriter(secure, new UTF8Encoding(false), 1 << 16, leaveOpen: true) { AutoFlush = true, NewLine = "\n" };
         IsConnected = true;
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _readTask = Task.Run(() => ReadLoopAsync(_cts.Token));
 
+        // 服务端连上后会主动推一条不带 id 的 hello_ack；未授权前它只接受 auth，
+        // 先发 hello 会被直接断开（这就是「连接失败」的原因）。
         Step?.Invoke("已建立连接，正在握手 …");
-        var ack = await RequestAsync("hello", new { client = clientName }, 6000, ct);
+        var ack = await WaitHelloAckAsync(6000, ct);
         RemoteVersion = GetStr(ack, "version");
 
-        // 握手时没带 id 的 hello_ack 会走事件通道，这里补一次能力请求（顺带确认对端协议可用）
+        // 对方设置了安全密钥：先让用户输入并验证，再继续拉取能力清单
+        if (GetBool(ack, "authRequired"))
+        {
+            Step?.Invoke("对方已启用安全密钥，等待输入 …");
+            var key = requestKey is null ? null : await requestKey();
+            if (string.IsNullOrWhiteSpace(key))
+                throw new UnauthorizedAccessException("对方已启用安全密钥，未输入密钥，已取消连接");
+            Step?.Invoke("正在校验安全密钥 …");
+            var auth = await RequestAsync("auth", new { key }, 8000, ct);
+            if (GetStr(auth, "type") == "auth_failed")
+            {
+                var msg = GetStr(auth, "message");
+                throw new UnauthorizedAccessException(string.IsNullOrEmpty(msg) ? "安全密钥错误" : msg);
+            }
+        }
+
+        // 授权通过后再报一次客户端名称（服务端在已授权状态下才会处理 hello）
+        try { await RequestAsync("hello", new { client = clientName }, 6000, ct); } catch { }
+
         Step?.Invoke("正在检测远端显卡与模型列表 …");
         return await RequestAsync("capabilities", null, 10000, ct);
+    }
+
+    private readonly object _helloSync = new();
+    private JsonElement? _helloAckCached;
+    private TaskCompletionSource<JsonElement>? _helloTcs;
+
+    /// <summary>等服务端主动推来的 hello_ack（不带 id）。</summary>
+    private async Task<JsonElement> WaitHelloAckAsync(int timeoutMs, CancellationToken ct)
+    {
+        TaskCompletionSource<JsonElement> tcs;
+        lock (_helloSync)
+        {
+            if (_helloAckCached is { } cached)
+            {
+                _helloAckCached = null;
+                return cached;
+            }
+            tcs = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _helloTcs = tcs;
+        }
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(timeoutMs);
+        await using var reg = timeout.Token.Register(() =>
+            tcs.TrySetException(new TimeoutException("握手超时：对方没有发来 hello_ack")));
+        return await tcs.Task;
     }
 
     /// <summary>发一条请求并等它的响应。响应带 id 回来才算数，超时抛 TimeoutException。</summary>
@@ -133,6 +187,47 @@ public sealed class RemoteControlClient
     public Task SetStreamAsync(bool preview, bool stats, CancellationToken ct = default)
         => RequestAsync("set_stream", new { preview, stats }, 8000, ct);
 
+    /// <summary>把远端的一个文件分块拉回本地（download_begin → download_read 循环 → download_finish）。
+    /// 返回写入的字节数。失败报告、成品等都用这条通道。</summary>
+    public async Task<long> DownloadFileAsync(string remotePath, string localPath, CancellationToken ct = default,
+        Action<long, long>? progress = null)
+    {
+        if (string.IsNullOrWhiteSpace(remotePath)) throw new ArgumentException("远端路径为空", nameof(remotePath));
+
+        var begin = await RequestAsync("download_begin", new { path = remotePath }, 15000, ct);
+        if (!GetBool(begin, "ok"))
+            throw new IOException(GetStr(begin, "error") is { Length: > 0 } err ? err : "远端拒绝下载");
+
+        var size = begin.TryGetProperty("size", out var se) && se.TryGetInt64(out var s) ? s : 0;
+        var dir = Path.GetDirectoryName(localPath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+        long offset = 0;
+        await using (var fs = new FileStream(localPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, true))
+        {
+            while (true)
+            {
+                var chunk = await RequestAsync("download_read", new { offset, length = 256 * 1024 }, 60000, ct);
+                if (!GetBool(chunk, "ok"))
+                    throw new IOException(GetStr(chunk, "error") is { Length: > 0 } e2 ? e2 : "远端读取失败");
+
+                var b64 = GetStr(chunk, "data");
+                var eof = chunk.TryGetProperty("eof", out var ee) && ee.ValueKind == JsonValueKind.True;
+                if (b64.Length > 0)
+                {
+                    var buf = Convert.FromBase64String(b64);
+                    await fs.WriteAsync(buf, ct);
+                    offset += buf.Length;
+                    try { progress?.Invoke(offset, size); } catch { }
+                }
+                if (eof || (size > 0 && offset >= size)) break;
+            }
+        }
+
+        try { await RequestAsync("download_finish", new { path = remotePath }, 8000, ct); } catch { }
+        return offset;
+    }
+
     public async Task DisconnectAsync()
     {
         var wasConnected = IsConnected;
@@ -147,6 +242,11 @@ public sealed class RemoteControlClient
         _reader = null;
         _writer = null;
         _client = null;
+        lock (_helloSync)
+        {
+            _helloAckCached = null;
+            _helloTcs = null;
+        }
         if (wasConnected) Disconnected?.Invoke("已断开连接");
     }
 
@@ -186,6 +286,21 @@ public sealed class RemoteControlClient
                     continue;
                 }
 
+                // 服务端连上后主动推的 hello_ack（没有 id），握手要用
+                if (root.TryGetProperty("type", out var tEl) && tEl.GetString() == "hello_ack")
+                {
+                    lock (_helloSync)
+                    {
+                        if (_helloTcs is { } waiter)
+                        {
+                            _helloTcs = null;
+                            waiter.TrySetResult(root);
+                        }
+                        else _helloAckCached = root;
+                    }
+                    continue;
+                }
+
                 Dispatch(root);
             }
         }
@@ -196,6 +311,11 @@ public sealed class RemoteControlClient
             IsConnected = false;
             foreach (var kv in _pending) kv.Value.TrySetException(new IOException(reason));
             _pending.Clear();
+            lock (_helloSync)
+            {
+                _helloTcs?.TrySetException(new IOException(reason));
+                _helloTcs = null;
+            }
             Disconnected?.Invoke(reason);
         }
     }
@@ -218,6 +338,8 @@ public sealed class RemoteControlClient
             case "error": ErrorReceived?.Invoke(root); break;
             case "notice": NoticeReceived?.Invoke(root); break;
             case "stream": StreamReceived?.Invoke(root); break;
+            case "failure_report": FailureReportReceived?.Invoke(root); break;
+            case "temp_cache": TempCacheReceived?.Invoke(root); break;
             case "preview":
             {
                 var b64 = GetStr(root, "data");

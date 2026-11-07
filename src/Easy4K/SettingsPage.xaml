@@ -152,6 +152,9 @@
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <Button Content="启动远程控制" Click="OnStartRemoteControl" Style="{StaticResource GlassButton}"/>
                             <Button Content="遥控另一台 Easy4K" Click="OnOpenRemoteClient" Style="{StaticResource GlassButton}"/>
+                            <Button Content="修改安全密钥" Click="OnChangeRemoteKey"
+                                    Visibility="{x:Bind Vm.HasRemoteKeyVis, Mode=OneWay}"
+                                    Style="{StaticResource GlassButton}"/>
                         </StackPanel>
                     </StackPanel>
                 </Border>

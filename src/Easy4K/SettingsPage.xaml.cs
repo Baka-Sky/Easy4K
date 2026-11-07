@@ -108,6 +108,13 @@ public sealed partial class SettingsPage : Page
     private void OnOpenRemoteClient(object sender, RoutedEventArgs e)
         => App.MainWindow?.NavigateToRemoteClient();
 
+    /// <summary>修改远程控制安全密钥（需先验证原密钥）。</summary>
+    private async void OnChangeRemoteKey(object sender, RoutedEventArgs e)
+    {
+        if (App.MainWindow is null) return;
+        await App.MainWindow.ChangeRemoteKeyAsync();
+    }
+
     private async void OnCheckEnv(object sender, RoutedEventArgs e)
         => await App.MainWindow.ShowInfoDialogAsync("环境检测", Vm.CheckEnvironment());
 

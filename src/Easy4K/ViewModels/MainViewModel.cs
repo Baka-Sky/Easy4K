@@ -45,6 +45,8 @@ public partial class MainViewModel : ObservableObject
     public event Action<bool>? SingleFileFinished;
     /// <summary>处理结束（含结果，用于弹完成窗体）</summary>
     public event Action<ProcessingResult>? ProcessingCompleted;
+    /// <summary>失败报告已写到本地（参数为报告完整路径）。远程控制模式用它把报告路径推给客户端。</summary>
+    public event Action<string>? FailureReportSaved;
     /// <summary>临时目录缓存与当前视频不符（UI 弹窗引导重新选择/清理）。
     /// 参数 true = 点击"开始处理"时触发（累计愤怒警告计数）；false = 选视频/换目录时触发（只弹普通提示）。</summary>
     public event Action<bool>? TempCacheMismatchDetected;
@@ -127,6 +129,7 @@ public partial class MainViewModel : ObservableObject
         _hdrAiStrength = Math.Clamp(app.HdrAiStrength, 50, 150);
         _hdrContrast = Math.Clamp(app.HdrContrast, 0, 200);
         _suppressRedWarning = app.SuppressRedWarning;
+        _hasRemoteKey = !string.IsNullOrEmpty(app.RemoteAccessKeyProtected);
         _backgroundImage = app.BackgroundImage ?? "";
         _backdropAcrylicPercent = Math.Clamp(app.BackdropAcrylicPercent, 0, 100);
         // 界面缩放档位：直接写字段（不触发 setter），窗口创建后再由 MainWindow 读取应用
@@ -301,6 +304,9 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(TargetFpsText))]
     [NotifyPropertyChangedFor(nameof(FinalOutputName))]
+    [NotifyPropertyChangedFor(nameof(CanStart))]
+    [NotifyPropertyChangedFor(nameof(CanStartReason))]
+    [NotifyPropertyChangedFor(nameof(StartBlockReasonVis))]
     private bool _interpolation = true;
 
     [ObservableProperty]
@@ -693,6 +699,10 @@ public partial class MainViewModel : ObservableObject
     public Microsoft.UI.Xaml.Visibility HdrAiStrengthVis
         => SdrToHdr && HdrAiPath ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
 
+    /// <summary>主管线 HDR 参数里的「饱和度 / 对比度」只在 NVEncC 路径出现</summary>
+    public Microsoft.UI.Xaml.Visibility HdrNvEncVis
+        => SdrToHdr && !HdrAiPath ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+
     /// <summary>单文件视频 HDR 的「AI 强度」</summary>
     public Microsoft.UI.Xaml.Visibility SfHdrAiVis
         => SfIsVideoHdr && HdrAiPath ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
@@ -733,6 +743,9 @@ public partial class MainViewModel : ObservableObject
 
     /// <summary>转场保护：PySceneDetect 检测剪切点，转场处不插值（消除补帧鬼影）</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStart))]
+    [NotifyPropertyChangedFor(nameof(CanStartReason))]
+    [NotifyPropertyChangedFor(nameof(StartBlockReasonVis))]
     private bool _sceneGuardEnabled;
 
     /// <summary>勾选=处理完成后不生成 HTML 配置文件(报告)（反相存入配置 ReportEnabled，与向导第4/5步同一开关）</summary>
@@ -1136,10 +1149,15 @@ public partial class MainViewModel : ObservableObject
     /// <summary>进度百分比文字：从 0% 起就显示（不再等进度 > 0 才出现）</summary>
     public string ProgressText => $"{ProgressPercent:0.#}%";
     [ObservableProperty] private string _progressDetail = "";
+    /// <summary>正在做「动态帧率 → 静态帧率」的预处理转换。
+    /// 这段发生在流水线启动之前，没有 ProcessProgress 事件，远端要靠这个标记单独推进度。</summary>
+    [ObservableProperty] private bool _cfrConverting;
     /// <summary>预计剩余时间 / 预计完成时刻。进度百分比是"本阶段"的，所以按本阶段已用时间线性外推。</summary>
     [ObservableProperty] private string _etaText = "";
     private ProcessStage _etaStage = ProcessStage.Idle;
     private DateTime _etaStageStarted = DateTime.Now;
+    /// <summary>进入暂停的时刻（恢复时把暂停时长补回阶段起点，避免预估被暂停时间拉长）</summary>
+    private DateTime? _pausedAt;
     /// <summary>阶段时间线（阶段文字 + 起止 + 耗时），失败报告会整段带出去</summary>
     private readonly List<string> _stageTimeline = new();
     /// <summary>最近一次进度推送里的阶段文字（阶段切换时用来补全时间线）</summary>
@@ -1306,7 +1324,11 @@ public partial class MainViewModel : ObservableObject
             && !SfRunning
             && !string.IsNullOrWhiteSpace(OutputRoot)
             && !string.IsNullOrWhiteSpace(TempRoot)
+            && SceneGuardToolsReady
             && (HasExternalFrames || (Video is not null && Video.IsValid && File.Exists(InputVideo))));
+
+    /// <summary>开启转场保护且勾选补帧时，必须已有 scene_detect.py 与 python-torch，否则不允许开始</summary>
+    public bool SceneGuardToolsReady => !(Interpolation && SceneGuardEnabled) || Tools.SceneDetectReady;
 
     /// <summary>不能开始处理的原因（可开始时为空串）。主页按钮旁显示，避免"按钮灰了点着没反应却不知道为什么"。</summary>
     public string CanStartReason
@@ -1318,6 +1340,8 @@ public partial class MainViewModel : ObservableObject
             if (IsProcessing) return "";
             if (string.IsNullOrWhiteSpace(TempRoot)) return "请先选择临时目录";
             if (string.IsNullOrWhiteSpace(OutputRoot)) return "请先选择输出目录";
+            if (!SceneGuardToolsReady)
+                return "转场保护已开启，但缺少 Tools/SceneDetect/scene_detect.py 或 python-torch，无法开始处理";
             if (HasExternalFrames) return "";
             if (string.IsNullOrEmpty(InputVideo)) return "请先点「浏览」选择输入视频（帧文件夹则点「导入帧文件夹」）";
             if (Video is null) return "正在检测视频信息…";
@@ -2341,6 +2365,7 @@ public partial class MainViewModel : ObservableObject
             _logger.Warn("NVEncC64 未安装，HDR 转换无法执行，将仅输出 SDR");
         }
         OnPropertyChanged(nameof(HdrAiStrengthVis));
+        OnPropertyChanged(nameof(HdrNvEncVis));
         PersistStepFlags();
     }
 
@@ -2611,6 +2636,7 @@ public partial class MainViewModel : ObservableObject
         _startTime = DateTime.Now;
         _stageTimeline.Clear();
         _lastStageText = "";
+        LastFailureReportPath = null;
         _etaStage = ProcessStage.Idle;
         _etaStageStarted = DateTime.Now;
         _monitor.Start(250); // 250ms 采样，CPU/GPU 更实时
@@ -2639,6 +2665,7 @@ public partial class MainViewModel : ObservableObject
             {
                 PreviewBlocked = false;
                 ShowPreview = previewBefore;
+                CfrConverting = false;   // 兜底：转换异常退出时也要关掉预处理标记
             }
             if (cfr is null)
             {
@@ -2788,6 +2815,7 @@ public partial class MainViewModel : ObservableObject
                    $"-c:a copy -c:s copy -nostats -progress pipe:1 \"{outPath}\"";
 
         _logger.Info($"检测到动态帧率（VFR）：启动前自动转换为静态帧率 {fpsArg} fps（音轨/字幕原样复制）");
+        CfrConverting = true;
         ProgressPercent = 0;
         ProgressDetail = "正在转换为静态帧率（CFR）...";
 
@@ -2828,11 +2856,12 @@ public partial class MainViewModel : ObservableObject
             exit = await RunCfrAsync(Tools.FFmpegOldExe);
         }
 
-        if (ct.IsCancellationRequested) return null;
+        if (ct.IsCancellationRequested) { CfrConverting = false; return null; }
 
         if (exit != 0 || !File.Exists(outPath) || new FileInfo(outPath).Length == 0)
         {
             _logger.Error($"动态帧率转换失败（ffmpeg 退出码 {exit}，新版与老版本均未成功）");
+            CfrConverting = false;
             return null;
         }
 
@@ -2840,12 +2869,14 @@ public partial class MainViewModel : ObservableObject
         if (info is null)
         {
             _logger.Error("动态帧率转换完成，但重新检测转换后的视频失败");
+            CfrConverting = false;
             return null;
         }
 
         ProgressPercent = 100;
         ProgressDetail = $"已转换为静态帧率 {fpsArg} fps，开始处理";
         _logger.Success($"动态帧率转换完成：{info.ResolutionText} {info.FpsText} {info.TotalFrames} 帧 → {outPath}");
+        CfrConverting = false;
         return (outPath, info);
     }
 
@@ -2871,6 +2902,10 @@ public partial class MainViewModel : ObservableObject
             + $"{text}（{dur.TotalSeconds:0.0}s，未正常结束）");
     }
 
+    /// <summary>最近一次失败报告的完整路径（远程控制用在失败结果里带给客户端下载）。
+    /// 没有失败或写盘失败时为 null。</summary>
+    public string? LastFailureReportPath { get; private set; }
+
     /// <summary>把本次失败的完整现场写到桌面，并用底部通知条给出入口。
     /// 报告内容不做精简：外部进程全量 stdout/stderr、完整日志、异常堆栈、处理参数全部落盘。</summary>
     private void WriteFailureReport(Exception? ex, ProcessingContext ctx)
@@ -2879,6 +2914,7 @@ public partial class MainViewModel : ObservableObject
         var path = CrashReportService.Write(
             Version, ctx, _orchestratorAssigned.LastStageText, _runner.LastExitCode,
             ex, _runner.LastStdout, _runner.LastStderr, _logger.Snapshot(), _runner.History, _stageTimeline);
+        LastFailureReportPath = path;
 
         if (string.IsNullOrEmpty(path))
         {
@@ -2887,6 +2923,7 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        FailureReportSaved?.Invoke(path);
         var name = Path.GetFileName(path);
         _logger.Warn($"完整失败报告已保存到桌面：{path}");
         _dispatcherQueue.TryEnqueue(() =>
@@ -2919,6 +2956,7 @@ public partial class MainViewModel : ObservableObject
         var path = CrashReportService.Write(
             Version, ctx, text, _runner.LastExitCode,
             ex, _runner.LastStdout, _runner.LastStderr, _logger.Snapshot(), _runner.History, _stageTimeline);
+        LastFailureReportPath = path;
 
         if (string.IsNullOrEmpty(path))
         {
@@ -2927,6 +2965,7 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        FailureReportSaved?.Invoke(path);
         var name = Path.GetFileName(path);
         _logger.Warn($"完整失败报告已保存到桌面：{path}");
         _dispatcherQueue.TryEnqueue(() =>
@@ -3034,11 +3073,12 @@ public partial class MainViewModel : ObservableObject
             if (!string.IsNullOrWhiteSpace(p.StageText)) _lastStageText = p.StageText;
             EtaText = BuildEtaText(p.Percent, p.Stage);
             // 合并/HDR/音频/审查阶段不产生新帧：自动关闭预览并禁用预览开关，避免预览停在旧画面；
-            // 单文件超分（图片/音频）同样不产生帧序列，全程禁用预览开关
-            var blockPreview = (p.Stage is ProcessStage.Merging or ProcessStage.HdrConverting
-                or ProcessStage.AudioSr or ProcessStage.AddingAudio or ProcessStage.Auditing) || SfRunning;
-            PreviewBlocked = blockPreview;
-            if (blockPreview && ShowPreview) ShowPreview = false;
+            // 转场检测只是临时阶段（结束后仍有帧可看），只临时禁用预览，不关闭用户的预览开关
+            var sceneDetecting = p.StageText?.Contains("转场检测", StringComparison.Ordinal) == true;
+            var noFramesStage = p.Stage is ProcessStage.Merging or ProcessStage.HdrConverting
+                or ProcessStage.AudioSr or ProcessStage.AddingAudio or ProcessStage.Auditing;
+            PreviewBlocked = noFramesStage || sceneDetecting || SfRunning;
+            if (noFramesStage && ShowPreview) ShowPreview = false;
             if (!string.IsNullOrEmpty(p.LatestFramePath))
                 LatestFramePath = p.LatestFramePath;
         });
@@ -3052,6 +3092,8 @@ public partial class MainViewModel : ObservableObject
     {
         if (!IsProcessing) return "";
         if (stage is ProcessStage.Idle or ProcessStage.Done or ProcessStage.Failed or ProcessStage.Stopped) return "";
+        // 暂停期间冻结预估：挂钟时间在走，但处理并没有前进，不能把暂停时长算进剩余时间
+        if (IsPaused) return EtaText;
         var elapsed = DateTime.Now - _etaStageStarted;
         if (percent <= 2 || percent >= 100 || elapsed.TotalSeconds < 3) return "";
         var remain = TimeSpan.FromSeconds(elapsed.TotalSeconds * (100 - percent) / percent);
@@ -3593,6 +3635,7 @@ public partial class MainViewModel : ObservableObject
             return;
         }
         if (!CanPause || IsPaused) return;
+        _pausedAt = DateTime.Now;
         _runner.SuspendCurrent();
         IsPaused = true;
         _logger.Warn("处理已暂停（工具进程已挂起）");
@@ -3608,8 +3651,47 @@ public partial class MainViewModel : ObservableObject
         }
         if (!CanPause || !IsPaused) return;
         _runner.ResumeCurrent();
+        // 把暂停时长补回阶段起点：恢复后预估时间不会因为挂起而突然变大
+        if (_pausedAt is DateTime pausedAt)
+        {
+            _etaStageStarted += DateTime.Now - pausedAt;
+            _pausedAt = null;
+        }
         IsPaused = false;
         _logger.Info("处理已继续");
+    }
+
+    // ===================== 远程链接安全密钥 =====================
+
+    /// <summary>是否已设置远程链接安全密钥（设置后手机/远端必须输入密钥才能连接）</summary>
+    [ObservableProperty]
+    private bool _hasRemoteKey;
+
+    public Microsoft.UI.Xaml.Visibility HasRemoteKeyVis
+        => HasRemoteKey ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+    partial void OnHasRemoteKeyChanged(bool value) => OnPropertyChanged(nameof(HasRemoteKeyVis));
+
+    /// <summary>读取明文密钥（DPAPI 解密；未设置或解密失败返回空串）</summary>
+    public async Task<string> GetRemoteKeyAsync()
+        => string.IsNullOrEmpty(_app.RemoteAccessKeyProtected)
+            ? ""
+            : await LuminolEngine.RemoteControl.RemoteKeyStore.UnprotectAsync(_app.RemoteAccessKeyProtected);
+
+    /// <summary>设置/修改安全密钥并立即落盘</summary>
+    public async Task SetRemoteKeyAsync(string key)
+    {
+        _app.RemoteAccessKeyProtected = await LuminolEngine.RemoteControl.RemoteKeyStore.ProtectAsync(key);
+        _settings.Save(_app, _pathConfig);
+        HasRemoteKey = true;
+        _logger.Info("远程链接安全密钥已更新");
+    }
+
+    /// <summary>校验输入的安全密钥</summary>
+    public async Task<bool> VerifyRemoteKeyAsync(string key)
+    {
+        var saved = await GetRemoteKeyAsync();
+        return saved.Length > 0 && string.Equals(saved, key, StringComparison.Ordinal);
     }
 
     private async Task PauseOrResumeRemoteAsync()

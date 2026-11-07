@@ -58,7 +58,10 @@ public static class FFmpegCommandBuilder
             ? ""
             : $" -i \"{subtitleSource}\" -map 0:v:0 -map 1:s? -c:s copy";
         var args = $"-y -framerate {fpsText} -start_number {startNum} -i \"{pattern}\"{sub} " +
-                   $"-c:v {encArgs} -threads 0 -pix_fmt yuv420p -an \"{outputVideo}\"";
+                   $"-c:v {encArgs} -threads 0 -pix_fmt yuv420p " +
+                   // 显式写入 BT.709 色彩标记，避免成片显示为“未指定”导致播放器按错误矩阵解释
+                   "-color_primaries bt709 -color_trc bt709 -colorspace bt709 -color_range tv -an " +
+                   $"\"{outputVideo}\"";
         return args;
     }
 
