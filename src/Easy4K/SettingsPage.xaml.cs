@@ -139,5 +139,7 @@ public sealed partial class SettingsPage : Page
     /// <summary>关于：进入独立的关于页面（不再弹窗）。</summary>
     private void OnAbout(object sender, RoutedEventArgs e) => App.MainWindow?.NavigateToAbout();
 
+    private void OnReplayWelcome(object sender, RoutedEventArgs e) => App.MainWindow?.ReplayWelcome();
+
     private void OnExit(object sender, RoutedEventArgs e) => Application.Current.Exit();
 }

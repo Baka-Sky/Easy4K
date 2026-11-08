@@ -649,10 +649,23 @@ public sealed partial class MainWindow : Window
     // ===================== 首次启动的全屏欢迎动画 =====================
 
     private bool _welcomeActive;
+    private bool _welcomeHooked;
 
     /// <summary>第一次启动时铺满整窗播放入场动画，结束后浮出欢迎标题和「跳过 / 进入新手教程」。</summary>
     private void InitWelcome()
     {
+        if (!_welcomeHooked)
+        {
+            _welcomeHooked = true;
+            WelcomeOverlay.SizeChanged += (_, e) =>
+            {
+                if (_welcomeActive && e.NewSize.Height > 200)
+                {
+                    WelcomeHero.Height = e.NewSize.Height;
+                }
+            };
+        }
+
         if (Vm.WelcomeShown)
         {
             // 已经看过：把 Hero 从可视树移除，避免它在后台空跑动画。
@@ -664,21 +677,48 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        ShowWelcome();
+    }
+
+    /// <summary>重新播放 OOBE 欢迎动画（设置页按钮调用）。</summary>
+    public void ReplayWelcome() => ShowWelcome();
+
+    private void ShowWelcome()
+    {
+        if (_welcomeActive)
+        {
+            return;
+        }
+
+        EndTour();
         _welcomeActive = true;
 
         // 星座整体上移一点，给底部欢迎文案和按钮留出视觉空间。
         WelcomeHero.ContentOffsetY = -70;
+        WelcomeHero.Playback = Easy4K.Controls.WelcomeHero.WelcomeHeroPlayback.Intro;
+        WelcomePanel.Visibility = Visibility.Visible;
 
         // 文字和按钮跟着动画一起浮出（WelcomeHero 自带的分层揭示，和 PowerToys 一样在 Logo 落下后出现）。
-        WelcomeHero.RevealTargets.Add(WelcomePanel);
-        WelcomeOverlay.Visibility = Visibility.Visible;
-        WelcomeOverlay.SizeChanged += (_, e) =>
+        if (!WelcomeHero.RevealTargets.Contains(WelcomePanel))
         {
-            if (e.NewSize.Height > 200)
-            {
-                WelcomeHero.Height = e.NewSize.Height;
-            }
-        };
+            WelcomeHero.RevealTargets.Add(WelcomePanel);
+        }
+
+        // 关闭时 Hero 会从可视树移除，这里放回背景层之后的同一个位置。
+        if (WelcomeHero.Parent is not Panel)
+        {
+            WelcomeOverlay.Children.Insert(1, WelcomeHero);
+        }
+
+        WelcomeOverlay.Visibility = Visibility.Visible;
+        ElementCompositionPreview.GetElementVisual(WelcomeOverlay).Opacity = 1f;
+        ElementCompositionPreview.GetElementVisual(WelcomePanel).Opacity = 1f;
+        ElementCompositionPreview.GetElementVisual(WelcomeHero).Opacity = 1f;
+
+        if (WelcomeOverlay.ActualHeight > 200)
+        {
+            WelcomeHero.Height = WelcomeOverlay.ActualHeight;
+        }
     }
 
     private void OnWelcomeSkip(object sender, RoutedEventArgs e) => _ = DismissWelcomeAsync(startTour: false);
