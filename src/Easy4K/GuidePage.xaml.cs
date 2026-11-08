@@ -2,8 +2,8 @@ using System;
 using System.Collections.Generic;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Foundation;
 
@@ -21,12 +21,15 @@ public sealed partial class GuidePage : Page
 
     private const double HolePadding = 8;
     private const double BubbleGap = 14;
+    private const double BubbleMaxWidth = 340;
 
     private readonly List<Step> _steps = [];
-    private Storyboard? _pulse;
     private int _index;
+    private int _renderedIndex = -1;
     private bool _active;
-    private Rect _hole;
+    private bool _laying;
+    private Rect _hole = Rect.Empty;
+    private Size _bubbleSize;
 
     public GuidePage()
     {
@@ -61,6 +64,7 @@ public sealed partial class GuidePage : Page
     {
         _index = 0;
         _active = true;
+        _renderedIndex = -1;
         _hole = Rect.Empty;
         GuideLayer.Visibility = Visibility.Visible;
         StartPulse();
@@ -98,29 +102,47 @@ public sealed partial class GuidePage : Page
         StopPulse();
     }
 
+    /// <summary>
+    /// 更新遮罩、描边和气泡。LayoutUpdated 里调用时只在该变的时候改布局，
+    /// 并且用 <see cref="_laying"/> 防止「改布局 → LayoutUpdated → 再改布局」的死循环。
+    /// </summary>
     private void LayoutGuide(bool force)
     {
-        if (_index < 0 || _index >= _steps.Count)
+        if (_laying || _index < 0 || _index >= _steps.Count)
         {
             return;
         }
 
-        var step = _steps[_index];
-        var hole = Inflate(GetBounds(step.Target), HolePadding);
-        if (force || hole != _hole)
+        _laying = true;
+        try
         {
-            _hole = hole;
-            ApplyMask(hole);
-            ApplyRing(hole);
+            var step = _steps[_index];
+            var hole = Inflate(GetBounds(step.Target), HolePadding);
+
+            if (force || _renderedIndex != _index)
+            {
+                _renderedIndex = _index;
+                BubbleTitle.Text = step.Title;
+                BubbleBody.Text = step.Body;
+                StepText.Text = $"{_index + 1} / {_steps.Count}";
+                PrevButton.IsEnabled = _index > 0;
+                NextButton.Content = _index == _steps.Count - 1 ? "完成" : "下一步";
+                Bubble.Measure(new Size(BubbleMaxWidth, double.PositiveInfinity));
+                _bubbleSize = Bubble.DesiredSize;
+            }
+
+            if (force || hole != _hole)
+            {
+                _hole = hole;
+                ApplyMask(hole);
+                ApplyRing(hole);
+                PlaceBubble(hole, _bubbleSize);
+            }
         }
-
-        BubbleTitle.Text = step.Title;
-        BubbleBody.Text = step.Body;
-        StepText.Text = $"{_index + 1} / {_steps.Count}";
-        PrevButton.IsEnabled = _index > 0;
-        NextButton.Content = _index == _steps.Count - 1 ? "完成" : "下一步";
-
-        PlaceBubble(hole);
+        finally
+        {
+            _laying = false;
+        }
     }
 
     private Rect GetBounds(FrameworkElement target)
@@ -159,10 +181,8 @@ public sealed partial class GuidePage : Page
         HighlightRing.VerticalAlignment = VerticalAlignment.Top;
     }
 
-    private void PlaceBubble(Rect hole)
+    private void PlaceBubble(Rect hole, Size size)
     {
-        Bubble.Measure(new Size(340, double.PositiveInfinity));
-        var size = Bubble.DesiredSize;
         var maxX = Math.Max(8, Root.ActualWidth - size.Width - 8);
 
         var x = Math.Clamp(hole.X + (hole.Width / 2) - (size.Width / 2), 8, maxX);
@@ -177,32 +197,20 @@ public sealed partial class GuidePage : Page
 
     private void StartPulse()
     {
-        if (_pulse is not null)
-        {
-            return;
-        }
-
-        var animation = new DoubleAnimation
-        {
-            From = 0.45,
-            To = 1,
-            Duration = new Duration(TimeSpan.FromMilliseconds(900)),
-            AutoReverse = true,
-            RepeatBehavior = RepeatBehavior.Forever,
-        };
-
-        Storyboard.SetTarget(animation, HighlightRing);
-        Storyboard.SetTargetProperty(animation, "Opacity");
-
-        _pulse = new Storyboard();
-        _pulse.Children.Add(animation);
-        _pulse.Begin();
+        var visual = ElementCompositionPreview.GetElementVisual(HighlightRing);
+        var animation = visual.Compositor.CreateScalarKeyFrameAnimation();
+        animation.InsertKeyFrame(0f, 0.45f);
+        animation.InsertKeyFrame(0.5f, 1f);
+        animation.InsertKeyFrame(1f, 0.45f);
+        animation.Duration = TimeSpan.FromSeconds(1.8);
+        animation.IterationBehavior = Microsoft.UI.Composition.AnimationIterationBehavior.Forever;
+        visual.StartAnimation("Opacity", animation);
     }
 
     private void StopPulse()
     {
-        _pulse?.Stop();
-        _pulse = null;
-        HighlightRing.Opacity = 1;
+        var visual = ElementCompositionPreview.GetElementVisual(HighlightRing);
+        visual.StopAnimation("Opacity");
+        visual.Opacity = 1f;
     }
 }

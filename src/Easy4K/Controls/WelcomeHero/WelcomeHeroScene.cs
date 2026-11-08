@@ -345,7 +345,9 @@ namespace Easy4K.Controls.WelcomeHero
             for (var i = 0; i < _tiles.Length; i++)
             {
                 var slot = layout.Slots[i];
-                var icon = i < icons.Count ? icons[i] : null;
+                // Fill every slot: the funnel has more slots than the curated list, and empty glass tiles
+                // look like broken icons. Cycling keeps the whole constellation populated.
+                var icon = icons.Count > 0 ? icons[i % icons.Count] : null;
                 _tiles[i] = CreateTile(slot, icon, tileFill);
                 _tiltX.Children.InsertAtTop(_tiles[i].Slot);
 
