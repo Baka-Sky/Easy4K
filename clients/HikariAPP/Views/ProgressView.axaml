@@ -1,0 +1,165 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:HikariAPP2.ViewModels"
+             x:Class="HikariAPP2.Views.ProgressView"
+             x:DataType="vm:RemoteCore"
+             FontFamily="{StaticResource HarmonyOS}"
+             Background="{StaticResource PageBg}">
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <!-- 顶栏 -->
+    <Border Grid.Row="0" Background="White" BorderBrush="{StaticResource CardBorder}"
+            BorderThickness="0,0,0,1" Padding="8,8,16,8">
+      <Grid ColumnDefinitions="Auto,*">
+        <Button Grid.Column="0" Content="‹" FontSize="22" Width="40" Height="40" Padding="0"
+                Background="Transparent" BorderThickness="0"
+                HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                Command="{Binding LeaveProgressCommand}"/>
+        <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+          <TextBlock Text="处理进度" FontSize="16" FontWeight="SemiBold"/>
+          <TextBlock Text="{Binding ProgressSubtitle}" Classes="label" FontSize="11"
+                     TextTrimming="CharacterEllipsis"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <ScrollViewer Grid.Row="1">
+      <StackPanel Margin="12" Spacing="10">
+
+        <!-- 当前阶段 -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="当前阶段" Classes="cardTitle"/>
+            <TextBlock Text="{Binding ProgressText}" Classes="body" TextWrapping="Wrap" MaxLines="2"
+                       TextTrimming="CharacterEllipsis"/>
+            <ProgressBar Minimum="0" Maximum="1" Value="{Binding ProgressFraction}" Height="10"/>
+            <TextBlock Text="{Binding ProgressPercentText}" FontSize="24" FontWeight="SemiBold"/>
+          </StackPanel>
+        </Border>
+
+        <!-- 图片预览 -->
+        <Border Classes="card" IsVisible="{Binding PreviewEnabled}">
+          <StackPanel Spacing="6">
+            <TextBlock Text="图片预览" Classes="cardTitle"/>
+            <Border Background="Black" CornerRadius="6" Height="200" ClipToBounds="True"
+                    IsVisible="{Binding HasPreviewImage}">
+              <Image Source="{Binding PreviewImage}" Stretch="Uniform"/>
+            </Border>
+            <Border Background="#EEF0F3" CornerRadius="6" Height="200" IsVisible="{Binding !HasPreviewImage}">
+              <TextBlock Text="等待画面…" Classes="label" HorizontalAlignment="Center"
+                         VerticalAlignment="Center"/>
+            </Border>
+            <Button Content="关闭预览（省流量）" Command="{Binding DisablePreviewCommand}" Classes="link"
+                    HorizontalAlignment="Left"/>
+          </StackPanel>
+        </Border>
+
+        <!-- 预览开关（未开启时） -->
+        <Border Classes="card" IsVisible="{Binding !PreviewEnabled}">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Grid.Column="0" Spacing="2">
+              <TextBlock Text="图片预览" Classes="cardTitle"/>
+              <TextBlock Text="{Binding StreamGateSubtitle}" Classes="label"/>
+            </StackPanel>
+            <Button Grid.Column="1" Content="开启" Command="{Binding EnablePreviewCommand}"
+                    VerticalAlignment="Center"/>
+          </Grid>
+        </Border>
+
+        <!-- CPU / GPU -->
+        <Grid ColumnDefinitions="*,*" ColumnSpacing="10" IsVisible="{Binding StatsEnabled}">
+          <Border Grid.Column="0" Classes="card" Height="96" ClipToBounds="True">
+            <StackPanel VerticalAlignment="Center" Spacing="2">
+              <TextBlock Text="CPU" Classes="label" HorizontalAlignment="Center"/>
+              <TextBlock Text="{Binding CpuText}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+              <!-- MinWidth=0 + Stretch：Fluent 的 ProgressBar 模板带默认最小宽度，
+                   放在居中的 StackPanel 里会比卡片还宽，直接顶出卡片外。 -->
+              <ProgressBar Minimum="0" Maximum="1" Value="{Binding CpuFraction}" Height="4"
+                           MinWidth="0" HorizontalAlignment="Stretch" Margin="14,2"/>
+            </StackPanel>
+          </Border>
+          <Border Grid.Column="1" Classes="card" Height="96" ClipToBounds="True">
+            <StackPanel VerticalAlignment="Center" Spacing="2">
+              <TextBlock Text="GPU" Classes="label" HorizontalAlignment="Center"/>
+              <TextBlock Text="{Binding GpuText}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+              <ProgressBar Minimum="0" Maximum="1" Value="{Binding GpuFraction}" Height="4"
+                           MinWidth="0" HorizontalAlignment="Stretch" Margin="14,2"/>
+            </StackPanel>
+          </Border>
+        </Grid>
+
+        <Button Content="关闭占用（省流量）" Command="{Binding DisableStatsCommand}" Classes="link"
+                HorizontalAlignment="Center" IsVisible="{Binding StatsEnabled}"/>
+
+        <!-- 占用开关（未开启时） -->
+        <Border Classes="card" IsVisible="{Binding !StatsEnabled}">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Grid.Column="0" Spacing="2">
+              <TextBlock Text="CPU / GPU 占用" Classes="cardTitle"/>
+              <TextBlock Text="{Binding StreamGateSubtitle}" Classes="label"/>
+            </StackPanel>
+            <Button Grid.Column="1" Content="开启" Command="{Binding EnableStatsCommand}"
+                    VerticalAlignment="Center"/>
+          </Grid>
+        </Border>
+
+        <!-- 结果 -->
+        <Border Classes="card" IsVisible="{Binding HasResultText}">
+          <StackPanel Spacing="8">
+            <TextBlock Text="{Binding ResultTitle}" Classes="cardTitle"/>
+            <TextBlock Text="{Binding ResultText}" Classes="value" TextWrapping="Wrap"/>
+            <Button Content="返回设置" Command="{Binding LeaveProgressCommand}"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+
+            <StackPanel IsVisible="{Binding ResultOk}" Spacing="6">
+              <StackPanel IsVisible="{Binding ShowResultCard}" Spacing="6">
+                <StackPanel IsVisible="{Binding Downloading}" Spacing="6">
+                  <ProgressBar Minimum="0" Maximum="1" Value="{Binding DownloadFraction}" Height="8"/>
+                  <TextBlock Text="{Binding DownloadPercent, StringFormat='正在下载到手机… {0}%'}" Classes="label"/>
+                </StackPanel>
+                <Button Content="下载成品到手机" Command="{Binding DownloadResultCommand}"
+                        IsVisible="{Binding !Downloading}" Classes="accent"
+                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+                <TextBlock Text="{Binding DownloadMessage}" Classes="label" TextWrapping="Wrap"
+                           IsVisible="{Binding HasDownloadMessage}"/>
+              </StackPanel>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- 日志输出 -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="日志输出" Classes="cardTitle"/>
+            <ScrollViewer Height="240">
+              <ItemsControl ItemsSource="{Binding Logs}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:LogEntry">
+                    <TextBlock Text="{Binding Display}" FontFamily="Consolas,monospace" FontSize="11"
+                               Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap"/>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </StackPanel>
+        </Border>
+
+        <Border Height="8" Background="Transparent"/>
+      </StackPanel>
+    </ScrollViewer>
+
+    <!-- 底部：一半停止 / 一半暂停 -->
+    <Border Grid.Row="2" Background="White" BorderBrush="{StaticResource CardBorder}"
+            BorderThickness="0,1,0,0" Padding="12">
+      <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+        <Button Grid.Column="0" Content="停止" Command="{Binding StopCommand}" IsEnabled="{Binding AnyBusy}"
+                Height="56" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                Background="{StaticResource Danger}" Foreground="White" CornerRadius="8"/>
+        <Button Grid.Column="1" Content="{Binding PauseButtonText}" Command="{Binding PauseResumeCommand}"
+                IsEnabled="{Binding Processing}" Classes="accent"
+                Height="56" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" CornerRadius="8"/>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

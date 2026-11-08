@@ -1,0 +1,147 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:HikariAPP2.ViewModels"
+             xmlns:m="using:HikariAPP2.Models"
+             xmlns:views="using:HikariAPP2.Views"
+             x:Class="HikariAPP2.Views.MainView"
+             x:DataType="vm:RemoteCore"
+             FontFamily="{StaticResource HarmonyOS}"
+             Background="{StaticResource PageBg}">
+
+  <Grid>
+    <views:ConnectView IsVisible="{Binding IsConnectPhase}"/>
+    <views:HomeView IsVisible="{Binding IsMainPhase}"/>
+    <views:ProgressView IsVisible="{Binding IsProgressPhase}"/>
+
+    <!-- ============ 涡轮模式：检测到机械硬盘 ============ -->
+    <Border IsVisible="{Binding TurboWarnVisible}" Background="#99000000">
+      <Border Classes="dialog" Margin="24" MaxWidth="440" VerticalAlignment="Center">
+        <StackPanel Spacing="12">
+          <TextBlock Text="涡轮模式：检测到机械硬盘" FontSize="17" FontWeight="SemiBold"/>
+          <ScrollViewer MaxHeight="300">
+            <TextBlock Text="{Binding TurboWarnText}" Classes="value" TextWrapping="Wrap"/>
+          </ScrollViewer>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Content="切换硬盘" Command="{Binding SwitchDiskCommand}"/>
+            <Button Content="关闭" Command="{Binding DismissTurboWarnCommand}"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Border>
+
+    <!-- ============ 临时目录有旧缓存 ============ -->
+    <Border IsVisible="{Binding TempCacheVisible}" Background="#99000000">
+      <Border Classes="dialog" Margin="24" MaxWidth="440" VerticalAlignment="Center">
+        <StackPanel Spacing="12">
+          <TextBlock Text="临时目录有旧文件" FontSize="17" FontWeight="SemiBold"/>
+          <ScrollViewer MaxHeight="300">
+            <TextBlock Text="{Binding TempCacheMessage}" Classes="value" TextWrapping="Wrap"/>
+          </ScrollViewer>
+          <StackPanel Spacing="6">
+            <Button Content="删除旧缓存并继续" Command="{Binding TempCacheCleanCommand}"
+                    Classes="pill" Height="44" HorizontalContentAlignment="Center"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+              <Button Content="更换文件夹" Command="{Binding TempCacheChangeDirCommand}"/>
+              <Button Content="取消" Command="{Binding TempCacheCancelCommand}"/>
+            </StackPanel>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Border>
+
+    <!-- ============ 清理临时目录：双重确认 ============ -->
+    <Border IsVisible="{Binding CleanConfirmVisible}" Background="#99000000">
+      <Border Classes="dialog" Margin="24" MaxWidth="420" VerticalAlignment="Center">
+        <StackPanel Spacing="12">
+          <TextBlock Text="{Binding CleanConfirmTitle}" FontSize="17" FontWeight="SemiBold"/>
+          <TextBlock Text="{Binding CleanConfirmText}" Classes="value" TextWrapping="Wrap"/>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Content="取消" Command="{Binding CleanCancelCommand}"/>
+            <Button Content="{Binding CleanConfirmButtonText}" Command="{Binding CleanConfirmCommand}"
+                    Classes="accent"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Border>
+
+    <!-- ============ 外网推流风险 ============ -->
+    <Border IsVisible="{Binding RiskVisible}" Background="#99000000">
+      <Border Classes="dialog" Margin="24" MaxWidth="440" VerticalAlignment="Center">
+        <StackPanel Spacing="12">
+          <TextBlock Text="{Binding RiskTitle}" FontSize="17" FontWeight="SemiBold"/>
+          <TextBlock TextWrapping="Wrap" Classes="value"
+                     Text="当前是外网连接。开启后手机需要持续从电脑拉取数据（图片预览约每秒几十 KB 到上百 KB），属于持续的中小流量上传。&#10;&#10;部分运营商线路会把这种持续上传判定为 PCDN 业务，可能导致限速甚至停机。&#10;&#10;请谨慎开启。"/>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Content="取消" Command="{Binding RiskCancelCommand}"/>
+            <Button Content="我已知晓，仍要开启" Command="{Binding RiskConfirmCommand}" Classes="accent"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Border>
+
+    <!-- ============ 电脑目录浏览 ============ -->
+    <Border IsVisible="{Binding BrowseVisible}" Background="#99000000">
+      <Border Classes="dialog" Margin="16" MaxWidth="560" MaxHeight="640" VerticalAlignment="Center">
+        <Grid RowDefinitions="Auto,*,Auto" RowSpacing="10">
+          <StackPanel Grid.Row="0" Spacing="2">
+            <TextBlock Text="{Binding BrowseTitle}" FontSize="17" FontWeight="SemiBold"/>
+            <TextBlock Text="{Binding BrowseHeader}" Classes="label" TextTrimming="CharacterEllipsis"/>
+          </StackPanel>
+
+          <Grid Grid.Row="1" MinHeight="260">
+            <ScrollViewer MaxHeight="420">
+              <StackPanel Spacing="2">
+                <TextBlock Text="{Binding BrowseError}" Foreground="{StaticResource Danger}"
+                           Classes="label" IsVisible="{Binding HasBrowseError}"/>
+                <ProgressBar IsIndeterminate="True" IsVisible="{Binding BrowseLoading}" Height="4"/>
+                <ItemsControl ItemsSource="{Binding BrowseEntries}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="m:DirEntry">
+                      <Button Background="Transparent" BorderThickness="0" Padding="6,10"
+                              HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                              Command="{Binding $parent[ItemsControl].((vm:RemoteCore)DataContext).BrowseEntryCommand}"
+                              CommandParameter="{Binding}">
+                        <Grid ColumnDefinitions="28,*,Auto">
+                          <TextBlock Grid.Column="0" Text="{Binding Glyph}" FontSize="14"/>
+                          <TextBlock Grid.Column="1" Text="{Binding Name}" Classes="body"
+                                     TextTrimming="CharacterEllipsis"/>
+                          <TextBlock Grid.Column="2" Text="{Binding SizeText}" Classes="label"
+                                     VerticalAlignment="Center"/>
+                        </Grid>
+                      </Button>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </ScrollViewer>
+          </Grid>
+
+          <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Content="新建文件夹" Command="{Binding BrowseNewFolderCommand}"
+                    IsVisible="{Binding BrowseCanPickCurrent}"/>
+            <Button Content="选择此目录" Command="{Binding BrowsePickCurrentCommand}"
+                    IsVisible="{Binding BrowseCanPickCurrent}" Classes="accent"/>
+            <Button Content="取消" Command="{Binding BrowseCancelCommand}"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Border>
+
+    <!-- ============ 新建文件夹 ============ -->
+    <Border IsVisible="{Binding NewFolderVisible}" Background="#99000000">
+      <Border Classes="dialog" Margin="24" MaxWidth="400" VerticalAlignment="Center">
+        <StackPanel Spacing="10">
+          <TextBlock Text="新建文件夹" FontSize="17" FontWeight="SemiBold"/>
+          <TextBlock Text="{Binding BrowseHeader}" Classes="label" TextTrimming="CharacterEllipsis"/>
+          <TextBox Text="{Binding NewFolderName, Mode=TwoWay}" Watermark="文件夹名"/>
+          <TextBlock Text="{Binding NewFolderError}" Foreground="{StaticResource Danger}"
+                     Classes="label" IsVisible="{Binding HasNewFolderError}"/>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Content="取消" Command="{Binding NewFolderCancelCommand}"/>
+            <Button Content="创建" Command="{Binding NewFolderCreateCommand}" Classes="accent"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Border>
+  </Grid>
+</UserControl>

@@ -1,0 +1,115 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:fl="using:FluentAvalonia.Styling"
+             x:Class="HikariAPP2.App"
+             RequestedThemeVariant="Light">
+
+  <Application.Resources>
+    <!-- 鸿蒙 HarmonyOS Sans，随包内嵌 -->
+    <FontFamily x:Key="HarmonyOS">avares://HikariAPP2/Assets/Fonts#HarmonyOS Sans SC</FontFamily>
+
+    <SolidColorBrush x:Key="PageBg" Color="#F4F5F7"/>
+    <SolidColorBrush x:Key="CardBg" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="CardBorder" Color="#E4E6EB"/>
+    <SolidColorBrush x:Key="TextPrimary" Color="#1B1B1F"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="#5F6368"/>
+    <SolidColorBrush x:Key="Accent" Color="#0F6CBD"/>
+    <SolidColorBrush x:Key="Danger" Color="#C42B1C"/>
+    <SolidColorBrush x:Key="ChipBorder" Color="#D5D8DE"/>
+    <SolidColorBrush x:Key="ChipSelected" Color="#0F6CBD"/>
+  </Application.Resources>
+
+  <Application.Styles>
+    <fl:FluentAvaloniaTheme />
+
+    <Style Selector="TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+    </Style>
+
+    <Style Selector="TextBlock.pageTitle">
+      <Setter Property="FontSize" Value="26"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+
+    <Style Selector="TextBlock.cardTitle">
+      <Setter Property="FontSize" Value="14"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+    </Style>
+
+    <Style Selector="TextBlock.label">
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+    </Style>
+
+    <Style Selector="TextBlock.body">
+      <Setter Property="FontSize" Value="14"/>
+    </Style>
+
+    <Style Selector="TextBlock.value">
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="{StaticResource CardBg}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource CardBorder}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="12"/>
+      <Setter Property="Padding" Value="14"/>
+      <Setter Property="HorizontalAlignment" Value="Stretch"/>
+    </Style>
+
+    <Style Selector="Button.pill">
+      <Setter Property="Height" Value="52"/>
+      <Setter Property="HorizontalAlignment" Value="Stretch"/>
+      <Setter Property="HorizontalContentAlignment" Value="Center"/>
+      <Setter Property="CornerRadius" Value="8"/>
+      <Setter Property="FontSize" Value="15"/>
+    </Style>
+
+    <Style Selector="Button.chip">
+      <Setter Property="Height" Value="32"/>
+      <Setter Property="Padding" Value="14,0"/>
+      <Setter Property="CornerRadius" Value="16"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderBrush" Value="{StaticResource ChipBorder}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+
+    <Style Selector="ToggleButton.chip">
+      <Setter Property="Height" Value="32"/>
+      <Setter Property="Padding" Value="14,0"/>
+      <Setter Property="CornerRadius" Value="16"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderBrush" Value="{StaticResource ChipBorder}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="HorizontalContentAlignment" Value="Center"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+
+    <Style Selector="ToggleButton.chip:checked /template/ ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource ChipSelected}"/>
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="BorderBrush" Value="{StaticResource ChipSelected}"/>
+    </Style>
+
+    <Style Selector="Button.link">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="4"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+    </Style>
+
+    <Style Selector="Border.dialog">
+      <Setter Property="Background" Value="{StaticResource CardBg}"/>
+      <Setter Property="CornerRadius" Value="14"/>
+      <Setter Property="Padding" Value="18"/>
+      <Setter Property="BorderBrush" Value="{StaticResource CardBorder}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+  </Application.Styles>
+</Application>
