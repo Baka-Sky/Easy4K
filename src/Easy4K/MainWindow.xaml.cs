@@ -710,6 +710,18 @@ public sealed partial class MainWindow : Window
     /// <summary>重新播放 OOBE 欢迎动画（设置页按钮调用）。</summary>
     public void ReplayWelcome() => ShowWelcome();
 
+    /// <summary>从第一步重新开始新手引导（设置页按钮调用）。</summary>
+    public void ReplayTour()
+    {
+        if (_welcomeActive)
+        {
+            return;
+        }
+
+        EndTour();
+        StartTour();
+    }
+
     private void ShowWelcome()
     {
         if (_welcomeActive)

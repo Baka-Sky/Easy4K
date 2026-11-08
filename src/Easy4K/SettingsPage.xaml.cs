@@ -145,5 +145,7 @@ public sealed partial class SettingsPage : Page
 
     private void OnReplayWelcome(object sender, RoutedEventArgs e) => App.MainWindow?.ReplayWelcome();
 
+    private void OnRestartTour(object sender, RoutedEventArgs e) => App.MainWindow?.ReplayTour();
+
     private void OnExit(object sender, RoutedEventArgs e) => Application.Current.Exit();
 }

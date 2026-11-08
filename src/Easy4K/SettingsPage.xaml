@@ -140,9 +140,13 @@
                     <StackPanel Spacing="6">
                         <TextBlock Text="欢迎动画" Style="{StaticResource SectionTitle}"/>
                         <TextBlock FontSize="13" Opacity="0.7" TextWrapping="Wrap"
-                                   Text="首次启动时会铺满整窗播放一次欢迎动画。想再看一次可以点下面的按钮重新播放，不会影响其他设置。"/>
-                        <Button Content="重新播放 OOBE 欢迎动画" Click="OnReplayWelcome"
-                                HorizontalAlignment="Left" Style="{StaticResource GlassButton}"/>
+                                   Text="首次启动时会铺满整窗播放一次欢迎动画，之后可以随时从这里重新播放或重新走一遍新手引导，不会影响其他设置。"/>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="重新播放 OOBE 欢迎动画" Click="OnReplayWelcome"
+                                    HorizontalAlignment="Left" Style="{StaticResource GlassButton}"/>
+                            <Button Content="重新启动新手指导" Click="OnRestartTour"
+                                    HorizontalAlignment="Left" Style="{StaticResource GlassButton}"/>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
 
