@@ -719,14 +719,25 @@ public sealed partial class MainWindow : Window
             var target = ResolveTourTarget(0);
             if (target is not null && WelcomeBackdrop.ActualWidth > 0 && WelcomeBackdrop.ActualHeight > 0)
             {
-                var rect = target.TransformToVisual(ZoomHost).TransformBounds(
+                var bounds = target.TransformToVisual(TourOverlay).TransformBounds(
                     new Rect(0, 0, target.ActualWidth, target.ActualHeight));
-                // 和教程高亮框的挖洞区域保持一致（向外扩 HolePadding），收缩终点才对得上。
-                rect = new Rect(
-                    Math.Max(0, rect.X - Easy4K.Controls.GuideOverlay.HolePadding),
-                    Math.Max(0, rect.Y - Easy4K.Controls.GuideOverlay.HolePadding),
-                    rect.Width + (Easy4K.Controls.GuideOverlay.HolePadding * 2),
-                    rect.Height + (Easy4K.Controls.GuideOverlay.HolePadding * 2));
+
+                // 和教程高亮框的挖洞区域保持一致（向外扩 HolePadding）。
+                bounds = new Rect(
+                    Math.Max(0, bounds.X - Easy4K.Controls.GuideOverlay.HolePadding),
+                    Math.Max(0, bounds.Y - Easy4K.Controls.GuideOverlay.HolePadding),
+                    bounds.Width + (Easy4K.Controls.GuideOverlay.HolePadding * 2),
+                    bounds.Height + (Easy4K.Controls.GuideOverlay.HolePadding * 2));
+
+                // 用「教程覆盖层 → 欢迎层」的变换换算，缩放/偏移都和引导高亮框完全一致。
+                var toWelcome = TourOverlay.TransformToVisual(WelcomeOverlay);
+                var topLeft = toWelcome.TransformPoint(new Point(bounds.X, bounds.Y));
+                var bottomRight = toWelcome.TransformPoint(new Point(bounds.Right, bounds.Bottom));
+                var rect = new Rect(
+                    topLeft.X,
+                    topLeft.Y,
+                    Math.Max(1, bottomRight.X - topLeft.X),
+                    Math.Max(1, bottomRight.Y - topLeft.Y));
 
                 var visual = ElementCompositionPreview.GetElementVisual(WelcomeBackdrop);
                 var compositor = visual.Compositor;
