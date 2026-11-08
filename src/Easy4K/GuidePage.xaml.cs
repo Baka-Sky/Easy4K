@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
+using Microsoft.UI.Composition;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Hosting;
@@ -10,18 +12,20 @@ using Windows.Foundation;
 namespace Easy4K;
 
 /// <summary>
-/// 开发版的新手引导页：复刻 ClassIsland 的做法 —— 半透明遮罩按目标控件「挖洞」，
-/// 目标外面套一圈高亮描边，旁边跟一个说明气泡，支持上一步 / 下一步 / 跳过。
-/// ClassIsland 用的是 Avalonia 的 AdornerLayer + TeachingTip，这里用 WinUI 的
-/// 几何遮罩（EvenOdd）+ 手动定位气泡实现同样的观感。
+/// 开发版的新手引导页：复刻 ClassIsland 的观感 —— 半透明遮罩按目标控件「挖洞」，
+/// 洞外面套强调色描边 + 四角括号 + 循环扩散的脉冲，旁边跟一个带小尖角的说明气泡。
+/// ClassIsland 用 Avalonia 的 AdornerLayer + TeachingTip 实现，这里用 WinUI 的
+/// 几何遮罩（EvenOdd 圆角洞）+ Composition 动画复刻同样的视觉效果。
 /// </summary>
 public sealed partial class GuidePage : Page
 {
     private sealed record Step(FrameworkElement Target, string Title, string Body);
 
     private const double HolePadding = 8;
-    private const double BubbleGap = 14;
+    private const double HoleRadius = 12;
+    private const double BubbleGap = 16;
     private const double BubbleMaxWidth = 340;
+    private const double TailSize = 14;
 
     private readonly List<Step> _steps = [];
     private int _index;
@@ -57,7 +61,7 @@ public sealed partial class GuidePage : Page
             }
         };
 
-        Unloaded += (_, _) => StopPulse();
+        Unloaded += (_, _) => StopAnimations();
     }
 
     private void OnStart(object sender, RoutedEventArgs e)
@@ -67,7 +71,7 @@ public sealed partial class GuidePage : Page
         _renderedIndex = -1;
         _hole = Rect.Empty;
         GuideLayer.Visibility = Visibility.Visible;
-        StartPulse();
+        FadeInLayer();
         LayoutGuide(force: true);
     }
 
@@ -99,7 +103,7 @@ public sealed partial class GuidePage : Page
     {
         _active = false;
         GuideLayer.Visibility = Visibility.Collapsed;
-        StopPulse();
+        StopAnimations();
     }
 
     /// <summary>
@@ -137,6 +141,7 @@ public sealed partial class GuidePage : Page
                 ApplyMask(hole);
                 ApplyRing(hole);
                 PlaceBubble(hole, _bubbleSize);
+                AnimateRingIn();
             }
         }
         finally
@@ -163,54 +168,146 @@ public sealed partial class GuidePage : Page
         rect.Width + (amount * 2),
         rect.Height + (amount * 2));
 
-    // 整页矩形 + 目标矩形，EvenOdd 填充规则让目标处变成透明的洞。
+    // 整页矩形 + 圆角的目标矩形，EvenOdd 填充规则让目标处变成透明的洞。
     private void ApplyMask(Rect hole)
     {
         var group = new GeometryGroup { FillRule = FillRule.EvenOdd };
         group.Children.Add(new RectangleGeometry { Rect = new Rect(0, 0, Root.ActualWidth, Root.ActualHeight) });
-        group.Children.Add(new RectangleGeometry { Rect = hole });
+        group.Children.Add(RoundedRect(hole, HoleRadius));
         MaskPath.Data = group;
+    }
+
+    private static PathGeometry RoundedRect(Rect rect, double radius)
+    {
+        var r = Math.Min(radius, Math.Min(rect.Width, rect.Height) / 2);
+        var figure = new PathFigure
+        {
+            StartPoint = new Point(rect.X + r, rect.Y),
+            IsClosed = true,
+            IsFilled = true,
+        };
+
+        figure.Segments.Add(new LineSegment { Point = new Point(rect.Right - r, rect.Y) });
+        figure.Segments.Add(new ArcSegment
+        {
+            Point = new Point(rect.Right, rect.Y + r),
+            Size = new Size(r, r),
+            SweepDirection = SweepDirection.Clockwise,
+        });
+        figure.Segments.Add(new LineSegment { Point = new Point(rect.Right, rect.Bottom - r) });
+        figure.Segments.Add(new ArcSegment
+        {
+            Point = new Point(rect.Right - r, rect.Bottom),
+            Size = new Size(r, r),
+            SweepDirection = SweepDirection.Clockwise,
+        });
+        figure.Segments.Add(new LineSegment { Point = new Point(rect.X + r, rect.Bottom) });
+        figure.Segments.Add(new ArcSegment
+        {
+            Point = new Point(rect.X, rect.Bottom - r),
+            Size = new Size(r, r),
+            SweepDirection = SweepDirection.Clockwise,
+        });
+        figure.Segments.Add(new LineSegment { Point = new Point(rect.X, rect.Y + r) });
+        figure.Segments.Add(new ArcSegment
+        {
+            Point = new Point(rect.X + r, rect.Y),
+            Size = new Size(r, r),
+            SweepDirection = SweepDirection.Clockwise,
+        });
+
+        var geometry = new PathGeometry();
+        geometry.Figures.Add(figure);
+        return geometry;
     }
 
     private void ApplyRing(Rect hole)
     {
-        HighlightRing.Margin = new Thickness(hole.X, hole.Y, 0, 0);
-        HighlightRing.Width = hole.Width;
-        HighlightRing.Height = hole.Height;
-        HighlightRing.HorizontalAlignment = HorizontalAlignment.Left;
-        HighlightRing.VerticalAlignment = VerticalAlignment.Top;
+        RingHost.Margin = new Thickness(hole.X, hole.Y, 0, 0);
+        RingHost.Width = hole.Width;
+        RingHost.Height = hole.Height;
     }
 
     private void PlaceBubble(Rect hole, Size size)
     {
         var maxX = Math.Max(8, Root.ActualWidth - size.Width - 8);
-
         var x = Math.Clamp(hole.X + (hole.Width / 2) - (size.Width / 2), 8, maxX);
+
         var below = hole.Bottom + BubbleGap;
         var above = hole.Y - BubbleGap - size.Height;
-        var y = below + size.Height <= Root.ActualHeight - 8 ? below : Math.Max(8, above);
+        var isBelow = below + size.Height <= Root.ActualHeight - 8;
+        var y = isBelow ? below : Math.Max(8, above);
 
-        Bubble.Margin = new Thickness(x, y, 0, 0);
-        Bubble.HorizontalAlignment = HorizontalAlignment.Left;
-        Bubble.VerticalAlignment = VerticalAlignment.Top;
+        Canvas.SetLeft(Bubble, x);
+        Canvas.SetTop(Bubble, y);
+
+        // 小尖角贴在气泡靠近目标的一侧
+        Canvas.SetLeft(BubbleTail, x + (size.Width / 2) - (TailSize / 2));
+        Canvas.SetTop(BubbleTail, isBelow ? y - (TailSize / 2) : y + size.Height - (TailSize / 2));
     }
 
-    private void StartPulse()
+    private void FadeInLayer()
     {
-        var visual = ElementCompositionPreview.GetElementVisual(HighlightRing);
-        var animation = visual.Compositor.CreateScalarKeyFrameAnimation();
-        animation.InsertKeyFrame(0f, 0.45f);
-        animation.InsertKeyFrame(0.5f, 1f);
-        animation.InsertKeyFrame(1f, 0.45f);
-        animation.Duration = TimeSpan.FromSeconds(1.8);
-        animation.IterationBehavior = Microsoft.UI.Composition.AnimationIterationBehavior.Forever;
-        visual.StartAnimation("Opacity", animation);
+        var visual = ElementCompositionPreview.GetElementVisual(GuideLayer);
+        var fade = visual.Compositor.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(0f, 0f);
+        fade.InsertKeyFrame(1f, 1f);
+        fade.Duration = TimeSpan.FromMilliseconds(260);
+        visual.StartAnimation("Opacity", fade);
     }
 
-    private void StopPulse()
+    // ClassIsland 的高亮入场：描边从放大 1.14 缩回 1，同时淡入；随后第二圈描边每 1.75s 扩散一次。
+    private void AnimateRingIn()
     {
-        var visual = ElementCompositionPreview.GetElementVisual(HighlightRing);
-        visual.StopAnimation("Opacity");
-        visual.Opacity = 1f;
+        var visual = ElementCompositionPreview.GetElementVisual(RingHost);
+        var compositor = visual.Compositor;
+        var ease = compositor.CreateCubicBezierEasingFunction(new Vector2(0.16f, 1f), new Vector2(0.3f, 1f));
+
+        visual.CenterPoint = new Vector3((float)(RingHost.Width / 2), (float)(RingHost.Height / 2), 0f);
+
+        var scale = compositor.CreateVector3KeyFrameAnimation();
+        scale.InsertKeyFrame(0f, new Vector3(1.14f, 1.14f, 1f), ease);
+        scale.InsertKeyFrame(1f, Vector3.One);
+        scale.Duration = TimeSpan.FromMilliseconds(750);
+        visual.StartAnimation("Scale", scale);
+
+        var fade = compositor.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(0f, 0f, ease);
+        fade.InsertKeyFrame(1f, 1f);
+        fade.Duration = TimeSpan.FromMilliseconds(450);
+        visual.StartAnimation("Opacity", fade);
+
+        var loopVisual = ElementCompositionPreview.GetElementVisual(RingLoop);
+        loopVisual.CenterPoint = visual.CenterPoint;
+        loopVisual.StopAnimation("Scale");
+        loopVisual.StopAnimation("Opacity");
+
+        var loopScale = compositor.CreateVector3KeyFrameAnimation();
+        loopScale.InsertKeyFrame(0f, new Vector3(1.1f, 1.1f, 1f));
+        loopScale.InsertKeyFrame(0.43f, Vector3.One, ease);
+        loopScale.InsertKeyFrame(1f, Vector3.One);
+        loopScale.Duration = TimeSpan.FromSeconds(1.75);
+        loopScale.DelayTime = TimeSpan.FromSeconds(1.5);
+        loopScale.IterationBehavior = AnimationIterationBehavior.Forever;
+
+        var loopFade = compositor.CreateScalarKeyFrameAnimation();
+        loopFade.InsertKeyFrame(0f, 0f);
+        loopFade.InsertKeyFrame(0.43f, 0.75f, ease);
+        loopFade.InsertKeyFrame(1f, 0f);
+        loopFade.Duration = TimeSpan.FromSeconds(1.75);
+        loopFade.DelayTime = TimeSpan.FromSeconds(1.5);
+        loopFade.IterationBehavior = AnimationIterationBehavior.Forever;
+
+        loopVisual.StartAnimation("Scale", loopScale);
+        loopVisual.StartAnimation("Opacity", loopFade);
+    }
+
+    private void StopAnimations()
+    {
+        ElementCompositionPreview.GetElementVisual(RingHost).StopAnimation("Scale");
+        ElementCompositionPreview.GetElementVisual(RingHost).StopAnimation("Opacity");
+        var loop = ElementCompositionPreview.GetElementVisual(RingLoop);
+        loop.StopAnimation("Scale");
+        loop.StopAnimation("Opacity");
     }
 }
