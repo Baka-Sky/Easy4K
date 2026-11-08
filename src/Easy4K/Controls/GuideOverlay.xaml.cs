@@ -66,6 +66,14 @@ public sealed partial class GuideOverlay : UserControl
             FadeIn();
         }
 
+        UpdateText(title, body, index, count);
+        ApplyTarget(target);
+    }
+
+    /// <summary>只更新气泡文字（切页时先换文案，再等新页面布局完成后定位）。</summary>
+    public void UpdateText(string title, string body, int index, int count)
+    {
+        _index = index;
         BubbleTitle.Text = title;
         BubbleBody.Text = body;
         StepText.Text = index >= 0 ? $"{index + 1} / {count}" : string.Empty;
@@ -74,7 +82,10 @@ public sealed partial class GuideOverlay : UserControl
         Bubble.Measure(new Size(BubbleMaxWidth, double.PositiveInfinity));
         _bubbleSize = Bubble.DesiredSize;
 
-        ApplyTarget(target);
+        if (_hole != Rect.Empty)
+        {
+            PlaceBubble(_hole, _bubbleSize);
+        }
     }
 
     public void Close()

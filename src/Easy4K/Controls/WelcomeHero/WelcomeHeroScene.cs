@@ -427,14 +427,22 @@ namespace Easy4K.Controls.WelcomeHero
             // Keep the constellation on whole physical pixels so icons stay crisp at rest.
             var scale = Math.Max(rasterizationScale, 1f);
             var apexX = MathF.Round(size.X / 2f * scale) / scale;
-            Apex = new Vector2(apexX, _layout.ApexY);
+
+            // 星座按设计高度排版，多出来的空间上下均分，让整组特效垂直居中（密度保持不变）。
+            var offsetY = Math.Max(0f, (size.Y - _layout.HeroHeight) / 2f);
+            Apex = new Vector2(apexX, _layout.ApexY + offsetY);
             _interaction.InsertScalar("HalfWidth", Math.Max(size.X / 2f, 1f));
+
+            // 背景穹顶按窗口高度纵向拉伸，整页都有渐变；星座本身不放大，密度和 320 高时一致。
+            var heightRatio = Math.Max(1f, size.Y / _layout.HeroHeight);
+            _dome.CenterPoint = new Vector3(DomeWidth / 2f, DomeCenter.Y + DomeBleed, 0f);
+            _dome.Scale = new Vector3(1f, heightRatio, 1f);
 
             if (!_hasViewport)
             {
                 _hasViewport = true;
                 _stage.Offset = new Vector3(Apex, 0f);
-                _auroraRig.Offset = new Vector3(apexX, 0f, 0f);
+                _auroraRig.Offset = new Vector3(apexX, offsetY, 0f);
 
                 var glide = Track(_compositor.CreateVector3KeyFrameAnimation());
                 glide.Target = "Offset";
@@ -448,7 +456,7 @@ namespace Easy4K.Controls.WelcomeHero
             }
 
             _stage.Offset = new Vector3(Apex, 0f);
-            _auroraRig.Offset = new Vector3(apexX, 0f, 0f);
+            _auroraRig.Offset = new Vector3(apexX, offsetY, 0f);
         }
 
         /// <summary>

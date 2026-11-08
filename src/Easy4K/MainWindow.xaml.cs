@@ -648,18 +648,18 @@ public sealed partial class MainWindow : Window
 
     private readonly List<TourStep> _tour =
     [
-        new(typeof(MainPage), "InputCard", "第一步：选要处理的视频",
-            "在「输入视频」这里点「浏览」挑文件（.mp4 / .mkv / .avi / .mov）。已经拆好帧的话，也可以导入 PNG 帧文件夹跳过拆帧。"),
+        new(typeof(MainPage), "InputCard", "第一步：选择要处理的视频",
+            "点「浏览」挑一个 .mp4 / .mkv / .avi / .mov，也可以把文件直接拖进窗口；如果之前已经把视频拆成了 PNG 帧，「导入」那个文件夹就能跳过拆帧。临时目录和输出目录也在这一块，中间帧和成品会分别写到这两个位置。"),
         new(typeof(MainPage), "OptionsCard", "第二步：勾选要做的处理",
-            "超分放大分辨率、补帧提升流畅度、SDR→HDR 提升观感；字幕 / 元数据 / 封面会在检测到后自动放开勾选。"),
+            "右边的「处理选项」决定这一遍要跑什么：勾「超分」放大分辨率，勾「补帧」提升流畅度，勾「SDR -> HDR」改善观感。下面的字幕 / 元数据 / 封面只有原视频里检测到才会变成可勾选，灰色的说明这支片子没有对应内容，属于正常现象。"),
         new(typeof(MainPage), "StartButton", "第三步：开始处理",
-            "点「开始处理」后进度条和日志会实时刷新；跑完可以「下载成品到本机」，也可以在输出目录直接取成品。"),
-        new(typeof(AdvancedPage), "SrEngineCombo", "高级：超分引擎",
-            "这里选超分算法与模型。显卡够用就走 GPU；显存吃紧可以回高级页打开「降低部分画质以降低显存/内存占用」。"),
+            "点「开始处理」后，顶部细进度条和「进行中」页会实时刷新阶段、进度和日志，想中止就点旁边的「停止」。跑完会自动回到主页弹出完成提示，可以直接「下载成品到本机」，也可以到输出目录拿成品；中途出错会生成报错文件并同步给手机端。"),
+        new(typeof(AdvancedPage), "SrEngineCombo", "高级：超分引擎与模型",
+            "在「高级」页这里选超分算法和模型：显卡够用就走 GPU 档，显存吃紧可以往下打开「降低部分画质以降低显存/内存占用」，或者换更轻的模型。选完不用手动保存，回主页直接开始处理就会用这套配置。"),
         new(typeof(AdvancedPage), "IfEngineCombo", "高级：补帧模型",
-            "补帧用 RIFE 系模型，档位越高越流畅也越吃性能；和超分可以同时开，流水线会自动串联。"),
-        new(typeof(SettingsPage), "RemoteCard", "手机远程控制",
-            "在「设置 → 远程控制」点「启动远程控制」；手机端连同一台电脑就能选片、看进度、下载成品和报错报告。"),
+            "补帧同样在这里选模型和倍率：档位越高越流畅，也越吃性能；超分和补帧可以同时开，Easy4K 会把它们串成一条流水线自动跑完，不需要分两次处理。"),
+        new(typeof(SettingsPage), "RemoteCard", "设置：手机远程控制",
+            "在「设置 → 远程控制」点「启动远程控制」，这台电脑会在 11451 端口等手机连；手机端（Easy4K / 鸿蒙）连上后可以选片、看进度、下载成品和报错报告。想反过来遥控另一台电脑，点旁边的「遥控另一台 Easy4K」。"),
     ];
 
     private int _tourIndex;
@@ -713,10 +713,23 @@ public sealed partial class MainWindow : Window
         _tourIndex = index;
         var step = _tour[index];
 
-        if (step.Page is Type pageType && RootFrame.CurrentSourcePageType != pageType)
+        // 先换文案再切页/定位，避免点「下一步」后气泡还停在上一段文字上。
+        if (TourOverlay.IsActive)
         {
-            NavigatePage(pageType);
-            await Task.Delay(420);
+            TourOverlay.UpdateText(step.Title, step.Body, index, _tour.Count);
+        }
+
+        if (step.Page is Type pageType)
+        {
+            if (RootFrame.CurrentSourcePageType != pageType)
+            {
+                await NavigateForTourAsync(pageType);
+            }
+            else
+            {
+                // 已经在这一页：导航栏选中项也要同步过去，否则会一直停在「使用引导」上。
+                SyncTourNavSelection(pageType);
+            }
         }
 
         if (!_tourActive || _tourIndex != index)
@@ -730,7 +743,7 @@ public sealed partial class MainWindow : Window
         {
             // 目标可能在滚动区域外，先滚进来再量位置。
             target.StartBringIntoView();
-            await Task.Delay(240);
+            await Task.Delay(160);
             if (!_tourActive || _tourIndex != index)
             {
                 return;
@@ -738,6 +751,63 @@ public sealed partial class MainWindow : Window
         }
 
         TourOverlay.ShowStep(target, step.Title, step.Body, index, _tour.Count);
+    }
+
+    /// <summary>
+    /// 引导切页：不做左右滑入（遮罩会把滑动过程一起盖住，看着像错位），直接切换，
+    /// 等导航真正完成后再把导航栏选中项同步过去，避免一直停在「使用引导」上。
+    /// </summary>
+    private async Task NavigateForTourAsync(Type pageType)
+    {
+        var navigated = new TaskCompletionSource<bool>();
+        void OnNavigated(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e) => navigated.TrySetResult(true);
+
+        RootFrame.Navigated += OnNavigated;
+        var transitions = RootFrame.ContentTransitions;
+        RootFrame.ContentTransitions = null;
+        try
+        {
+            NavigatePage(pageType);
+            await Task.WhenAny(navigated.Task, Task.Delay(900));
+        }
+        finally
+        {
+            RootFrame.Navigated -= OnNavigated;
+            RootFrame.ContentTransitions = transitions;
+        }
+
+        SyncTourNavSelection(pageType);
+
+        // 等一帧让新页面完成首次布局，再量目标位置。
+        await Task.Delay(80);
+    }
+
+    private void SyncTourNavSelection(Type pageType)
+    {
+        if (pageType == typeof(SettingsPage))
+        {
+            _suppressNavChange = true;
+            RootNav.SelectedItem = RootNav.SettingsItem;
+            _suppressNavChange = false;
+            return;
+        }
+
+        var tag = pageType == typeof(MainPage) ? "ez"
+            : pageType == typeof(AdvancedPage) ? "adv"
+            : pageType == typeof(ProgressPage) ? "progress"
+            : pageType == typeof(IntroPage) ? "intro"
+            : pageType == typeof(GuidePage) ? "guide"
+            : null;
+
+        if (tag is not null)
+        {
+            SyncNavSelection(tag);
+            return;
+        }
+
+        _suppressNavChange = true;
+        RootNav.SelectedItem = null;
+        _suppressNavChange = false;
     }
 
     // ===================== 自适应导航（主页 / 高级 / 进行中 / 齿轮设置） =====================

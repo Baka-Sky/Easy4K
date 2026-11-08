@@ -115,7 +115,10 @@ namespace Easy4K.Controls.WelcomeHero
             }
 
             _activePlayback = AnimationsEnabled ? Playback : WelcomeHeroPlayback.Static;
-            _layout = new WelcomeHeroLayout((float)Height);
+
+            // Easy4K 的外观尺寸跟随页面拉伸，但星座本身按 PowerToys 的设计高度（320）排版再垂直居中，
+            // 这样最大化时不会因为槽位变多而变得又密又小。
+            _layout = new WelcomeHeroLayout(WelcomeHeroLayout.DefaultHeroHeight);
             WatchAnimationsSetting(true);
 
             foreach (var target in RevealTargets)
