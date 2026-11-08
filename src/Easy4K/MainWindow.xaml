@@ -209,7 +209,7 @@
 
             <StackPanel x:Name="WelcomePanel"
                         HorizontalAlignment="Center" VerticalAlignment="Bottom"
-                        Margin="24,0,24,110" Spacing="10" MaxWidth="760">
+                        Margin="24,0,24,150" Spacing="10" MaxWidth="760">
                 <TextBlock Text="欢迎使用 Easy4K 2" FontSize="34" FontWeight="Bold"
                            HorizontalAlignment="Center" TextAlignment="Center"/>
                 <TextBlock Text="体验旗舰级的软件性能，体验旗舰级的超分补帧体验"

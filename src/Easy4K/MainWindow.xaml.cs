@@ -689,8 +689,8 @@ public sealed partial class MainWindow : Window
     private void OnWelcomeTour(object sender, RoutedEventArgs e) => _ = DismissWelcomeAsync(startTour: true);
 
     /// <summary>
-    /// 结束欢迎层：文字和图标先淡出（避免被缩放压扁），只留背景色块收缩到第一步的目标卡片，
-    /// 然后整体淡出、教程淡入；直接跳过则只做淡出。
+    /// 结束欢迎层：文字和图标先淡出（避免被缩放压扁），然后先把教程铺上来（遮住主界面），
+    /// 再让背景色块收缩到第一步卡片并淡出，全程中间不会露出主界面。
     /// </summary>
     private async Task DismissWelcomeAsync(bool startTour)
     {
@@ -702,11 +702,18 @@ public sealed partial class MainWindow : Window
         _welcomeActive = false;
         Vm.MarkWelcomeShown();          // 只出现一次
 
-        await FadeOutAsync(WelcomePanel, 160);
-        await FadeOutAsync(WelcomeHero, 240);
+        await FadeOutAsync(WelcomePanel, 140);
+        await FadeOutAsync(WelcomeHero, 200);
 
         if (startTour)
         {
+            // 先把教程放上去（欢迎层在它上面，所以收缩过程仍然可见），避免中间露出主界面。
+            StartTour();
+            for (var i = 0; i < 25 && !TourOverlay.IsActive; i++)
+            {
+                await Task.Delay(24);
+            }
+
             var target = ResolveTourTarget(0);
             if (target is not null && WelcomeBackdrop.ActualWidth > 0 && WelcomeBackdrop.ActualHeight > 0)
             {
@@ -728,16 +735,14 @@ public sealed partial class MainWindow : Window
                 var scale = compositor.CreateVector3KeyFrameAnimation();
                 scale.InsertKeyFrame(0f, Vector3.One, ease);
                 scale.InsertKeyFrame(1f, new Vector3(sx, sy, 1f));
-                scale.Duration = TimeSpan.FromMilliseconds(420);
+                scale.Duration = TimeSpan.FromMilliseconds(460);
                 visual.StartAnimation("Scale", scale);
 
-                await Task.Delay(420);
+                await Task.Delay(380);   // 收缩后段就开始淡出，衔接更顺
             }
-
-            StartTour();
         }
 
-        await FadeOutAsync(WelcomeOverlay, 300);
+        await FadeOutAsync(WelcomeOverlay, 220);
         FinishWelcome();
     }
 
