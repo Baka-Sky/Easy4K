@@ -468,13 +468,33 @@ public sealed partial class MainWindow : Window
             try
             {
                 await Task.Delay(400); // 等界面呈现稳定后再弹，避免与启动自检抢焦点
-                await AskTelemetryConsentAsync();
+                await AskTelemetryWhenIdleAsync();
             }
             catch (Exception ex)
             {
                 Vm.Logger.Warn($"遥测同意询问失败（忽略）: {ex.Message}");
             }
         };
+    }
+
+    /// <summary>
+    /// 遥测询问要等 OOBE 欢迎动画 / 新手引导都结束之后再弹，
+    /// 否则会和全屏动画抢焦点、挡住第一步引导。
+    /// </summary>
+    private async Task AskTelemetryWhenIdleAsync()
+    {
+        if (!Vm.NeedsTelemetryConsent)
+        {
+            return;
+        }
+
+        while (_welcomeActive || _welcomeDismissing || _tourActive)
+        {
+            await Task.Delay(300);
+        }
+
+        await Task.Delay(250);
+        await AskTelemetryConsentAsync();
     }
 
     // ===================== 匿名遥测同意（仅首次启动询问一次） =====================
@@ -652,6 +672,7 @@ public sealed partial class MainWindow : Window
     private bool _welcomeActive;
     private bool _welcomeHooked;
     private bool _welcomeDismissed;
+    private bool _welcomeDismissing;
 
     /// <summary>每次显示/关闭递增，用于让旧的关闭流程失效，避免和重播互相打断。</summary>
     private int _welcomeGeneration;
@@ -751,39 +772,50 @@ public sealed partial class MainWindow : Window
         }
 
         _welcomeActive = false;
+        _welcomeDismissing = true;      // 收尾期间也算「欢迎流程没结束」，遥测弹窗要等
         _welcomeDismissed = true;
         Vm.MarkWelcomeShown();          // 只出现一次
 
         var generation = _welcomeGeneration;
-        await FadeOutAsync(WelcomePanel, 180);
-        if (generation != _welcomeGeneration)
+        try
         {
-            return;     // 期间又被重播了，交给新的流程
-        }
-
-        await FadeOutAsync(WelcomeHero, 260);
-        if (generation != _welcomeGeneration)
-        {
-            return;
-        }
-
-        if (startTour)
-        {
-            // 教程先铺到下面（被欢迎层挡着），随后两层交叉淡出，中间不会露出主界面。
-            StartTour();
-            for (var i = 0; i < 25 && !TourOverlay.IsActive; i++)
+            await FadeOutAsync(WelcomePanel, 180);
+            if (generation != _welcomeGeneration)
             {
-                await Task.Delay(24);
+                return;     // 期间又被重播了，交给新的流程
+            }
+
+            await FadeOutAsync(WelcomeHero, 260);
+            if (generation != _welcomeGeneration)
+            {
+                return;
+            }
+
+            if (startTour)
+            {
+                // 教程先铺到下面（被欢迎层挡着），随后两层交叉淡出，中间不会露出主界面。
+                StartTour();
+                for (var i = 0; i < 25 && !TourOverlay.IsActive; i++)
+                {
+                    await Task.Delay(24);
+                }
+            }
+
+            await FadeOutAsync(WelcomeOverlay, startTour ? 420 : 300);
+            if (generation != _welcomeGeneration)
+            {
+                return;
+            }
+
+            FinishWelcome();
+        }
+        finally
+        {
+            if (generation == _welcomeGeneration)   // 只有没被重播接管时才清标志
+            {
+                _welcomeDismissing = false;
             }
         }
-
-        await FadeOutAsync(WelcomeOverlay, startTour ? 420 : 300);
-        if (generation != _welcomeGeneration)
-        {
-            return;
-        }
-
-        FinishWelcome();
     }
 
     private static async Task FadeOutAsync(UIElement element, int milliseconds)
