@@ -17,7 +17,8 @@ namespace Easy4K.Controls;
 /// </summary>
 public sealed partial class GuideOverlay : UserControl
 {
-    private const double HolePadding = 8;
+    /// <summary>高亮框相对目标控件向外扩的边距（欢迎背景收缩时要和这个洞对齐）。</summary>
+    public const double HolePadding = 8;
     private const double HoleRadius = 12;
     private const double BubbleGap = 16;
     private const double BubbleMaxWidth = 440;

@@ -721,11 +721,21 @@ public sealed partial class MainWindow : Window
             {
                 var rect = target.TransformToVisual(ZoomHost).TransformBounds(
                     new Rect(0, 0, target.ActualWidth, target.ActualHeight));
+                // 和教程高亮框的挖洞区域保持一致（向外扩 HolePadding），收缩终点才对得上。
+                rect = new Rect(
+                    Math.Max(0, rect.X - Easy4K.Controls.GuideOverlay.HolePadding),
+                    Math.Max(0, rect.Y - Easy4K.Controls.GuideOverlay.HolePadding),
+                    rect.Width + (Easy4K.Controls.GuideOverlay.HolePadding * 2),
+                    rect.Height + (Easy4K.Controls.GuideOverlay.HolePadding * 2));
 
                 var visual = ElementCompositionPreview.GetElementVisual(WelcomeBackdrop);
                 var compositor = visual.Compositor;
                 var sx = (float)(rect.Width / WelcomeBackdrop.ActualWidth);
                 var sy = (float)(rect.Height / WelcomeBackdrop.ActualHeight);
+
+                // 圆角按缩放比例预先放大，缩完正好是 13（和教程高亮框一致）。
+                var averageScale = Math.Max((sx + sy) / 2f, 0.01f);
+                WelcomeBackdrop.CornerRadius = new CornerRadius(13 / averageScale);
 
                 // 以目标卡片中心为缩放锚点，缩完正好铺在卡片上。
                 visual.CenterPoint = new Vector3(
@@ -791,6 +801,7 @@ public sealed partial class MainWindow : Window
         var backdrop = ElementCompositionPreview.GetElementVisual(WelcomeBackdrop);
         backdrop.StopAnimation("Scale");
         backdrop.Scale = Vector3.One;
+        WelcomeBackdrop.CornerRadius = new CornerRadius(0);
 
         var dim = ElementCompositionPreview.GetElementVisual(WelcomeDim);
         dim.StopAnimation("Opacity");
