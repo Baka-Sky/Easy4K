@@ -21,6 +21,10 @@ public sealed partial class SettingsPage : Page
         InitializeComponent();
         LanguageCombo.ItemsSource = Loc.Languages.Select(language => language.Name).ToArray();
         SyncCurrentValues();
+
+#if !DEBUG
+        WelcomeCard.Visibility = Visibility.Collapsed;   // 重播 OOBE 只给开发版用
+#endif
     }
 
     /// <summary>把主题与语言控件对齐当前配置。</summary>

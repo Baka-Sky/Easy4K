@@ -74,6 +74,7 @@ public sealed partial class MainWindow : Window
 #if DEBUG
         IntroNavItem.Visibility = Visibility.Visible;   // 「开场」页只在开发版出现
         GuideNavItem.Visibility = Visibility.Visible;   // 「引导」页只在开发版出现
+        TourNavItem.Visibility = Visibility.Visible;    // 「使用引导」只在开发版出现（发布版隐藏）
 #endif
 
         // 界面整体缩放（设置 → 外观）：仅窗口最大化时生效；尺寸/最大化状态/DPI 变化时重新定尺
@@ -710,8 +711,9 @@ public sealed partial class MainWindow : Window
             WelcomeHero.RevealTargets.Add(WelcomePanel);
         }
 
-        // 上次关闭后 Hero 可能已从可视树移除，这里放回背景层之后的同一个位置。
-        if (WelcomeHero.Parent is not Panel)
+        // 上次关闭后 Hero 可能已从可视树移除（仅「启动时已看过」那条路径会移除），需要放回背景层之后。
+        // 注意：构造期 Parent 可能还是 null，不能拿 Parent 判断是否已在树里，否则会重复 Insert 抛异常。
+        if (_welcomeDismissed && !WelcomeOverlay.Children.Contains(WelcomeHero))
         {
             WelcomeOverlay.Children.Insert(1, WelcomeHero);
         }

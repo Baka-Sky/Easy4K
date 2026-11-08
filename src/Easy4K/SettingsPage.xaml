@@ -135,8 +135,8 @@
                     </StackPanel>
                 </Border>
 
-                <!-- 欢迎动画（OOBE） -->
-                <Border Style="{StaticResource CardBorder}">
+                <!-- 欢迎动画（OOBE）：仅开发版显示 -->
+                <Border x:Name="WelcomeCard" Style="{StaticResource CardBorder}">
                     <StackPanel Spacing="6">
                         <TextBlock Text="欢迎动画" Style="{StaticResource SectionTitle}"/>
                         <TextBlock FontSize="13" Opacity="0.7" TextWrapping="Wrap"
