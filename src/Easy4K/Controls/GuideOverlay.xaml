@@ -42,12 +42,12 @@
                     <RotateTransform Angle="45"/>
                 </Border.RenderTransform>
             </Border>
-            <Border x:Name="Bubble" MaxWidth="340" Padding="16,14" CornerRadius="12"
+            <Border x:Name="Bubble" MaxWidth="440" Padding="18,16" CornerRadius="12"
                     Background="{ThemeResource CardBgBrush}"
                     BorderBrush="{ThemeResource AccentFillColorDefaultBrush}" BorderThickness="1">
                 <StackPanel Spacing="10">
                     <TextBlock x:Name="BubbleTitle" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                    <TextBlock x:Name="BubbleBody" FontSize="13" TextWrapping="Wrap" LineHeight="19"
+                    <TextBlock x:Name="BubbleBody" FontSize="13" TextWrapping="Wrap" LineHeight="21"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     <Grid ColumnSpacing="8">
                         <Grid.ColumnDefinitions>

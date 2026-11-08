@@ -20,7 +20,7 @@ public sealed partial class GuideOverlay : UserControl
     private const double HolePadding = 8;
     private const double HoleRadius = 12;
     private const double BubbleGap = 16;
-    private const double BubbleMaxWidth = 340;
+    private const double BubbleMaxWidth = 440;
     private const double TailSize = 14;
 
     private bool _active;
