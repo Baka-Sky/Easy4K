@@ -80,6 +80,8 @@
                 <NavigationViewItem Content="高级" Tag="adv"/>
                 <!-- 进行中：仅处理期间出现 -->
                 <NavigationViewItem x:Name="ProgressNavItem" Content="进行中" Tag="progress" Visibility="Collapsed"/>
+                <!-- 开场：仅开发版显示，播放欢迎界面入场动画 -->
+                <NavigationViewItem x:Name="IntroNavItem" Content="开场" Tag="intro" Visibility="Collapsed"/>
             </NavigationView.MenuItems>
 
             <Grid>
