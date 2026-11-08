@@ -86,15 +86,15 @@ namespace Easy4K.Controls.WelcomeHero
         private const float DomeBleed = 24f;
 
         // PowerToys renders the hero at its design height; the dome is anchored to the top of that 320 DIP hero.
-        // Easy4K stretches the hero to the whole page, so the dome is offset down with the logo (the apex) instead,
-        // otherwise the aurora stays in a band at the top and the tiles sit on a plain background.
+        // Easy4K stretches the hero to the whole page, so the dome geometry is recomputed per viewport instead
+        // (see UpdateDomeGeometry): the aurora is centered on the page and covers it edge to edge.
         private const float DesignApexY = WelcomeHeroLayout.DefaultHeroHeight - WelcomeHeroLayout.ApexBottomInset;
 
-        private readonly Vector2 DomeCenter;
+        private Vector2 DomeCenter;
+        private Vector2 DomeRadius;
 
-        // PowerToys keeps the dome at a fixed size because its hero is always 320 DIP tall. Easy4K stretches
-        // the hero to the page, so the vertical radius grows with it and the aurora reaches the bottom edge.
-        private readonly Vector2 DomeRadius;
+        /// <summary>穹顶视觉顶部在页面坐标里的偏移（用于把屏幕坐标换算到穹顶局部坐标）。</summary>
+        private float _domeTopOffset;
         private static readonly Vector2 GlowSize = new(620f, 400f);
         private static readonly float[] FlashAlphas = [1f, 0.55f, 0.18f, 0f];
         private static readonly Vector2[] GlowPositions =
@@ -433,10 +433,9 @@ namespace Easy4K.Controls.WelcomeHero
             Apex = new Vector2(apexX, _layout.ApexY + offsetY);
             _interaction.InsertScalar("HalfWidth", Math.Max(size.X / 2f, 1f));
 
-            // 背景穹顶按窗口高度纵向拉伸，整页都有渐变；星座本身不放大，密度和 320 高时一致。
-            var heightRatio = Math.Max(1f, size.Y / _layout.HeroHeight);
-            _dome.CenterPoint = new Vector3(DomeWidth / 2f, DomeCenter.Y + DomeBleed, 0f);
-            _dome.Scale = new Vector3(1f, heightRatio, 1f);
+            // 背景穹顶按视口重新定尺：以整页为中心、半径覆盖到四角，保证整页都有渐变；
+            // 星座本身仍然是设计尺寸，密度不变。
+            UpdateDomeGeometry(size, offsetY);
 
             if (!_hasViewport)
             {
@@ -457,6 +456,23 @@ namespace Easy4K.Controls.WelcomeHero
 
             _stage.Offset = new Vector3(Apex, 0f);
             _auroraRig.Offset = new Vector3(apexX, offsetY, 0f);
+        }
+
+        /// <summary>
+        /// 让穹顶覆盖整个视口：视觉尺寸按页高放大，椭圆中心落在页面中心，半径盖到四角。
+        /// </summary>
+        private void UpdateDomeGeometry(Vector2 size, float offsetY)
+        {
+            var domeHeight = Math.Max(_layout.HeroHeight + LightSpill + DomeBleed, size.Y * 2f);
+            _domeTopOffset = (size.Y - domeHeight) / 2f;
+            _dome.Size = new Vector2(DomeWidth, domeHeight);
+            _dome.Offset = new Vector3(-DomeWidth / 2f, _domeTopOffset - offsetY, 0f);
+
+            DomeCenter = new Vector2(DomeWidth / 2f, domeHeight / 2f);
+            DomeRadius = new Vector2(Math.Max(1000f, size.X * 0.75f), Math.Max(420f, size.Y * 0.95f));
+
+            _domeBrush.EllipseCenter = DomeCenter;
+            _domeBrush.EllipseRadius = DomeRadius;
         }
 
         /// <summary>
@@ -571,7 +587,7 @@ namespace Easy4K.Controls.WelcomeHero
 
             // 4. Sunrise: the dome of light grows out of the logo.
             var dawnStart = ImpactMs - 40f;
-            var dawnCenter = new Vector2(DomeCenter.X, _layout.ApexY + DomeBleed);
+            var dawnCenter = new Vector2(DomeCenter.X, Apex.Y + DomeBleed - _domeTopOffset);
             Animate(_dome, "Opacity", Scalar(200f, dawnStart, (0f, 0f, null), (1f, 1f, null)));
             Animate(_domeBrush, "EllipseCenter", Vector2D(DomeMs, dawnStart, (0f, dawnCenter, null), (1f, DomeCenter, _easeOutExpo)));
             Animate(_domeBrush, "EllipseRadius", Vector2D(DomeMs, dawnStart, (0f, new Vector2(90f, 60f), null), (1f, DomeRadius, _easeOutExpo)));
