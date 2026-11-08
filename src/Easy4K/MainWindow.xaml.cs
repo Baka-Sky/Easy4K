@@ -67,6 +67,7 @@ public sealed partial class MainWindow : Window
         InitDebugOverlay();
 #if DEBUG
         IntroNavItem.Visibility = Visibility.Visible;   // 「开场」页只在开发版出现
+        GuideNavItem.Visibility = Visibility.Visible;   // 「引导」页只在开发版出现
 #endif
 
         // 界面整体缩放（设置 → 外观）：仅窗口最大化时生效；尺寸/最大化状态/DPI 变化时重新定尺
@@ -580,7 +581,7 @@ public sealed partial class MainWindow : Window
     // ===================== 导航 =====================
 
     /// <summary>顶部导航项的顺序（决定左右滑动的方向）。</summary>
-    private static readonly Type[] NavOrder = { typeof(MainPage), typeof(AdvancedPage), typeof(ProgressPage), typeof(IntroPage) };
+    private static readonly Type[] NavOrder = { typeof(MainPage), typeof(AdvancedPage), typeof(ProgressPage), typeof(IntroPage), typeof(GuidePage) };
 
     /// <summary>统一页面切换动画：左右滑入（与顶部导航按钮的顺序一致），而不是默认的向上浮入。
     /// 往导航栏右侧的页面切换 → 从右边滑入；往左 → 从左边滑入；设置/关于/遥控页固定从右滑入。</summary>
@@ -662,6 +663,7 @@ public sealed partial class MainWindow : Window
         else if (tag == "adv") NavigatePage(typeof(AdvancedPage));
         else if (tag == "progress") NavigatePage(typeof(ProgressPage));
         else if (tag == "intro") NavigatePage(typeof(IntroPage));
+        else if (tag == "guide") NavigatePage(typeof(GuidePage));
 
         ThinProgressBar.Visibility = Vm.IsProcessing && RootFrame.CurrentSourcePageType != typeof(ProgressPage)
             ? Visibility.Visible

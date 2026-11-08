@@ -466,7 +466,7 @@ namespace Easy4K.Controls.WelcomeHero
         private void ShowLabel(int tile)
         {
             var module = WelcomeHeroModules.All[tile];
-            var name = module.AssetName;
+            var name = module.NameResourceKey;
             LabelText.Text = string.IsNullOrEmpty(name) ? module.AssetName : name;
             LabelPill.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             var labelSize = LabelPill.DesiredSize;

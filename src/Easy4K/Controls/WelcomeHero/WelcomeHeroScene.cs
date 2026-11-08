@@ -91,7 +91,10 @@ namespace Easy4K.Controls.WelcomeHero
         private const float DesignApexY = WelcomeHeroLayout.DefaultHeroHeight - WelcomeHeroLayout.ApexBottomInset;
 
         private readonly Vector2 DomeCenter;
-        private static readonly Vector2 DomeRadius = new(1000f, 420f);
+
+        // PowerToys keeps the dome at a fixed size because its hero is always 320 DIP tall. Easy4K stretches
+        // the hero to the page, so the vertical radius grows with it and the aurora reaches the bottom edge.
+        private readonly Vector2 DomeRadius;
         private static readonly Vector2 GlowSize = new(620f, 400f);
         private static readonly float[] FlashAlphas = [1f, 0.55f, 0.18f, 0f];
         private static readonly Vector2[] GlowPositions =
@@ -184,6 +187,7 @@ namespace Easy4K.Controls.WelcomeHero
             _palette = palette;
 
             DomeCenter = new Vector2(DomeWidth / 2f, DomeBleed - 90f + (layout.ApexY - DesignApexY));
+            DomeRadius = new Vector2(1000f, 420f * (layout.HeroHeight / WelcomeHeroLayout.DefaultHeroHeight));
 
             _linear = Track(compositor.CreateLinearEasingFunction());
             _easeOutExpo = Track(compositor.CreateCubicBezierEasingFunction(new Vector2(0.16f, 1f), new Vector2(0.3f, 1f)));
