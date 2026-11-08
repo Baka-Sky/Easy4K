@@ -3937,6 +3937,16 @@ public partial class MainViewModel : ObservableObject
         return parts.Count == 0 ? "无" : string.Join("，", parts);
     }
 
+    /// <summary>首次启动的全屏欢迎动画是否已经看过。</summary>
+    public bool WelcomeShown => _app.WelcomeShown;
+
+    /// <summary>标记欢迎动画已看过并落盘（下次启动不再出现）。</summary>
+    public void MarkWelcomeShown()
+    {
+        _app.WelcomeShown = true;
+        SaveSettings();
+    }
+
     public void SaveSettings()
     {
         _app.DefaultSrModel = SrModel;

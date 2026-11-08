@@ -67,6 +67,7 @@ public sealed partial class MainWindow : Window
         TitleTextBlock.Text = title;
 
         InitDebugOverlay();
+        InitWelcome();
 #if DEBUG
         IntroNavItem.Visibility = Visibility.Visible;   // 「开场」页只在开发版出现
         GuideNavItem.Visibility = Visibility.Visible;   // 「引导」页只在开发版出现
@@ -641,6 +642,64 @@ public sealed partial class MainWindow : Window
 
     /// <summary>主窗口内容根（供弹窗指定 XamlRoot，避免页面卸载后引用失效）。</summary>
     public Microsoft.UI.Xaml.XamlRoot WindowContentRoot => RootFrame.XamlRoot;
+
+    // ===================== 首次启动的全屏欢迎动画 =====================
+
+    private bool _welcomeActive;
+
+    /// <summary>第一次启动时铺满整窗播放入场动画，结束后浮出欢迎标题和「跳过 / 进入新手教程」。</summary>
+    private void InitWelcome()
+    {
+        if (Vm.WelcomeShown)
+        {
+            // 已经看过：把 Hero 从可视树移除，避免它在后台空跑动画。
+            if (WelcomeHero.Parent is Panel hidden)
+            {
+                hidden.Children.Remove(WelcomeHero);
+            }
+
+            return;
+        }
+
+        _welcomeActive = true;
+
+        // 文字和按钮跟着动画一起浮出（WelcomeHero 自带的分层揭示，和 PowerToys 一样在 Logo 落下后出现）。
+        WelcomeHero.RevealTargets.Add(WelcomePanel);
+        WelcomeOverlay.Visibility = Visibility.Visible;
+        WelcomeOverlay.SizeChanged += (_, e) =>
+        {
+            if (e.NewSize.Height > 200)
+            {
+                WelcomeHero.Height = e.NewSize.Height;
+            }
+        };
+    }
+
+    private void OnWelcomeSkip(object sender, RoutedEventArgs e) => CloseWelcome(startTour: false);
+
+    private void OnWelcomeTour(object sender, RoutedEventArgs e) => CloseWelcome(startTour: true);
+
+    private void CloseWelcome(bool startTour)
+    {
+        if (!_welcomeActive)
+        {
+            return;
+        }
+
+        _welcomeActive = false;
+        Vm.MarkWelcomeShown();          // 只出现一次
+
+        WelcomeOverlay.Visibility = Visibility.Collapsed;
+        if (WelcomeHero.Parent is Panel host)
+        {
+            host.Children.Remove(WelcomeHero);   // 触发 Unloaded，释放合成场景
+        }
+
+        if (startTour)
+        {
+            StartTour();
+        }
+    }
 
     // ===================== 使用引导（介绍每个功能怎么用） =====================
 

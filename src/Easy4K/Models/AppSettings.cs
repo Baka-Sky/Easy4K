@@ -94,6 +94,9 @@ public sealed class AppSettings
     /// <summary>首次运行欢迎向导是否已完成（协议/硬件声明/报告目录/主题等均已配置）</summary>
     public bool SetupCompleted { get; set; }
 
+    /// <summary>首次启动的全屏欢迎动画是否已经看过（看完或跳过后不再出现）</summary>
+    public bool WelcomeShown { get; set; }
+
     /// <summary>每次启动是否先用 Res 里的 1 秒测试视频按保存的默认步骤跑一遍自检，通过后再进入正式界面</summary>
     public bool StartupSelfTest { get; set; } = true;
 
