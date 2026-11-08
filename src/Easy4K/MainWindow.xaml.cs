@@ -669,9 +669,6 @@ public sealed partial class MainWindow : Window
         // 星座整体上移一点，给底部欢迎文案和按钮留出视觉空间。
         WelcomeHero.ContentOffsetY = -70;
 
-        // 背景层用与穹顶同色系的径向渐变，图标淡出后收缩时颜色不会跳。
-        WelcomeBackdrop.Background = CreateWelcomeBackdropBrush();
-
         // 文字和按钮跟着动画一起浮出（WelcomeHero 自带的分层揭示，和 PowerToys 一样在 Logo 落下后出现）。
         WelcomeHero.RevealTargets.Add(WelcomePanel);
         WelcomeOverlay.Visibility = Visibility.Visible;
@@ -689,8 +686,8 @@ public sealed partial class MainWindow : Window
     private void OnWelcomeTour(object sender, RoutedEventArgs e) => _ = DismissWelcomeAsync(startTour: true);
 
     /// <summary>
-    /// 结束欢迎层：文字和图标先淡出（避免被缩放压扁），然后先把教程铺上来（遮住主界面），
-    /// 再让背景色块收缩到第一步卡片并淡出，全程中间不会露出主界面。
+    /// 结束欢迎层：先把文字、图标依次淡出，再把教程铺到下面，最后整层交叉淡出。
+    /// 不再做「背景块收缩」，避免收缩终点的缩放/圆角与引导高亮框产生任何错位。
     /// </summary>
     private async Task DismissWelcomeAsync(bool startTour)
     {
@@ -702,86 +699,21 @@ public sealed partial class MainWindow : Window
         _welcomeActive = false;
         Vm.MarkWelcomeShown();          // 只出现一次
 
-        await FadeOutAsync(WelcomePanel, 140);
+        await FadeOutAsync(WelcomePanel, 180);
+        await FadeOutAsync(WelcomeHero, 260);
 
         if (startTour)
         {
-            // 图标淡出的同时把底衬暗色淡入：之后背景块收缩露出的是这层暗色，不会直接看到主界面。
-            await Task.WhenAll(FadeOutAsync(WelcomeHero, 200), FadeInAsync(WelcomeDim, 200));
-
-            // 先把教程放上去（欢迎层在它上面，所以收缩过程仍然可见）。
+            // 教程先铺到下面（被欢迎层挡着），随后两层交叉淡出，中间不会露出主界面。
             StartTour();
             for (var i = 0; i < 25 && !TourOverlay.IsActive; i++)
             {
                 await Task.Delay(24);
             }
-
-            var target = ResolveTourTarget(0);
-            if (target is not null && WelcomeBackdrop.ActualWidth > 0 && WelcomeBackdrop.ActualHeight > 0)
-            {
-                var bounds = target.TransformToVisual(TourOverlay).TransformBounds(
-                    new Rect(0, 0, target.ActualWidth, target.ActualHeight));
-
-                // 和教程高亮框的挖洞区域保持一致（向外扩 HolePadding）。
-                bounds = new Rect(
-                    Math.Max(0, bounds.X - Easy4K.Controls.GuideOverlay.HolePadding),
-                    Math.Max(0, bounds.Y - Easy4K.Controls.GuideOverlay.HolePadding),
-                    bounds.Width + (Easy4K.Controls.GuideOverlay.HolePadding * 2),
-                    bounds.Height + (Easy4K.Controls.GuideOverlay.HolePadding * 2));
-
-                // 用「教程覆盖层 → 欢迎层」的变换换算，缩放/偏移都和引导高亮框完全一致。
-                var toWelcome = TourOverlay.TransformToVisual(WelcomeOverlay);
-                var topLeft = toWelcome.TransformPoint(new Point(bounds.X, bounds.Y));
-                var bottomRight = toWelcome.TransformPoint(new Point(bounds.Right, bounds.Bottom));
-                var rect = new Rect(
-                    topLeft.X,
-                    topLeft.Y,
-                    Math.Max(1, bottomRight.X - topLeft.X),
-                    Math.Max(1, bottomRight.Y - topLeft.Y));
-
-                var visual = ElementCompositionPreview.GetElementVisual(WelcomeBackdrop);
-                var compositor = visual.Compositor;
-                var sx = (float)(rect.Width / WelcomeBackdrop.ActualWidth);
-                var sy = (float)(rect.Height / WelcomeBackdrop.ActualHeight);
-
-                // 圆角按缩放比例预先放大，缩完正好是 13（和教程高亮框一致）。
-                var averageScale = Math.Max((sx + sy) / 2f, 0.01f);
-                WelcomeBackdrop.CornerRadius = new CornerRadius(13 / averageScale);
-
-                // 以目标卡片中心为缩放锚点，缩完正好铺在卡片上。
-                visual.CenterPoint = new Vector3(
-                    (float)(rect.X + (rect.Width / 2)),
-                    (float)(rect.Y + (rect.Height / 2)),
-                    0f);
-
-                var ease = compositor.CreateCubicBezierEasingFunction(new Vector2(0.32f, 0f), new Vector2(0.67f, 1f));
-                var scale = compositor.CreateVector3KeyFrameAnimation();
-                scale.InsertKeyFrame(0f, Vector3.One, ease);
-                scale.InsertKeyFrame(1f, new Vector3(sx, sy, 1f));
-                scale.Duration = TimeSpan.FromMilliseconds(460);
-                visual.StartAnimation("Scale", scale);
-
-                await Task.Delay(380);   // 收缩后段就开始淡出，衔接更顺
-            }
-        }
-        else
-        {
-            await FadeOutAsync(WelcomeHero, 200);
         }
 
-        await FadeOutAsync(WelcomeOverlay, startTour ? 300 : 260);
+        await FadeOutAsync(WelcomeOverlay, startTour ? 420 : 300);
         FinishWelcome();
-    }
-
-    private static async Task FadeInAsync(UIElement element, int milliseconds)
-    {
-        var visual = ElementCompositionPreview.GetElementVisual(element);
-        var fade = visual.Compositor.CreateScalarKeyFrameAnimation();
-        fade.InsertKeyFrame(0f, 0f);
-        fade.InsertKeyFrame(1f, 1f);
-        fade.Duration = TimeSpan.FromMilliseconds(milliseconds);
-        visual.StartAnimation("Opacity", fade);
-        await Task.Delay(milliseconds);
     }
 
     private static async Task FadeOutAsync(UIElement element, int milliseconds)
@@ -809,52 +741,10 @@ public sealed partial class MainWindow : Window
         heroVisual.StopAnimation("Opacity");
         heroVisual.Opacity = 1f;
 
-        var backdrop = ElementCompositionPreview.GetElementVisual(WelcomeBackdrop);
-        backdrop.StopAnimation("Scale");
-        backdrop.Scale = Vector3.One;
-        WelcomeBackdrop.CornerRadius = new CornerRadius(0);
-
-        var dim = ElementCompositionPreview.GetElementVisual(WelcomeDim);
-        dim.StopAnimation("Opacity");
-        dim.Opacity = 0f;
-
         if (WelcomeHero.Parent is Panel host)
         {
             host.Children.Remove(WelcomeHero);   // 触发 Unloaded，释放合成场景
         }
-    }
-
-    /// <summary>与 WelcomeHero 穹顶同色系的径向渐变（深色深蓝 / 浅色淡蓝），用于收缩时的背景层。</summary>
-    private RadialGradientBrush CreateWelcomeBackdropBrush()
-    {
-        var light = RootLayout.ActualTheme == ElementTheme.Light;
-        var center = light ? Windows.UI.Color.FromArgb(255, 0xD2, 0xE2, 0xEE) : Windows.UI.Color.FromArgb(255, 0x0A, 0x1C, 0x38);
-        var middle = light ? Windows.UI.Color.FromArgb(255, 0xB4, 0xCD, 0xE0) : Windows.UI.Color.FromArgb(255, 0x06, 0x15, 0x2E);
-        var edge = light ? Windows.UI.Color.FromArgb(255, 0x8F, 0xB2, 0xCE) : Windows.UI.Color.FromArgb(255, 0x03, 0x09, 0x16);
-
-        var brush = new RadialGradientBrush
-        {
-            MappingMode = BrushMappingMode.RelativeToBoundingBox,
-            Center = new Point(0.5, 0.5),
-            GradientOrigin = new Point(0.5, 0.5),
-            RadiusX = 0.78,
-            RadiusY = 0.86,
-        };
-        brush.GradientStops.Add(new GradientStop { Color = center, Offset = 0 });
-        brush.GradientStops.Add(new GradientStop { Color = middle, Offset = 0.62 });
-        brush.GradientStops.Add(new GradientStop { Color = edge, Offset = 1 });
-        return brush;
-    }
-
-    private FrameworkElement? ResolveTourTarget(int index)
-    {
-        if (index < 0 || index >= _tour.Count)
-        {
-            return null;
-        }
-
-        var page = RootFrame.Content as Page;
-        return page?.FindName(_tour[index].TargetName) as FrameworkElement;
     }
 
     // ===================== 使用引导（介绍每个功能怎么用） =====================

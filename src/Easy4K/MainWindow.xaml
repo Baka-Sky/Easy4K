@@ -201,10 +201,7 @@
 
         <!-- 首次启动的全屏欢迎动画：铺满整窗、盖住导航，动画结束后浮出标题和两个按钮 -->
         <Grid x:Name="WelcomeOverlay" Grid.Row="0" Grid.RowSpan="2" Visibility="Collapsed">
-            <!-- 收缩时露出的底衬：先淡入一层暗色，背景块缩小时不会直接看到主界面/教程 -->
-            <Border x:Name="WelcomeDim" Background="#99000000" Opacity="0"/>
-
-            <!-- 纯色背景层：切教程时只让这一层收缩到第一步卡片，图标和文字先淡出，不会被压扁 -->
+            <!-- 纯色背景层：图标和文字淡出后只剩这层，随后整层淡出交给教程 -->
             <Border x:Name="WelcomeBackdrop" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"/>
 
             <hero:WelcomeHero x:Name="WelcomeHero"
