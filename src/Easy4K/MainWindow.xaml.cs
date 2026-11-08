@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Numerics;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Easy4K.Models;
@@ -10,10 +11,12 @@ using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Windowing;
+using Windows.Foundation;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
@@ -663,6 +666,9 @@ public sealed partial class MainWindow : Window
 
         _welcomeActive = true;
 
+        // 星座整体上移一点，给底部欢迎文案和按钮留出视觉空间。
+        WelcomeHero.ContentOffsetY = -70;
+
         // 文字和按钮跟着动画一起浮出（WelcomeHero 自带的分层揭示，和 PowerToys 一样在 Logo 落下后出现）。
         WelcomeHero.RevealTargets.Add(WelcomePanel);
         WelcomeOverlay.Visibility = Visibility.Visible;
@@ -675,11 +681,15 @@ public sealed partial class MainWindow : Window
         };
     }
 
-    private void OnWelcomeSkip(object sender, RoutedEventArgs e) => CloseWelcome(startTour: false);
+    private void OnWelcomeSkip(object sender, RoutedEventArgs e) => _ = DismissWelcomeAsync(startTour: false);
 
-    private void OnWelcomeTour(object sender, RoutedEventArgs e) => CloseWelcome(startTour: true);
+    private void OnWelcomeTour(object sender, RoutedEventArgs e) => _ = DismissWelcomeAsync(startTour: true);
 
-    private void CloseWelcome(bool startTour)
+    /// <summary>
+    /// 结束欢迎层：走教程时先把整块欢迎层收缩到第一步的目标卡片大小（颜色保持），再淡出；
+    /// 直接跳过则只做淡出。
+    /// </summary>
+    private async Task DismissWelcomeAsync(bool startTour)
     {
         if (!_welcomeActive)
         {
@@ -689,16 +699,80 @@ public sealed partial class MainWindow : Window
         _welcomeActive = false;
         Vm.MarkWelcomeShown();          // 只出现一次
 
+        // 文案先收起，只留背景色块参与收缩。
+        WelcomePanel.Visibility = Visibility.Collapsed;
+
+        if (startTour)
+        {
+            var target = ResolveTourTarget(0);
+            if (target is not null && WelcomeOverlay.ActualWidth > 0 && WelcomeOverlay.ActualHeight > 0)
+            {
+                var rect = target.TransformToVisual(ZoomHost).TransformBounds(
+                    new Rect(0, 0, target.ActualWidth, target.ActualHeight));
+
+                var visual = ElementCompositionPreview.GetElementVisual(WelcomeOverlay);
+                var compositor = visual.Compositor;
+                var sx = (float)(rect.Width / WelcomeOverlay.ActualWidth);
+                var sy = (float)(rect.Height / WelcomeOverlay.ActualHeight);
+
+                // 以目标卡片中心为缩放锚点，缩完正好铺在卡片上。
+                visual.CenterPoint = new Vector3(
+                    (float)(rect.X + (rect.Width / 2)),
+                    (float)(rect.Y + (rect.Height / 2)),
+                    0f);
+
+                var ease = compositor.CreateCubicBezierEasingFunction(new Vector2(0.32f, 0f), new Vector2(0.67f, 1f));
+                var scale = compositor.CreateVector3KeyFrameAnimation();
+                scale.InsertKeyFrame(0f, Vector3.One, ease);
+                scale.InsertKeyFrame(1f, new Vector3(sx, sy, 1f));
+                scale.Duration = TimeSpan.FromMilliseconds(460);
+                visual.StartAnimation("Scale", scale);
+
+                await Task.Delay(470);
+            }
+
+            StartTour();
+        }
+
+        await FadeOutWelcomeAsync();
+        FinishWelcome();
+    }
+
+    private async Task FadeOutWelcomeAsync()
+    {
+        var visual = ElementCompositionPreview.GetElementVisual(WelcomeOverlay);
+        var fade = visual.Compositor.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(1f, 0f);
+        fade.Duration = TimeSpan.FromMilliseconds(300);
+        visual.StartAnimation("Opacity", fade);
+        await Task.Delay(310);
+    }
+
+    private void FinishWelcome()
+    {
         WelcomeOverlay.Visibility = Visibility.Collapsed;
+
+        var visual = ElementCompositionPreview.GetElementVisual(WelcomeOverlay);
+        visual.StopAnimation("Opacity");
+        visual.StopAnimation("Scale");
+        visual.Opacity = 1f;
+        visual.Scale = Vector3.One;
+
         if (WelcomeHero.Parent is Panel host)
         {
             host.Children.Remove(WelcomeHero);   // 触发 Unloaded，释放合成场景
         }
+    }
 
-        if (startTour)
+    private FrameworkElement? ResolveTourTarget(int index)
+    {
+        if (index < 0 || index >= _tour.Count)
         {
-            StartTour();
+            return null;
         }
+
+        var page = RootFrame.Content as Page;
+        return page?.FindName(_tour[index].TargetName) as FrameworkElement;
     }
 
     // ===================== 使用引导（介绍每个功能怎么用） =====================

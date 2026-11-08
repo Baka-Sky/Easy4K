@@ -94,6 +94,11 @@ namespace Easy4K.Controls.WelcomeHero
         public IList<UIElement> RevealTargets { get; } = [];
 
         /// <summary>
+        /// 星座的纵向偏移（DIP，负数向上）。默认居中；全屏欢迎页用它把整组方块稍微上移，给底部文案留空间。
+        /// </summary>
+        public double ContentOffsetY { get; set; }
+
+        /// <summary>
         /// Gets a value indicating whether Windows animations are turned on.
         /// </summary>
         public bool AnimationsEnabled => _uiSettings.AnimationsEnabled;
@@ -143,7 +148,7 @@ namespace Easy4K.Controls.WelcomeHero
 
             var compositor = ElementCompositionPreview.GetElementVisual(this).Compositor;
             _scene = new WelcomeHeroScene(compositor, _layout, _iconSurfaces, _logoSurface, ResolvePalette());
-            _scene.SetViewport(new Vector2((float)SceneHost.ActualWidth, (float)SceneHost.ActualHeight), scale);
+            _scene.SetViewport(new Vector2((float)SceneHost.ActualWidth, (float)SceneHost.ActualHeight), scale, (float)ContentOffsetY);
             ElementCompositionPreview.SetElementChildVisual(SceneHost, _scene.Root);
 
             if (_activePlayback == WelcomeHeroPlayback.Static)
@@ -338,7 +343,7 @@ namespace Easy4K.Controls.WelcomeHero
 
         private void OnSizeChanged(object sender, SizeChangedEventArgs e)
         {
-            _scene?.SetViewport(new Vector2((float)SceneHost.ActualWidth, (float)SceneHost.ActualHeight), (float)(XamlRoot?.RasterizationScale ?? 1.0));
+            _scene?.SetViewport(new Vector2((float)SceneHost.ActualWidth, (float)SceneHost.ActualHeight), (float)(XamlRoot?.RasterizationScale ?? 1.0), (float)ContentOffsetY);
             HideLabel();
         }
 

@@ -413,7 +413,7 @@ namespace Easy4K.Controls.WelcomeHero
         /// <summary>
         /// Positions the scene for a hero of the given size. Later calls glide the constellation to the new center.
         /// </summary>
-        public void SetViewport(Vector2 size, float rasterizationScale)
+        public void SetViewport(Vector2 size, float rasterizationScale, float verticalOffset = 0f)
         {
             if (size.X <= 0f || size.Y <= 0f)
             {
@@ -428,8 +428,9 @@ namespace Easy4K.Controls.WelcomeHero
             var scale = Math.Max(rasterizationScale, 1f);
             var apexX = MathF.Round(size.X / 2f * scale) / scale;
 
-            // 星座按设计高度排版，多出来的空间上下均分，让整组特效垂直居中（密度保持不变）。
-            var offsetY = Math.Max(0f, (size.Y - _layout.HeroHeight) / 2f);
+            // 星座按设计高度排版，多出来的空间上下均分，让整组特效垂直居中（密度保持不变）；
+            // verticalOffset 用于整体上/下微调（全屏欢迎页给底部文案让位）。
+            var offsetY = Math.Max(0f, (size.Y - _layout.HeroHeight) / 2f) + verticalOffset;
             Apex = new Vector2(apexX, _layout.ApexY + offsetY);
             _interaction.InsertScalar("HalfWidth", Math.Max(size.X / 2f, 1f));
 
