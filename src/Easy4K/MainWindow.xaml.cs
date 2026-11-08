@@ -703,11 +703,13 @@ public sealed partial class MainWindow : Window
         Vm.MarkWelcomeShown();          // 只出现一次
 
         await FadeOutAsync(WelcomePanel, 140);
-        await FadeOutAsync(WelcomeHero, 200);
 
         if (startTour)
         {
-            // 先把教程放上去（欢迎层在它上面，所以收缩过程仍然可见），避免中间露出主界面。
+            // 图标淡出的同时把底衬暗色淡入：之后背景块收缩露出的是这层暗色，不会直接看到主界面。
+            await Task.WhenAll(FadeOutAsync(WelcomeHero, 200), FadeInAsync(WelcomeDim, 200));
+
+            // 先把教程放上去（欢迎层在它上面，所以收缩过程仍然可见）。
             StartTour();
             for (var i = 0; i < 25 && !TourOverlay.IsActive; i++)
             {
@@ -741,9 +743,24 @@ public sealed partial class MainWindow : Window
                 await Task.Delay(380);   // 收缩后段就开始淡出，衔接更顺
             }
         }
+        else
+        {
+            await FadeOutAsync(WelcomeHero, 200);
+        }
 
-        await FadeOutAsync(WelcomeOverlay, 220);
+        await FadeOutAsync(WelcomeOverlay, startTour ? 300 : 260);
         FinishWelcome();
+    }
+
+    private static async Task FadeInAsync(UIElement element, int milliseconds)
+    {
+        var visual = ElementCompositionPreview.GetElementVisual(element);
+        var fade = visual.Compositor.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(0f, 0f);
+        fade.InsertKeyFrame(1f, 1f);
+        fade.Duration = TimeSpan.FromMilliseconds(milliseconds);
+        visual.StartAnimation("Opacity", fade);
+        await Task.Delay(milliseconds);
     }
 
     private static async Task FadeOutAsync(UIElement element, int milliseconds)
@@ -775,6 +792,10 @@ public sealed partial class MainWindow : Window
         backdrop.StopAnimation("Scale");
         backdrop.Scale = Vector3.One;
 
+        var dim = ElementCompositionPreview.GetElementVisual(WelcomeDim);
+        dim.StopAnimation("Opacity");
+        dim.Opacity = 0f;
+
         if (WelcomeHero.Parent is Panel host)
         {
             host.Children.Remove(WelcomeHero);   // 触发 Unloaded，释放合成场景
@@ -785,18 +806,20 @@ public sealed partial class MainWindow : Window
     private RadialGradientBrush CreateWelcomeBackdropBrush()
     {
         var light = RootLayout.ActualTheme == ElementTheme.Light;
-        var center = light ? Windows.UI.Color.FromArgb(255, 0xD8, 0xE4, 0xEE) : Windows.UI.Color.FromArgb(255, 0x0C, 0x22, 0x44);
-        var edge = light ? Windows.UI.Color.FromArgb(255, 0x9C, 0xBE, 0xD8) : Windows.UI.Color.FromArgb(255, 0x04, 0x0C, 0x1C);
+        var center = light ? Windows.UI.Color.FromArgb(255, 0xD2, 0xE2, 0xEE) : Windows.UI.Color.FromArgb(255, 0x0A, 0x1C, 0x38);
+        var middle = light ? Windows.UI.Color.FromArgb(255, 0xB4, 0xCD, 0xE0) : Windows.UI.Color.FromArgb(255, 0x06, 0x15, 0x2E);
+        var edge = light ? Windows.UI.Color.FromArgb(255, 0x8F, 0xB2, 0xCE) : Windows.UI.Color.FromArgb(255, 0x03, 0x09, 0x16);
 
         var brush = new RadialGradientBrush
         {
             MappingMode = BrushMappingMode.RelativeToBoundingBox,
-            Center = new Point(0.5, 0.42),
-            GradientOrigin = new Point(0.5, 0.42),
-            RadiusX = 0.85,
-            RadiusY = 0.85,
+            Center = new Point(0.5, 0.5),
+            GradientOrigin = new Point(0.5, 0.5),
+            RadiusX = 0.78,
+            RadiusY = 0.86,
         };
         brush.GradientStops.Add(new GradientStop { Color = center, Offset = 0 });
+        brush.GradientStops.Add(new GradientStop { Color = middle, Offset = 0.62 });
         brush.GradientStops.Add(new GradientStop { Color = edge, Offset = 1 });
         return brush;
     }
