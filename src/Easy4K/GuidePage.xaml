@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="Easy4K.GuidePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Easy4K.Controls">
+
+    <Grid x:Name="Root" Padding="16,0,16,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12" Margin="0,8,0,12">
+            <Button x:Name="StartButton" Content="▶  开始新手引导" Click="OnStart" Style="{StaticResource GlassButton}"/>
+            <TextBlock VerticalAlignment="Center" FontSize="12" Opacity="0.6"
+                       Text="引导覆盖层组件（Controls/GuideOverlay）的演示：遮罩挖洞 + 强调色描边 + 四角括号 + 扩散脉冲 + 气泡。"/>
+        </StackPanel>
+
+        <!-- 演示用的四个"被引导"控件 -->
+        <Grid Grid.Row="1" ColumnSpacing="12" RowSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Border x:Name="TargetPick" Grid.Row="0" Grid.Column="0"
+                    Background="{ThemeResource CardBgBrush}" BorderBrush="{ThemeResource CardBorderBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="18">
+                <StackPanel Spacing="8" VerticalAlignment="Center">
+                    <FontIcon Glyph="&#xE714;" FontSize="28" HorizontalAlignment="Left"/>
+                    <TextBlock Text="选择视频" FontSize="16" FontWeight="SemiBold"/>
+                    <TextBlock Text="把要处理的片子拖进来，或者点这里挑文件。" FontSize="12" Opacity="0.65" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="TargetQuality" Grid.Row="0" Grid.Column="1"
+                    Background="{ThemeResource CardBgBrush}" BorderBrush="{ThemeResource CardBorderBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="18">
+                <StackPanel Spacing="8" VerticalAlignment="Center">
+                    <FontIcon Glyph="&#xE9D9;" FontSize="28" HorizontalAlignment="Left"/>
+                    <TextBlock Text="画质档位" FontSize="16" FontWeight="SemiBold"/>
+                    <TextBlock Text="4K 超分、补帧、HDR 映射，一次配好。" FontSize="12" Opacity="0.65" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="TargetStart" Grid.Row="1" Grid.Column="0"
+                    Background="{ThemeResource CardBgBrush}" BorderBrush="{ThemeResource CardBorderBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="18">
+                <StackPanel Spacing="8" VerticalAlignment="Center">
+                    <FontIcon Glyph="&#xE768;" FontSize="28" HorizontalAlignment="Left"/>
+                    <TextBlock Text="开始处理" FontSize="16" FontWeight="SemiBold"/>
+                    <TextBlock Text="进度、日志和报错会同步到手机端。" FontSize="12" Opacity="0.65" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="TargetRemote" Grid.Row="1" Grid.Column="1"
+                    Background="{ThemeResource CardBgBrush}" BorderBrush="{ThemeResource CardBorderBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="18">
+                <StackPanel Spacing="8" VerticalAlignment="Center">
+                    <FontIcon Glyph="&#xE8B8;" FontSize="28" HorizontalAlignment="Left"/>
+                    <TextBlock Text="手机远程控制" FontSize="16" FontWeight="SemiBold"/>
+                    <TextBlock Text="手机选片、看进度、下成品。" FontSize="12" Opacity="0.65" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <controls:GuideOverlay x:Name="Guide" Grid.RowSpan="2"/>
+    </Grid>
+</Page>

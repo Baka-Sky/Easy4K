@@ -1,0 +1,52 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:HikariAPP2.ViewModels"
+             x:Class="HikariAPP2.Views.ConnectView"
+             x:DataType="vm:RemoteCore"
+             FontFamily="{StaticResource HarmonyOS}"
+             Background="{StaticResource PageBg}">
+
+  <Grid Margin="32">
+    <StackPanel VerticalAlignment="Center">
+
+      <!-- 连接中 -->
+      <StackPanel IsVisible="{Binding Connecting}">
+        <ProgressBar IsIndeterminate="True" Width="72" Height="6" HorizontalAlignment="Center"/>
+        <TextBlock Text="{Binding ConnectStep}" FontSize="16" TextAlignment="Center"
+                   TextWrapping="Wrap" Margin="0,28,0,0"/>
+        <TextBlock Text="{Binding AddressText}" Classes="label" TextAlignment="Center" Margin="0,8,0,0"/>
+      </StackPanel>
+
+      <!-- 连接表单 -->
+      <StackPanel IsVisible="{Binding IsConnectFormVisible}">
+        <TextBlock Text="Easy4K 遥控" Classes="pageTitle" HorizontalAlignment="Center"/>
+        <TextBlock Text="请在电脑端 Easy4K「设置 → 远程控制」中点击启动，&#10;然后输入电脑上显示的地址。"
+                   Classes="label" FontSize="13" TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0"/>
+
+        <TextBox Text="{Binding Host, Mode=TwoWay}" Watermark="例如 192.168.1.100、home.example.com、[240e::1]"
+                 Margin="0,28,0,0"/>
+        <TextBlock Text="端口 11451 会自动使用" Classes="label" Margin="0,6,0,0"/>
+
+        <TextBlock Text="{Binding ConnectError}" IsVisible="{Binding HasConnectError}"
+                   Foreground="{StaticResource Danger}" Classes="label"
+                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,14,0,0"/>
+
+        <Button Content="连接电脑" Command="{Binding ConnectCommand}" IsEnabled="{Binding CanConnect}"
+                Classes="pill accent" Margin="0,22,0,0"/>
+      </StackPanel>
+
+      <!-- 安全密钥：连接中也要可见（握手会停在这里等输入） -->
+      <Border Classes="card" Margin="0,16,0,0" IsVisible="{Binding KeyPromptVisible}">
+        <StackPanel Spacing="8">
+          <TextBlock Text="对方已启用安全密钥" FontSize="14" FontWeight="SemiBold"/>
+          <TextBlock Text="{Binding AddressText}" Classes="label"/>
+          <TextBox Text="{Binding KeyInput, Mode=TwoWay}" PasswordChar="●" Watermark="请输入安全密钥"/>
+          <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+            <Button Content="取消" Command="{Binding CancelKeyCommand}"/>
+            <Button Content="确定" Command="{Binding SubmitKeyCommand}" Classes="accent"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </Grid>
+</UserControl>

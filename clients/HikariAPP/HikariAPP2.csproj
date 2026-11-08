@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Android 头部工程：Avalonia 12 + FluentAvalonia（仿 WinUI 3 的组件库） -->
+    <TargetFramework>net10.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>26</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- 应用标识沿用旧版，便于覆盖安装 -->
+    <ApplicationId>Wells.Hikari.App</ApplicationId>
+    <ApplicationTitle>HikariAPP</ApplicationTitle>
+    <ApplicationVersion>2</ApplicationVersion>
+    <ApplicationDisplayVersion>2.0.0</ApplicationDisplayVersion>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+
+    <!-- 关键：把托管程序集打进 APK。
+         Debug 默认走 Fast Deployment（程序集放在电脑上，靠 adb 单独推送），
+         手动安装这种 APK 一打开就会因为找不到程序集而闪退。 -->
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+    <AndroidUseAssemblyStore>true</AndroidUseAssemblyStore>
+    <!-- Release 不做裁剪，避免 Avalonia/FluentAvalonia 的反射与 XAML 被裁掉 -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <RunAOTCompilation>false</RunAOTCompilation>
+    <!-- 关闭 JNI marshal methods 生成：Release 默认开启，但和「不裁剪」一起用时
+         生成的 Java 包装类会丢掉 __md_methods 注册，启动即崩（n_onCreate 找不到实现）。 -->
+    <AndroidEnableMarshalMethods>false</AndroidEnableMarshalMethods>
+    <!-- 同时打 arm64（真机）与 x86_64（模拟器），方便在电脑上验证 -->
+    <RuntimeIdentifiers>android-arm64;android-x64</RuntimeIdentifiers>
+
+    <!-- 开发代号 -->
+    <AssemblyTitle>HikariAPP</AssemblyTitle>
+    <Product>HikariAPP</Product>
+    <Description>HikariAPP：Easy4K 远程控制客户端，基于 Avalonia + FluentAvalonia。</Description>
+    <Company>Wells, Jiang</Company>
+
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <AndroidSdkDirectory Condition="'$(AndroidSdkDirectory)' == ''">H:\AndroidToolchain\sdk</AndroidSdkDirectory>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.5" />
+    <PackageReference Include="Avalonia.Android" Version="12.1.5" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.5" />
+    <PackageReference Include="FluentAvaloniaUI" Version="3.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+</Project>

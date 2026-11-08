@@ -1,0 +1,591 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:HikariAPP2.ViewModels"
+             xmlns:m="using:HikariAPP2.Models"
+             xmlns:svc="using:HikariAPP2.Services"
+             x:Class="HikariAPP2.Views.HomeView"
+             x:DataType="vm:RemoteCore"
+             FontFamily="{StaticResource HarmonyOS}"
+             Background="{StaticResource PageBg}">
+
+  <Grid RowDefinitions="Auto,*">
+
+    <!-- 顶栏 -->
+    <Border Grid.Row="0" Background="White" BorderBrush="{StaticResource CardBorder}"
+            BorderThickness="0,0,0,1" Padding="16,10">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Grid.Column="0" Spacing="2">
+          <TextBlock Text="Easy4K 遥控" FontSize="16" FontWeight="SemiBold"/>
+          <TextBlock Text="{Binding VersionText}" Classes="label" FontSize="11"
+                     TextTrimming="CharacterEllipsis"/>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Button Content="进行中" Command="{Binding EnterProgressCommand}" IsVisible="{Binding AnyBusy}"/>
+          <Button Content="断开" Command="{Binding DisconnectCommand}"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <ScrollViewer Grid.Row="1">
+      <StackPanel Margin="12" Spacing="10">
+
+        <!-- ===================== 输入视频 ===================== -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="输入视频" Classes="cardTitle"/>
+            <TextBlock Text="{Binding InputLabel}" Classes="body" TextWrapping="Wrap" MaxLines="2"
+                       TextTrimming="CharacterEllipsis"/>
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+              <Button Grid.Column="0" Content="手机视频" Command="{Binding PickPhoneVideoCommand}"
+                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+              <Button Grid.Column="1" Content="电脑视频" Command="{Binding PickComputerVideoCommand}"
+                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+            </Grid>
+
+            <StackPanel IsVisible="{Binding HasVideoInfo}" Spacing="2">
+              <Border Height="1" Background="{StaticResource CardBorder}" Margin="0,4"/>
+              <StackPanel IsVisible="{Binding VideoInfoValid}" Spacing="2">
+                <Grid ColumnDefinitions="84,*">
+                  <TextBlock Grid.Column="0" Text="分辨率" Classes="label"/>
+                  <TextBlock Grid.Column="1" Text="{Binding ViResolution}" Classes="value"/>
+                </Grid>
+                <Grid ColumnDefinitions="84,*">
+                  <TextBlock Grid.Column="0" Text="帧率" Classes="label"/>
+                  <TextBlock Grid.Column="1" Text="{Binding ViFpsText}" Classes="value"/>
+                </Grid>
+                <Grid ColumnDefinitions="84,*">
+                  <TextBlock Grid.Column="0" Text="时长" Classes="label"/>
+                  <TextBlock Grid.Column="1" Text="{Binding ViDurationText}" Classes="value"/>
+                </Grid>
+                <Grid ColumnDefinitions="84,*">
+                  <TextBlock Grid.Column="0" Text="总帧数" Classes="label"/>
+                  <TextBlock Grid.Column="1" Text="{Binding ViFramesText}" Classes="value"/>
+                </Grid>
+                <Grid ColumnDefinitions="84,*">
+                  <TextBlock Grid.Column="0" Text="音频" Classes="label"/>
+                  <TextBlock Grid.Column="1" Text="{Binding ViAudioText}" Classes="value"/>
+                </Grid>
+              </StackPanel>
+              <TextBlock Text="{Binding ViError}" Foreground="{StaticResource Danger}" Classes="label"
+                         IsVisible="{Binding !VideoInfoValid}" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <!-- 帧文件夹：导入已有 PNG 帧可跳过拆帧，与选视频二选一 -->
+            <Border Height="1" Background="{StaticResource CardBorder}" Margin="0,4"/>
+            <Grid ColumnDefinitions="84,*,Auto" ColumnSpacing="6">
+              <TextBlock Grid.Column="0" Text="帧文件夹" Classes="label" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="1" Text="{Binding FramesDirDisplay}" Classes="value"
+                         TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+              <Button Grid.Column="2" Content="导入" Command="{Binding PickFramesDirCommand}" Classes="link"/>
+            </Grid>
+            <Button Content="清除帧文件夹（恢复先拆帧）" Command="{Binding ClearFramesDirCommand}"
+                    IsVisible="{Binding HasExternalFramesDir}" Classes="link" HorizontalAlignment="Left"/>
+
+            <StackPanel IsVisible="{Binding ManualInfoVisible}" Spacing="4">
+              <TextBlock Classes="label" TextWrapping="Wrap"
+                         Text="帧参数（导入帧文件夹时使用；影响输出命名、分辨率显示与临时占用估算）"/>
+              <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                <TextBox Grid.Column="0" Text="{Binding ManualWidthText, Mode=TwoWay}" Watermark="宽，例如 3840"/>
+                <TextBox Grid.Column="1" Text="{Binding ManualHeightText, Mode=TwoWay}" Watermark="高，例如 2160"/>
+              </Grid>
+              <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                <TextBox Grid.Column="0" Text="{Binding ManualTotalFramesText, Mode=TwoWay}" Watermark="总帧数"/>
+                <TextBox Grid.Column="1" Text="{Binding ManualFpsText, Mode=TwoWay}" Watermark="帧率，例如 23.976"/>
+              </Grid>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- ===================== 输出 ===================== -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="输出" Classes="cardTitle"/>
+            <Grid ColumnDefinitions="84,*">
+              <TextBlock Grid.Column="0" Text="输出目录" Classes="label"/>
+              <TextBlock Grid.Column="1" Text="{Binding OutputRootDisplay}" Classes="value"/>
+            </Grid>
+            <Grid ColumnDefinitions="84,*">
+              <TextBlock Grid.Column="0" Text="输出视频" Classes="label"/>
+              <TextBlock Grid.Column="1" Text="{Binding EstimatedOutputName}" Classes="value"/>
+            </Grid>
+            <Button Content="选择输出目录（浏览电脑）" Command="{Binding PickOutputDirCommand}"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+          </StackPanel>
+        </Border>
+
+        <!-- ===================== 临时目录 ===================== -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="临时目录" Classes="cardTitle"/>
+            <Grid ColumnDefinitions="84,*">
+              <TextBlock Grid.Column="0" Text="临时目录" Classes="label"/>
+              <TextBlock Grid.Column="1" Text="{Binding TempRootDisplay}" Classes="value"/>
+            </Grid>
+            <TextBlock Classes="label" TextWrapping="Wrap"
+                       Text="涡轮模式会让拆帧、去重、回填、超分、补帧同时读写这里，建议放在固态硬盘（SSD / NVMe）上。"/>
+            <Button Content="选择临时目录（浏览电脑）" Command="{Binding PickTempDirCommand}"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+            <TextBlock Classes="label" TextWrapping="Wrap"
+                       Text="处理中断后电脑的临时目录里可能残留旧缓存，卡在「临时目录有旧文件」时，可先在这里直接清理。"/>
+            <Button Content="清理电脑上的临时目录" Command="{Binding CleanTempCommand}"
+                    IsEnabled="{Binding !AnyBusy}" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"/>
+            <TextBlock Text="{Binding TempCleanMsg}" Classes="label" IsVisible="{Binding HasTempCleanMsg}"
+                       TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+
+        <!-- ===================== 处理步骤 ===================== -->
+        <Border Classes="card">
+          <StackPanel Spacing="6">
+            <TextBlock Text="处理步骤" Classes="cardTitle"/>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="超分辨率（超分）" Classes="body" VerticalAlignment="Center"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding SrEnabled, Mode=TwoWay}" OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="补帧（插帧）" Classes="body" VerticalAlignment="Center"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding IfEnabled, Mode=TwoWay}" OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="合并视频" Classes="body" VerticalAlignment="Center"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding MergeVideo, Mode=TwoWay}" OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="合并音频" Classes="body" VerticalAlignment="Center"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding MergeAudio, Mode=TwoWay}" OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="拆分帧" Classes="body" VerticalAlignment="Center"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding SplitFrames, Mode=TwoWay}" OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding HdrEnabled}">
+              <TextBlock Grid.Column="0" Text="SDR → HDR" Classes="body" VerticalAlignment="Center"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding SdrToHdr, Mode=TwoWay}" OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+          </StackPanel>
+        </Border>
+
+        <!-- ===================== HDR 参数 ===================== -->
+        <Border Classes="card" IsVisible="{Binding SdrToHdr}">
+          <StackPanel Spacing="8">
+            <TextBlock Text="HDR 参数" Classes="cardTitle"/>
+            <StackPanel IsVisible="{Binding HdrNvPath}" Spacing="6">
+              <TextBlock Classes="label" TextWrapping="Wrap" Text="NVEncC 路径：饱和度 / 对比度（0~200，默认 200）"/>
+              <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                <TextBox Grid.Column="0" Text="{Binding HdrSaturationText, Mode=TwoWay}" Watermark="饱和度 0~200"/>
+                <TextBox Grid.Column="1" Text="{Binding HdrContrastText, Mode=TwoWay}" Watermark="对比度 0~200"/>
+              </Grid>
+            </StackPanel>
+            <StackPanel IsVisible="{Binding HdrAiPath}" Spacing="6">
+              <TextBlock Classes="label" TextWrapping="Wrap" Text="AI 重建路径：强度 50~150（100% = 模型原始映射，调高整体更亮）"/>
+              <TextBox Text="{Binding HdrAiStrengthText, Mode=TwoWay}" Watermark="AI 强度 50~150"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- ===================== 高级性能选项 ===================== -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="高级性能选项" Classes="cardTitle"/>
+
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="帧去重（自研 SFDP）" Classes="body" VerticalAlignment="Center"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding Dedup, Mode=TwoWay}" OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <ItemsControl ItemsSource="{Binding DedupModeChoices}" IsVisible="{Binding DedupModeVisible}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="svc:ChoiceItem">
+                  <ToggleButton Classes="chip" Content="{Binding Label}" IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                Command="{Binding Command}" Margin="0,0,8,4"/>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="转场优化（镜头切换处不插值）" Classes="body" VerticalAlignment="Center"
+                         TextWrapping="Wrap"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding SceneGuard, Mode=TwoWay}" OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="保留内嵌字幕" Classes="body" VerticalAlignment="Center"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding KeepSubtitles, Mode=TwoWay}"
+                            IsEnabled="{Binding HasSubtitles}" OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="音频超分（AudioSR 48kHz）" Classes="body" VerticalAlignment="Center"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding AudioSr, Mode=TwoWay}" OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <ItemsControl ItemsSource="{Binding AudioPrecisionChoices}" IsVisible="{Binding AudioPrecisionVisible}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="svc:ChoiceItem">
+                  <ToggleButton Classes="chip" Content="{Binding Label}" IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                Command="{Binding Command}" Margin="0,0,8,4"/>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="涡轮模式（临时目录用内存盘）" Classes="body" VerticalAlignment="Center"
+                         TextWrapping="Wrap"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding TurboMode, Mode=TwoWay}" OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <StackPanel IsVisible="{Binding TurboMode}" Spacing="4">
+              <TextBlock Text="涡轮分段（1 = 不分段，最多 5 段）" Classes="label"/>
+              <ItemsControl ItemsSource="{Binding TurboSegmentChoices}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="svc:ChoiceItem">
+                    <ToggleButton Classes="chip" Content="{Binding Label}" IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                  Command="{Binding Command}" Margin="0,0,8,4"/>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+
+            <Border Height="1" Background="{StaticResource CardBorder}" Margin="0,4"/>
+
+            <TextBlock Classes="label" TextWrapping="Wrap"
+                       Text="CPU CRF（CPU 编码画质，越小越不压缩、成片体积越大）"/>
+            <TextBox Text="{Binding CrfText, Mode=TwoWay}" Watermark="0~51，默认 18"/>
+
+            <TextBlock Classes="label" TextWrapping="Wrap"
+                       Text="硬件编码质量（仅硬件编码生效；编码器由显卡自动选择）"/>
+            <ItemsControl ItemsSource="{Binding HwModeChoices}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="svc:ChoiceItem">
+                  <ToggleButton Classes="chip" Content="{Binding Label}" IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                Command="{Binding Command}" Margin="0,0,8,4"/>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBox Text="{Binding HwQualityText, Mode=TwoWay}" Watermark="CQ / QP 值（0~51，越小画质越好）"/>
+
+            <Border Height="1" Background="{StaticResource CardBorder}" Margin="0,4"/>
+
+            <TextBlock Text="解析线程（解码 / 推理+编码，1~32）" Classes="label"/>
+            <Grid ColumnDefinitions="Auto,*,*" ColumnSpacing="8">
+              <TextBlock Grid.Column="0" Text="超分" Classes="label" VerticalAlignment="Center"/>
+              <TextBox Grid.Column="1" Text="{Binding SrDecodeText, Mode=TwoWay}" Watermark="解码"/>
+              <TextBox Grid.Column="2" Text="{Binding SrEncodeText, Mode=TwoWay}" Watermark="编码"/>
+            </Grid>
+            <Grid ColumnDefinitions="Auto,*,*" ColumnSpacing="8">
+              <TextBlock Grid.Column="0" Text="补帧" Classes="label" VerticalAlignment="Center"/>
+              <TextBox Grid.Column="1" Text="{Binding IfDecodeText, Mode=TwoWay}" Watermark="解码"/>
+              <TextBox Grid.Column="2" Text="{Binding IfEncodeText, Mode=TwoWay}" Watermark="编码"/>
+            </Grid>
+            <TextBlock Classes="label" TextWrapping="Wrap"
+                       Text="只调解码时编码不动；调编码时解码自动跟随（解码 = 编码÷2，不足 1 取 1）。"/>
+
+            <TextBlock Text="流水线 GPU" Classes="label"/>
+            <ComboBox ItemsSource="{Binding PipelineGpuOptions}"
+                      SelectedIndex="{Binding PipelineGpuIndex, Mode=TwoWay}"
+                      HorizontalAlignment="Stretch"/>
+            <TextBlock Classes="label" TextWrapping="Wrap"
+                       Text="「自动」= 设备 0；下拉里按系统枚举顺序列出每块显卡，选哪项就强制用哪块。"/>
+
+            <Border Height="1" Background="{StaticResource CardBorder}" Margin="0,4"/>
+
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="跳过测试（不再先用测试视频验证流程）" Classes="body"
+                         VerticalAlignment="Center" TextWrapping="Wrap"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding SkipStartupSelfTest, Mode=TwoWay}"
+                            OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="安全帧率（NCNN 设备丢失/显存溢出时强制停止）" Classes="body"
+                         VerticalAlignment="Center" TextWrapping="Wrap"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding UseSafeFrameRate, Mode=TwoWay}"
+                            OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="降低画质以降低显存/内存占用" Classes="body"
+                         VerticalAlignment="Center" TextWrapping="Wrap"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding LowerQualityForVram, Mode=TwoWay}"
+                            OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="GPU 加速" Classes="body" VerticalAlignment="Center"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding UseGpuAcceleration, Mode=TwoWay}"
+                            OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="使用 CPU 处理所有模型（很慢）" Classes="body"
+                         VerticalAlignment="Center" TextWrapping="Wrap"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding UseCpuProcessing, Mode=TwoWay}"
+                            OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="崩溃时尝试老版本处理架构" Classes="body"
+                         VerticalAlignment="Center" TextWrapping="Wrap"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding TryOldFfmpegOnCrash, Mode=TwoWay}"
+                            OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="不生成 HTML 报告" Classes="body" VerticalAlignment="Center"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding NoReport, Mode=TwoWay}"
+                            OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="报告生成后自动打开浏览器" Classes="body"
+                         VerticalAlignment="Center" TextWrapping="Wrap"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding ReportAutoOpen, Mode=TwoWay}"
+                            OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="处理期间禁止电脑自动休眠" Classes="body"
+                         VerticalAlignment="Center" TextWrapping="Wrap"/>
+              <ToggleSwitch Grid.Column="1" IsChecked="{Binding PreventAutoSleep, Mode=TwoWay}"
+                            OnContent="" OffContent="" MinWidth="0"/>
+            </Grid>
+
+            <TextBlock Text="报告目录" Classes="label"/>
+            <TextBox Text="{Binding ReportDir, Mode=TwoWay}" Watermark="HTML 报告保存目录，留空按 Reports"/>
+          </StackPanel>
+        </Border>
+
+        <!-- ===================== 超分设置 ===================== -->
+        <Border Classes="card" IsVisible="{Binding SrEnabled}">
+          <StackPanel Spacing="8">
+            <TextBlock Text="超分设置" Classes="cardTitle"/>
+            <TextBlock Text="算法" Classes="label"/>
+            <ComboBox ItemsSource="{Binding SrFamilies}" SelectedItem="{Binding SelectedSrFamily, Mode=TwoWay}"
+                      HorizontalAlignment="Stretch">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="m:SrFamily">
+                  <TextBlock Text="{Binding Label}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+
+            <TextBlock Text="倍率" Classes="label"/>
+            <ItemsControl ItemsSource="{Binding SrScaleChoices}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="svc:ChoiceItem">
+                  <ToggleButton Classes="chip" Content="{Binding Label}" IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                Command="{Binding Command}" Margin="0,0,8,4"/>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <TextBlock Text="模型" Classes="label"/>
+            <ComboBox ItemsSource="{Binding SrModelChoices}" SelectedItem="{Binding SrModel, Mode=TwoWay}"
+                      HorizontalAlignment="Stretch"/>
+            <TextBlock Text="{Binding SrSceneHint}" Classes="label" IsVisible="{Binding HasSrSceneHint}"
+                       TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+
+        <!-- ===================== 补帧设置 ===================== -->
+        <Border Classes="card" IsVisible="{Binding IfEnabled}">
+          <StackPanel Spacing="8">
+            <TextBlock Text="补帧设置" Classes="cardTitle"/>
+            <TextBlock Text="种类（模型族）" Classes="label"/>
+            <ComboBox ItemsSource="{Binding UsableVfiFamilies}" SelectedItem="{Binding SelectedVfiFamily, Mode=TwoWay}"
+                      HorizontalAlignment="Stretch">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="m:VfiFamily">
+                  <TextBlock Text="{Binding Label}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+
+            <TextBlock Text="模型（版本）" Classes="label"/>
+            <ComboBox ItemsSource="{Binding VfiModelChoices}" SelectedItem="{Binding IfModel, Mode=TwoWay}"
+                      HorizontalAlignment="Stretch"/>
+
+            <StackPanel IsVisible="{Binding IfMultiplierLocked}">
+              <TextBlock Classes="label" TextWrapping="Wrap"
+                         Text="该补帧模型仅支持 ×2（服务端已自动锁定倍率），没有可选的补帧倍率。"/>
+            </StackPanel>
+
+            <StackPanel IsVisible="{Binding !IfMultiplierLocked}" Spacing="4">
+              <TextBlock Text="补帧倍率" Classes="label"/>
+              <ItemsControl ItemsSource="{Binding IfMultiplierChoices}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="svc:ChoiceItem">
+                    <ToggleButton Classes="chip" Content="{Binding Label}" IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                  Command="{Binding Command}" Margin="0,0,8,4"/>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+
+            <TextBlock Text="{Binding VfiSceneHint}" Classes="label" IsVisible="{Binding HasVfiSceneHint}"
+                       TextWrapping="Wrap"/>
+
+            <TextBlock Classes="label" TextWrapping="Wrap"
+                       Text="目标帧率（可手动输入；0 或不填 = 按上面的补帧倍率）"/>
+            <TextBox Text="{Binding TargetFpsText, Mode=TwoWay}" IsEnabled="{Binding TargetFpsEnabled}"
+                     Watermark="例如 60；填 0 或不填 = 按倍率"/>
+            <TextBlock Classes="label" TextWrapping="Wrap" IsVisible="{Binding IfMultiplierLocked}"
+                       Text="该补帧模型只支持固定倍率，目标帧率不可用。"/>
+            <TextBlock Classes="label" TextWrapping="Wrap" IsVisible="{Binding HasNonNvidiaHint}"
+                       Text="{Binding NonNvidiaHint}"/>
+          </StackPanel>
+        </Border>
+
+        <!-- ===================== 单文件超分 ===================== -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="单文件处理（图片 / 音频 / 视频）" Classes="cardTitle"/>
+            <TextBlock Classes="label" TextWrapping="Wrap"
+                       Text="与上面的完整流水线互斥：只处理一个文件，不拆帧 / 不补帧 / 不走完整流程。"/>
+            <WrapPanel Orientation="Horizontal">
+              <ToggleButton Classes="chip" Content="图片" IsChecked="{Binding IsSfImage, Mode=OneWay}"
+                            Command="{Binding SfKindImageCommand}" Margin="0,0,8,6"/>
+              <ToggleButton Classes="chip" Content="音频" IsChecked="{Binding IsSfAudio, Mode=OneWay}"
+                            Command="{Binding SfKindAudioCommand}" Margin="0,0,8,6"/>
+              <ToggleButton Classes="chip" Content="视频音频超分" IsChecked="{Binding IsSfVideoAudio, Mode=OneWay}"
+                            Command="{Binding SfKindVideoAudioCommand}" Margin="0,0,8,6"/>
+              <ToggleButton Classes="chip" Content="视频 HDR" IsChecked="{Binding IsSfVideoHdr, Mode=OneWay}"
+                            Command="{Binding SfKindVideoHdrCommand}" IsVisible="{Binding HdrAvailable}"
+                            Margin="0,0,8,6"/>
+            </WrapPanel>
+            <TextBlock Text="{Binding SfInputDisplay}" Classes="value" TextWrapping="Wrap" MaxLines="2"
+                       TextTrimming="CharacterEllipsis"/>
+            <Button Content="浏览电脑…" Command="{Binding SfBrowseCommand}"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+
+            <StackPanel IsVisible="{Binding IsSfImage}" Spacing="6">
+              <TextBlock Text="倍率" Classes="label"/>
+              <ItemsControl ItemsSource="{Binding SfScaleChoices}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="svc:ChoiceItem">
+                    <ToggleButton Classes="chip" Content="{Binding Label}" IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                  Command="{Binding Command}" Margin="0,0,8,4"/>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <TextBlock Text="模型" Classes="label"/>
+              <ComboBox ItemsSource="{Binding SfImageModels}" SelectedItem="{Binding SfImageModel, Mode=TwoWay}"
+                        HorizontalAlignment="Stretch"/>
+            </StackPanel>
+
+            <StackPanel IsVisible="{Binding SfPrecisionVisible}" Spacing="6">
+              <TextBlock Text="AudioSR 精度" Classes="label"/>
+              <ItemsControl ItemsSource="{Binding SfPrecisionChoices}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="svc:ChoiceItem">
+                    <ToggleButton Classes="chip" Content="{Binding Label}" IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                  Command="{Binding Command}" Margin="0,0,8,4"/>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+
+            <TextBlock Classes="label" TextWrapping="Wrap" IsVisible="{Binding SfHdrHintVisible}"
+                       Text="RTX 显卡用 NVEncC（饱和度/对比度生效）；其它显卡用 AI 模型（HDRTVNet++）按画面重建高光，输出 HDR10 的 MKV，速度取决于显卡。"/>
+            <StackPanel IsVisible="{Binding SfHdrHintVisible}" Spacing="6">
+              <Grid ColumnDefinitions="*,*" ColumnSpacing="8" IsVisible="{Binding HdrNvPath}">
+                <TextBox Grid.Column="0" Text="{Binding HdrSaturationText, Mode=TwoWay}" Watermark="饱和度 0~200"/>
+                <TextBox Grid.Column="1" Text="{Binding HdrContrastText, Mode=TwoWay}" Watermark="对比度 0~200"/>
+              </Grid>
+              <TextBox Text="{Binding HdrAiStrengthText, Mode=TwoWay}" Watermark="AI 强度 50~150"
+                       IsVisible="{Binding HdrAiPath}"/>
+            </StackPanel>
+
+            <TextBlock Text="{Binding SfStatus}" Classes="label" IsVisible="{Binding HasSfStatus}" TextWrapping="Wrap"/>
+
+            <!-- 没在跑时开始按钮占满整行；在跑时才并排出现「停止」 -->
+            <Button Content="{Binding SfStartButtonText}" Command="{Binding SfStartCommand}"
+                    IsEnabled="{Binding SfStartButtonEnabled}" IsVisible="{Binding !SfRunning}"
+                    Classes="accent" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="8" IsVisible="{Binding SfRunning}">
+              <Button Grid.Column="0" Content="{Binding SfStartButtonText}" Command="{Binding SfStartCommand}"
+                      IsEnabled="{Binding SfStartButtonEnabled}" Classes="accent"
+                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+              <Button Grid.Column="1" Content="停止" Command="{Binding SfStopCommand}"
+                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+            </Grid>
+          </StackPanel>
+        </Border>
+
+        <!-- ===================== 执行 ===================== -->
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="执行" Classes="cardTitle"/>
+
+            <StackPanel IsVisible="{Binding AnyBusy}" Spacing="6">
+              <Button Content="查看处理进度" Command="{Binding EnterProgressCommand}" Classes="pill"/>
+              <TextBlock Text="{Binding ProgressText}" Classes="label" TextWrapping="Wrap" MaxLines="2"/>
+              <TextBlock Text="{Binding ProgressPercentText}" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock Text="停止 / 暂停在进度页底部" Classes="label"/>
+            </StackPanel>
+
+            <StackPanel IsVisible="{Binding !AnyBusy}" Spacing="6">
+              <Button Content="{Binding StartButtonText}" Command="{Binding StartCommand}"
+                      IsEnabled="{Binding CanStart}" Classes="pill accent"/>
+              <TextBlock Text="请先选择手机视频或电脑视频" Classes="label"
+                         IsVisible="{Binding !CanStart}"/>
+            </StackPanel>
+
+            <TextBlock Text="{Binding ResultText}" Classes="label" TextWrapping="Wrap"
+                       IsVisible="{Binding HasResultText}"/>
+          </StackPanel>
+        </Border>
+
+        <!-- ===================== 成品回传手机 ===================== -->
+        <Border Classes="card" IsVisible="{Binding ShowResultCard}">
+          <StackPanel Spacing="8">
+            <TextBlock Text="{Binding ResultCardTitle}" Classes="cardTitle"/>
+            <TextBlock Text="{Binding ResultOutput}" Classes="label" TextWrapping="Wrap" MaxLines="2"
+                       TextTrimming="CharacterEllipsis"/>
+            <StackPanel IsVisible="{Binding Downloading}" Spacing="6">
+              <ProgressBar Minimum="0" Maximum="1" Value="{Binding DownloadFraction}" Height="8"/>
+              <TextBlock Text="{Binding DownloadPercent, StringFormat='正在下载… {0}%'}" Classes="label"/>
+            </StackPanel>
+            <Button Content="下载到手机下载目录" Command="{Binding DownloadResultCommand}"
+                    IsVisible="{Binding !Downloading}" Classes="pill" Height="44"/>
+            <TextBlock Text="{Binding DownloadMessage}" Classes="label" IsVisible="{Binding HasDownloadMessage}"
+                       TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+
+        <!-- ===================== 日志 ===================== -->
+        <Border Classes="card" IsVisible="{Binding HasLogs}">
+          <StackPanel Spacing="8">
+            <TextBlock Text="日志" Classes="cardTitle"/>
+            <ScrollViewer Height="200">
+              <ItemsControl ItemsSource="{Binding Logs}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:LogEntry">
+                    <TextBlock Text="{Binding Display}" FontFamily="Consolas,monospace" FontSize="11"
+                               Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap"/>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </StackPanel>
+        </Border>
+
+        <Border Height="24" Background="Transparent"/>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

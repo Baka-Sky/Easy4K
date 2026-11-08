@@ -1,6 +1,9 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Numerics;
 using System.Text.Json;
+using System.Threading.Tasks;
 using Easy4K.Models;
 using Easy4K.LuminolEngine;
 using Easy4K.LuminolEngine.RemoteControl;
@@ -8,10 +11,12 @@ using Easy4K.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Windowing;
+using Windows.Foundation;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
@@ -65,6 +70,11 @@ public sealed partial class MainWindow : Window
         TitleTextBlock.Text = title;
 
         InitDebugOverlay();
+        InitWelcome();
+#if DEBUG
+        IntroNavItem.Visibility = Visibility.Visible;   // 「开场」页只在开发版出现
+        GuideNavItem.Visibility = Visibility.Visible;   // 「引导」页只在开发版出现
+#endif
 
         // 界面整体缩放（设置 → 外观）：仅窗口最大化时生效；尺寸/最大化状态/DPI 变化时重新定尺
         ApplyUiZoom(Vm.UiZoom);
@@ -577,7 +587,7 @@ public sealed partial class MainWindow : Window
     // ===================== 导航 =====================
 
     /// <summary>顶部导航项的顺序（决定左右滑动的方向）。</summary>
-    private static readonly Type[] NavOrder = { typeof(MainPage), typeof(AdvancedPage), typeof(ProgressPage) };
+    private static readonly Type[] NavOrder = { typeof(MainPage), typeof(AdvancedPage), typeof(ProgressPage), typeof(IntroPage), typeof(GuidePage) };
 
     /// <summary>统一页面切换动画：左右滑入（与顶部导航按钮的顺序一致），而不是默认的向上浮入。
     /// 往导航栏右侧的页面切换 → 从右边滑入；往左 → 从左边滑入；设置/关于/遥控页固定从右滑入。</summary>
@@ -636,6 +646,344 @@ public sealed partial class MainWindow : Window
     /// <summary>主窗口内容根（供弹窗指定 XamlRoot，避免页面卸载后引用失效）。</summary>
     public Microsoft.UI.Xaml.XamlRoot WindowContentRoot => RootFrame.XamlRoot;
 
+    // ===================== 首次启动的全屏欢迎动画 =====================
+
+    private bool _welcomeActive;
+    private bool _welcomeHooked;
+    private bool _welcomeDismissed;
+
+    /// <summary>每次显示/关闭递增，用于让旧的关闭流程失效，避免和重播互相打断。</summary>
+    private int _welcomeGeneration;
+
+    /// <summary>第一次启动时铺满整窗播放入场动画，结束后浮出欢迎标题和「跳过 / 进入新手教程」。</summary>
+    private void InitWelcome()
+    {
+        if (!_welcomeHooked)
+        {
+            _welcomeHooked = true;
+            WelcomeOverlay.SizeChanged += (_, e) =>
+            {
+                if (_welcomeActive && e.NewSize.Height > 200)
+                {
+                    WelcomeHero.Height = e.NewSize.Height;
+                }
+            };
+        }
+
+        if (Vm.WelcomeShown)
+        {
+            // 已经看过：把 Hero 从可视树移除，避免它在后台空跑动画。
+            if (WelcomeHero.Parent is Panel hidden)
+            {
+                hidden.Children.Remove(WelcomeHero);
+            }
+
+            _welcomeDismissed = true;
+            return;
+        }
+
+        ShowWelcome();
+    }
+
+    /// <summary>重新播放 OOBE 欢迎动画（设置页按钮调用）。</summary>
+    public void ReplayWelcome() => ShowWelcome();
+
+    private void ShowWelcome()
+    {
+        if (_welcomeActive)
+        {
+            return;
+        }
+
+        EndTour();
+        _welcomeActive = true;
+        _welcomeGeneration++;
+
+        // 星座整体上移一点，给底部欢迎文案和按钮留出视觉空间。
+        WelcomeHero.ContentOffsetY = -70;
+        WelcomeHero.Playback = Easy4K.Controls.WelcomeHero.WelcomeHeroPlayback.Intro;
+        WelcomePanel.Visibility = Visibility.Visible;
+
+        // 文字和按钮跟着动画一起浮出（WelcomeHero 自带的分层揭示，和 PowerToys 一样在 Logo 落下后出现）。
+        if (!WelcomeHero.RevealTargets.Contains(WelcomePanel))
+        {
+            WelcomeHero.RevealTargets.Add(WelcomePanel);
+        }
+
+        // 上次关闭后 Hero 可能已从可视树移除，这里放回背景层之后的同一个位置。
+        if (WelcomeHero.Parent is not Panel)
+        {
+            WelcomeOverlay.Children.Insert(1, WelcomeHero);
+        }
+
+        WelcomeOverlay.Visibility = Visibility.Visible;
+        ElementCompositionPreview.GetElementVisual(WelcomeOverlay).Opacity = 1f;
+        ElementCompositionPreview.GetElementVisual(WelcomePanel).Opacity = 1f;
+        ElementCompositionPreview.GetElementVisual(WelcomeHero).Opacity = 1f;
+
+        if (WelcomeOverlay.ActualHeight > 200)
+        {
+            WelcomeHero.Height = WelcomeOverlay.ActualHeight;
+        }
+
+        // 重播：已经加载过的 Hero 需要显式重建场景才会重新播放入场。
+        if (_welcomeDismissed && WelcomeHero.IsLoaded)
+        {
+            WelcomeHero.Restart();
+        }
+    }
+
+    private void OnWelcomeSkip(object sender, RoutedEventArgs e) => _ = DismissWelcomeAsync(startTour: false);
+
+    private void OnWelcomeTour(object sender, RoutedEventArgs e) => _ = DismissWelcomeAsync(startTour: true);
+
+    /// <summary>
+    /// 结束欢迎层：先把文字、图标依次淡出，再把教程铺到下面，最后整层交叉淡出。
+    /// 不再做「背景块收缩」，避免收缩终点的缩放/圆角与引导高亮框产生任何错位。
+    /// </summary>
+    private async Task DismissWelcomeAsync(bool startTour)
+    {
+        if (!_welcomeActive)
+        {
+            return;
+        }
+
+        _welcomeActive = false;
+        _welcomeDismissed = true;
+        Vm.MarkWelcomeShown();          // 只出现一次
+
+        var generation = _welcomeGeneration;
+        await FadeOutAsync(WelcomePanel, 180);
+        if (generation != _welcomeGeneration)
+        {
+            return;     // 期间又被重播了，交给新的流程
+        }
+
+        await FadeOutAsync(WelcomeHero, 260);
+        if (generation != _welcomeGeneration)
+        {
+            return;
+        }
+
+        if (startTour)
+        {
+            // 教程先铺到下面（被欢迎层挡着），随后两层交叉淡出，中间不会露出主界面。
+            StartTour();
+            for (var i = 0; i < 25 && !TourOverlay.IsActive; i++)
+            {
+                await Task.Delay(24);
+            }
+        }
+
+        await FadeOutAsync(WelcomeOverlay, startTour ? 420 : 300);
+        if (generation != _welcomeGeneration)
+        {
+            return;
+        }
+
+        FinishWelcome();
+    }
+
+    private static async Task FadeOutAsync(UIElement element, int milliseconds)
+    {
+        var visual = ElementCompositionPreview.GetElementVisual(element);
+        var fade = visual.Compositor.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(1f, 0f);
+        fade.Duration = TimeSpan.FromMilliseconds(milliseconds);
+        visual.StartAnimation("Opacity", fade);
+        await Task.Delay(milliseconds);
+    }
+
+    private void FinishWelcome()
+    {
+        WelcomeOverlay.Visibility = Visibility.Collapsed;
+
+        foreach (var element in new UIElement[] { WelcomeOverlay, WelcomePanel })
+        {
+            var visual = ElementCompositionPreview.GetElementVisual(element);
+            visual.StopAnimation("Opacity");
+            visual.Opacity = 1f;
+        }
+
+        var heroVisual = ElementCompositionPreview.GetElementVisual(WelcomeHero);
+        heroVisual.StopAnimation("Opacity");
+        heroVisual.Opacity = 1f;
+    }
+
+    // ===================== 使用引导（介绍每个功能怎么用） =====================
+
+    private sealed record TourStep(Type? Page, string TargetName, string Title, string Body);
+
+    private readonly List<TourStep> _tour =
+    [
+        new(typeof(MainPage), "InputCard", "第一步：告诉 Easy4K 要处理哪支视频",
+            "点「浏览」挑一个视频文件（支持 mp4 / mkv / avi / mov），也可以直接把文件拖进窗口。选好后下方会自动读出分辨率、帧率、时长、编码等信息，方便你确认没选错。\n「临时目录」用来放拆分出来的中间帧，建议放在固态硬盘上、留出 20GB 以上空间；「输出目录」就是成品保存的位置。\n如果之前已经把视频拆成 PNG 帧，点「导入」选那个文件夹，就能跳过拆帧直接处理；点「清除」可以重新选。"),
+        new(typeof(MainPage), "OptionsCard", "第二步：决定这一遍要做哪些处理",
+            "这一列勾选框就是处理流程：勾「超分」把画面放大变清晰（例如 1080p 提升到 4K）；勾「补帧」提高帧率让运动更顺（例如 30 帧变 60 帧）；勾「SDR -> HDR」让色彩和明暗更有层次；勾「合并视频」把处理后的帧重新合成成品。\n下面三项（字幕、元数据、封面）要原视频里真的有才算数，灰色的说明这支片子没有，不用管。\n勾得越多越慢：只想要清晰度就只勾超分，想又清晰又顺滑就超分 + 补帧一起勾。"),
+        new(typeof(MainPage), "SrEngineCombo", "第三步：选超分算法和模型",
+            "超分就是用 AI 把画面「脑补」得更清晰。这里第一项选算法/模型：显卡够用就选 GPU 档，速度最快；想要极致画质可以换更重的模型，但会更吃显存。\n如果开始处理时报显存不足或卡顿，可以换轻一点的模型，或者到「高级」页打开「降低部分画质以降低显存/内存占用」。\n选完不需要保存，回主页点开始就会用当前这套配置；处理过程中也可以改，改完下一支片子生效。"),
+        new(typeof(MainPage), "IfEngineCombo", "第四步：选补帧模型和倍率",
+            "补帧是在相邻两帧之间插入新帧，让画面更顺滑，尤其适合动画、运动镜头和低帧率老片。这里选补帧模型，下面是具体模型；倍率越高越流畅，同时越慢、越吃显存。\n实拍视频建议保守一点（2 倍），动画可以尝试更高倍率。\n补帧可以和超分同时勾选，Easy4K 会把「拆帧 → 超分 → 补帧 → 合并」串成一条流水线一次跑完，不需要先做一遍超分再做一遍补帧。"),
+        new(typeof(MainPage), "StartButton", "第五步：开始处理、看进度、拿成品",
+            "全部设置好之后点「开始处理」：顶部会出现一条细进度条，「进行中」页会实时显示当前阶段（拆帧 / 超分 / 补帧 / 合并）、百分比、预计剩余时间和完整日志，想中途放弃点旁边的「停止」。\n处理完成会自动回到主页并弹出完成提示，可以直接点「下载成品到本机」打开所在文件夹，也可以自己到输出目录取；还可以顺手清理中间文件释放空间。\n如果中途失败，会生成一份报错报告并自动同步给已连接的手机端，方便排查。"),
+        new(typeof(AdvancedPage), "DedupSwitch", "高级：画面去重，能省掉一半时间",
+            "很多视频（尤其是动画）相邻两帧其实是同一张画面，超分和补帧对它们重复计算很浪费。打开「画面去重」后，会先用 AI 判断两帧是否相同，重复帧直接跳过处理，处理完再按原来的顺序补回去，所以成片时长、帧率、音频完全不变。\n动画常见的「一拍二 / 一拍三」通常能省 30%~50% 的时间；实拍视频效果取决于镜头运动。\n下面的「性能模式」更快、「UHD 完美模式」判断更准，画面复杂时建议用完美模式。"),
+        new(typeof(AdvancedPage), "AudioSrSwitch", "高级：音频超分，让声音更清楚",
+            "老片子、录屏、网络视频的音轨常常采样率低、听起来发闷。打开「音频超分」会把音轨提升到更高采样率，人声和配乐细节会更清楚。\n精度选 FP16 速度快、显存占用低；FP32 更精确但慢一些，音质要求高再选。\n它只处理音频，不会明显拖慢画面处理，可以和超分、补帧同时开启。"),
+        new(typeof(AdvancedPage), "TurboSwitch", "高级：涡轮并行，用多段同时跑",
+            "默认是一条流水线从头跑到尾。打开「涡轮并行」会把视频按帧号切成 1~5 段，每段各自跑一条完整流水线同时处理，全部完成后再按原顺序汇总、统一合并，所以成片时长和帧率不变。\n段数越多越吃 CPU 和显存带宽，一般 2~3 段就够了；而且因为中间文件读写量很大，临时目录必须在固态硬盘上。\n电脑性能够强、想赶时间时再开，普通笔记本建议保持关闭。"),
+        new(typeof(SettingsPage), "RemoteCard", "设置：用手机遥控这台电脑",
+            "点「启动远程控制」后，这台电脑会在 11451 端口等待手机连接，界面会切成等待/已连接提示。手机端（Easy4K 安卓版 / 鸿蒙版）填上这台电脑的地址和密钥，就能在手机上选片、看进度和日志、下载成品和报错报告。\n第一次连接需要安全密钥，可以在下面「修改安全密钥」里查看或更换；连上后顶部会出现黄色「已连接至 …」横幅。\n想反过来用这台电脑遥控另一台：点「遥控另一台 Easy4K」；常驻远程使用可以打开「每次开启 Easy4K 自动进入远程连接模式」。"),
+    ];
+
+    private int _tourIndex;
+    private bool _tourActive;
+
+    /// <summary>开始逐步引导：自动切到目标页面，框选控件并弹出说明。</summary>
+    private void StartTour()
+    {
+        if (_tourActive)
+        {
+            ShowTourStep(_tourIndex);
+            return;
+        }
+
+        _tourActive = true;
+        _tourIndex = 0;
+        TourOverlay.StepRequested += OnTourStepRequested;
+        ShowTourStep(0);
+    }
+
+    private void EndTour()
+    {
+        if (!_tourActive)
+        {
+            return;
+        }
+
+        _tourActive = false;
+        TourOverlay.StepRequested -= OnTourStepRequested;
+        TourOverlay.Close();
+    }
+
+    private void OnTourStepRequested(object? sender, int index)
+    {
+        if (index < 0 || index >= _tour.Count)
+        {
+            EndTour();
+            return;
+        }
+
+        ShowTourStep(index);
+    }
+
+    private async void ShowTourStep(int index)
+    {
+        if (!_tourActive || index < 0 || index >= _tour.Count)
+        {
+            return;
+        }
+
+        _tourIndex = index;
+        var step = _tour[index];
+
+        // 先换文案再切页/定位，避免点「下一步」后气泡还停在上一段文字上。
+        if (TourOverlay.IsActive)
+        {
+            TourOverlay.UpdateText(step.Title, step.Body, index, _tour.Count);
+        }
+
+        if (step.Page is Type pageType)
+        {
+            if (RootFrame.CurrentSourcePageType != pageType)
+            {
+                await NavigateForTourAsync(pageType);
+            }
+            else
+            {
+                // 已经在这一页：导航栏选中项也要同步过去，否则会一直停在「使用引导」上。
+                SyncTourNavSelection(pageType);
+            }
+        }
+
+        if (!_tourActive || _tourIndex != index)
+        {
+            return;
+        }
+
+        var page = RootFrame.Content as Page;
+        var target = page?.FindName(step.TargetName) as FrameworkElement;
+        if (target is not null)
+        {
+            // 目标可能在滚动区域外，先滚进来再量位置。
+            target.StartBringIntoView();
+            await Task.Delay(160);
+            if (!_tourActive || _tourIndex != index)
+            {
+                return;
+            }
+        }
+
+        TourOverlay.ShowStep(target, step.Title, step.Body, index, _tour.Count);
+    }
+
+    /// <summary>
+    /// 引导切页：不做左右滑入（遮罩会把滑动过程一起盖住，看着像错位），直接切换，
+    /// 等导航真正完成后再把导航栏选中项同步过去，避免一直停在「使用引导」上。
+    /// </summary>
+    private async Task NavigateForTourAsync(Type pageType)
+    {
+        var navigated = new TaskCompletionSource<bool>();
+        void OnNavigated(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e) => navigated.TrySetResult(true);
+
+        RootFrame.Navigated += OnNavigated;
+        var transitions = RootFrame.ContentTransitions;
+        RootFrame.ContentTransitions = null;
+        try
+        {
+            NavigatePage(pageType);
+            await Task.WhenAny(navigated.Task, Task.Delay(900));
+        }
+        finally
+        {
+            RootFrame.Navigated -= OnNavigated;
+            RootFrame.ContentTransitions = transitions;
+        }
+
+        SyncTourNavSelection(pageType);
+
+        // 等一帧让新页面完成首次布局，再量目标位置。
+        await Task.Delay(80);
+    }
+
+    private void SyncTourNavSelection(Type pageType)
+    {
+        if (pageType == typeof(SettingsPage))
+        {
+            _suppressNavChange = true;
+            RootNav.SelectedItem = RootNav.SettingsItem;
+            _suppressNavChange = false;
+            return;
+        }
+
+        var tag = pageType == typeof(MainPage) ? "ez"
+            : pageType == typeof(AdvancedPage) ? "adv"
+            : pageType == typeof(ProgressPage) ? "progress"
+            : pageType == typeof(IntroPage) ? "intro"
+            : pageType == typeof(GuidePage) ? "guide"
+            : null;
+
+        if (tag is not null)
+        {
+            SyncNavSelection(tag);
+            return;
+        }
+
+        _suppressNavChange = true;
+        RootNav.SelectedItem = null;
+        _suppressNavChange = false;
+    }
+
     // ===================== 自适应导航（主页 / 高级 / 进行中 / 齿轮设置） =====================
 
     /// <summary>程序设置导航选中项时抑制 SelectionChanged，避免与页面导航互相触发。</summary>
@@ -655,9 +1003,19 @@ public sealed partial class MainWindow : Window
         if (args.SelectedItem is not NavigationViewItem item) return;
 
         var tag = item.Tag as string;
+        if (tag == "tour")
+        {
+            StartTour();
+            return;
+        }
+
+        if (_tourActive) EndTour();
+
         if (tag == "ez") NavigatePage(typeof(MainPage));
         else if (tag == "adv") NavigatePage(typeof(AdvancedPage));
         else if (tag == "progress") NavigatePage(typeof(ProgressPage));
+        else if (tag == "intro") NavigatePage(typeof(IntroPage));
+        else if (tag == "guide") NavigatePage(typeof(GuidePage));
 
         ThinProgressBar.Visibility = Vm.IsProcessing && RootFrame.CurrentSourcePageType != typeof(ProgressPage)
             ? Visibility.Visible
