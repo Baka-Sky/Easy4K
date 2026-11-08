@@ -650,6 +650,10 @@ public sealed partial class MainWindow : Window
 
     private bool _welcomeActive;
     private bool _welcomeHooked;
+    private bool _welcomeDismissed;
+
+    /// <summary>每次显示/关闭递增，用于让旧的关闭流程失效，避免和重播互相打断。</summary>
+    private int _welcomeGeneration;
 
     /// <summary>第一次启动时铺满整窗播放入场动画，结束后浮出欢迎标题和「跳过 / 进入新手教程」。</summary>
     private void InitWelcome()
@@ -674,6 +678,7 @@ public sealed partial class MainWindow : Window
                 hidden.Children.Remove(WelcomeHero);
             }
 
+            _welcomeDismissed = true;
             return;
         }
 
@@ -692,6 +697,7 @@ public sealed partial class MainWindow : Window
 
         EndTour();
         _welcomeActive = true;
+        _welcomeGeneration++;
 
         // 星座整体上移一点，给底部欢迎文案和按钮留出视觉空间。
         WelcomeHero.ContentOffsetY = -70;
@@ -704,7 +710,7 @@ public sealed partial class MainWindow : Window
             WelcomeHero.RevealTargets.Add(WelcomePanel);
         }
 
-        // 关闭时 Hero 会从可视树移除，这里放回背景层之后的同一个位置。
+        // 上次关闭后 Hero 可能已从可视树移除，这里放回背景层之后的同一个位置。
         if (WelcomeHero.Parent is not Panel)
         {
             WelcomeOverlay.Children.Insert(1, WelcomeHero);
@@ -718,6 +724,12 @@ public sealed partial class MainWindow : Window
         if (WelcomeOverlay.ActualHeight > 200)
         {
             WelcomeHero.Height = WelcomeOverlay.ActualHeight;
+        }
+
+        // 重播：已经加载过的 Hero 需要显式重建场景才会重新播放入场。
+        if (_welcomeDismissed && WelcomeHero.IsLoaded)
+        {
+            WelcomeHero.Restart();
         }
     }
 
@@ -737,10 +749,21 @@ public sealed partial class MainWindow : Window
         }
 
         _welcomeActive = false;
+        _welcomeDismissed = true;
         Vm.MarkWelcomeShown();          // 只出现一次
 
+        var generation = _welcomeGeneration;
         await FadeOutAsync(WelcomePanel, 180);
+        if (generation != _welcomeGeneration)
+        {
+            return;     // 期间又被重播了，交给新的流程
+        }
+
         await FadeOutAsync(WelcomeHero, 260);
+        if (generation != _welcomeGeneration)
+        {
+            return;
+        }
 
         if (startTour)
         {
@@ -753,6 +776,11 @@ public sealed partial class MainWindow : Window
         }
 
         await FadeOutAsync(WelcomeOverlay, startTour ? 420 : 300);
+        if (generation != _welcomeGeneration)
+        {
+            return;
+        }
+
         FinishWelcome();
     }
 
@@ -780,11 +808,6 @@ public sealed partial class MainWindow : Window
         var heroVisual = ElementCompositionPreview.GetElementVisual(WelcomeHero);
         heroVisual.StopAnimation("Opacity");
         heroVisual.Opacity = 1f;
-
-        if (WelcomeHero.Parent is Panel host)
-        {
-            host.Children.Remove(WelcomeHero);   // 触发 Unloaded，释放合成场景
-        }
     }
 
     // ===================== 使用引导（介绍每个功能怎么用） =====================

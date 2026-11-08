@@ -172,6 +172,28 @@ namespace Easy4K.Controls.WelcomeHero
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             WatchAnimationsSetting(false);
+            DisposeScene();
+            ShowRevealTargets();
+        }
+
+        /// <summary>
+        /// 重新播放：清掉当前合成场景与贴图，再按 Loaded 的流程重建并播放一次入场。
+        /// 供全屏欢迎页重复播放使用（不依赖移出/放回可视树）。
+        /// </summary>
+        public void Restart()
+        {
+            if (!IsLoaded)
+            {
+                return;
+            }
+
+            WatchAnimationsSetting(false);
+            DisposeScene();
+            OnLoaded(this, new RoutedEventArgs());
+        }
+
+        private void DisposeScene()
+        {
             _loadTimeout?.Stop();
             _loadTimeout = null;
 
@@ -192,8 +214,6 @@ namespace Easy4K.Controls.WelcomeHero
                 _logoSurface.Dispose();
                 _logoSurface = null;
             }
-
-            ShowRevealTargets();
 
             _pendingLoads = 0;
             _started = false;
