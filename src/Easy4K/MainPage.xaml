@@ -52,7 +52,7 @@
                 </Grid>
 
                 <!-- 路径 -->
-                <Border Style="{StaticResource CardBorder}">
+                <Border x:Name="InputCard" Style="{StaticResource CardBorder}">
                     <StackPanel Spacing="6">
                         <TextBlock Text="输入输出" Style="{StaticResource SectionTitle}"/>
                         <Grid ColumnSpacing="8">
@@ -122,7 +122,7 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Column="1" Style="{StaticResource CardBorder}">
+                    <Border x:Name="OptionsCard" Grid.Column="1" Style="{StaticResource CardBorder}">
                         <StackPanel Spacing="4">
                             <TextBlock Text="处理选项" Style="{StaticResource SectionTitle}"/>
                             <CheckBox Content="拆帧" IsChecked="{x:Bind Vm.SplitFrames, Mode=TwoWay}" IsEnabled="{x:Bind Vm.SplitFramesLocked, Mode=OneWay}" FontSize="12"/>
@@ -441,7 +441,7 @@
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <Button Grid.Column="0" Content="开始处理" Click="OnStart" IsEnabled="{x:Bind Vm.CanStart, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
+                            <Button x:Name="StartButton" Grid.Column="0" Content="开始处理" Click="OnStart" IsEnabled="{x:Bind Vm.CanStart, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                             <Button Grid.Column="1" Content="停止" Click="OnStop" IsEnabled="{x:Bind Vm.CanStop, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                             <Button Grid.Column="2" Content="清理临时文件" Click="OnCleanTemp" IsEnabled="{x:Bind Vm.CanClean, Mode=OneWay}" Style="{StaticResource GlassButton}"/>
                             <!-- 孤儿模式：与上面三个按钮同一排且齐平，但靠窗口最右侧。

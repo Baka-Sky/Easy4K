@@ -136,7 +136,7 @@
                 </Border>
 
                 <!-- 远程控制 -->
-                <Border Style="{StaticResource CardBorder}">
+                <Border x:Name="RemoteCard" Style="{StaticResource CardBorder}">
                     <StackPanel Spacing="6">
                         <TextBlock Text="远程控制" Style="{StaticResource SectionTitle}"/>
                         <TextBlock FontSize="13" Opacity="0.7" TextWrapping="Wrap"

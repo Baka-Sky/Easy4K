@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Easy4K.Controls.GuideOverlay"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Visibility="Collapsed">
+
+    <Grid>
+        <Path x:Name="MaskPath" Fill="#99000000" IsHitTestVisible="False"/>
+
+        <Grid x:Name="RingHost" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False">
+            <Border x:Name="RingGlow" Margin="-6" CornerRadius="18"
+                    Background="{ThemeResource AccentFillColorDefaultBrush}" Opacity="0.06"/>
+            <Border x:Name="RingMain" CornerRadius="13" BorderThickness="2.5"
+                    BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"/>
+            <Border x:Name="RingLoop" CornerRadius="13" BorderThickness="2.5" Opacity="0"
+                    BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="18"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="18"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="18"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="18"/>
+                </Grid.RowDefinitions>
+                <Border Grid.Row="0" Grid.Column="0" BorderThickness="3,3,0,0" BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"/>
+                <Border Grid.Row="0" Grid.Column="2" BorderThickness="0,3,3,0" BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"/>
+                <Border Grid.Row="2" Grid.Column="0" BorderThickness="3,0,0,3" BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"/>
+                <Border Grid.Row="2" Grid.Column="2" BorderThickness="0,0,3,3" BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"/>
+            </Grid>
+        </Grid>
+
+        <Canvas x:Name="BubbleLayer">
+            <Border x:Name="BubbleTail" Width="14" Height="14"
+                    Background="{ThemeResource CardBgBrush}"
+                    BorderBrush="{ThemeResource AccentFillColorDefaultBrush}" BorderThickness="1"
+                    RenderTransformOrigin="0.5,0.5">
+                <Border.RenderTransform>
+                    <RotateTransform Angle="45"/>
+                </Border.RenderTransform>
+            </Border>
+            <Border x:Name="Bubble" MaxWidth="340" Padding="16,14" CornerRadius="12"
+                    Background="{ThemeResource CardBgBrush}"
+                    BorderBrush="{ThemeResource AccentFillColorDefaultBrush}" BorderThickness="1">
+                <StackPanel Spacing="10">
+                    <TextBlock x:Name="BubbleTitle" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="BubbleBody" FontSize="13" TextWrapping="Wrap" LineHeight="19"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="StepText" VerticalAlignment="Center" FontSize="12" Opacity="0.6"/>
+                        <Button x:Name="PrevButton" Grid.Column="1" Content="上一步" Click="OnPrev" Style="{StaticResource GlassButton}"/>
+                        <Button x:Name="NextButton" Grid.Column="2" Content="下一步" Click="OnNext" Style="{StaticResource GlassButton}"/>
+                        <Button x:Name="SkipButton" Grid.Column="3" Content="跳过" Click="OnSkip" Style="{StaticResource GlassButton}"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </Canvas>
+    </Grid>
+</UserControl>

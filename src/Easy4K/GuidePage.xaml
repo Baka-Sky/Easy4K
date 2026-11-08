@@ -2,7 +2,8 @@
 <Page
     x:Class="Easy4K.GuidePage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Easy4K.Controls">
 
     <Grid x:Name="Root" Padding="16,0,16,16">
         <Grid.RowDefinitions>
@@ -13,7 +14,7 @@
         <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12" Margin="0,8,0,12">
             <Button x:Name="StartButton" Content="▶  开始新手引导" Click="OnStart" Style="{StaticResource GlassButton}"/>
             <TextBlock VerticalAlignment="Center" FontSize="12" Opacity="0.6"
-                       Text="复刻 ClassIsland 的新手引导：遮罩挖洞框选目标，强调色描边 + 四角括号 + 扩散脉冲，旁边跟说明气泡。"/>
+                       Text="引导覆盖层组件（Controls/GuideOverlay）的演示：遮罩挖洞 + 强调色描边 + 四角括号 + 扩散脉冲 + 气泡。"/>
         </StackPanel>
 
         <!-- 演示用的四个"被引导"控件 -->
@@ -68,69 +69,6 @@
             </Border>
         </Grid>
 
-        <!-- 引导覆盖层：遮罩挖洞 + ClassIsland 风格的高亮（描边 / 四角括号 / 扩散脉冲） + 说明气泡 -->
-        <Grid x:Name="GuideLayer" Grid.RowSpan="2" Visibility="Collapsed">
-            <Path x:Name="MaskPath" Fill="#99000000" IsHitTestVisible="False"/>
-
-            <Grid x:Name="RingHost" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False">
-                <!-- 内侧淡淡的强调色底 -->
-                <Border x:Name="RingGlow" Margin="-6" CornerRadius="18"
-                        Background="{ThemeResource AccentFillColorDefaultBrush}" Opacity="0.06"/>
-                <!-- 主描边 + 循环扩散的第二圈描边 -->
-                <Border x:Name="RingMain" CornerRadius="13" BorderThickness="2.5"
-                        BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"/>
-                <Border x:Name="RingLoop" CornerRadius="13" BorderThickness="2.5" Opacity="0"
-                        BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"/>
-                <!-- 四角括号 -->
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="18"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="18"/>
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="18"/>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="18"/>
-                    </Grid.RowDefinitions>
-                    <Border Grid.Row="0" Grid.Column="0" BorderThickness="3,3,0,0" BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"/>
-                    <Border Grid.Row="0" Grid.Column="2" BorderThickness="0,3,3,0" BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"/>
-                    <Border Grid.Row="2" Grid.Column="0" BorderThickness="3,0,0,3" BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"/>
-                    <Border Grid.Row="2" Grid.Column="2" BorderThickness="0,0,3,3" BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"/>
-                </Grid>
-            </Grid>
-
-            <Canvas x:Name="BubbleLayer">
-                <Border x:Name="BubbleTail" Width="14" Height="14"
-                        Background="{ThemeResource CardBgBrush}"
-                        BorderBrush="{ThemeResource AccentFillColorDefaultBrush}" BorderThickness="1"
-                        RenderTransformOrigin="0.5,0.5">
-                    <Border.RenderTransform>
-                        <RotateTransform Angle="45"/>
-                    </Border.RenderTransform>
-                </Border>
-                <Border x:Name="Bubble" MaxWidth="340" Padding="16,14" CornerRadius="12"
-                        Background="{ThemeResource CardBgBrush}"
-                        BorderBrush="{ThemeResource AccentFillColorDefaultBrush}" BorderThickness="1">
-                    <StackPanel Spacing="10">
-                        <TextBlock x:Name="BubbleTitle" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                        <TextBlock x:Name="BubbleBody" FontSize="13" TextWrapping="Wrap"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock x:Name="StepText" VerticalAlignment="Center" FontSize="12" Opacity="0.6"/>
-                            <Button x:Name="PrevButton" Grid.Column="1" Content="上一步" Click="OnPrev" Style="{StaticResource GlassButton}"/>
-                            <Button x:Name="NextButton" Grid.Column="2" Content="下一步" Click="OnNext" Style="{StaticResource GlassButton}"/>
-                            <Button x:Name="SkipButton" Grid.Column="3" Content="跳过" Click="OnSkip" Style="{StaticResource GlassButton}"/>
-                        </Grid>
-                    </StackPanel>
-                </Border>
-            </Canvas>
-        </Grid>
+        <controls:GuideOverlay x:Name="Guide" Grid.RowSpan="2"/>
     </Grid>
 </Page>

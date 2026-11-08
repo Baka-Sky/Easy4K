@@ -1,6 +1,8 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
+using System.Threading.Tasks;
 using Easy4K.Models;
 using Easy4K.LuminolEngine;
 using Easy4K.LuminolEngine.RemoteControl;
@@ -640,6 +642,104 @@ public sealed partial class MainWindow : Window
     /// <summary>主窗口内容根（供弹窗指定 XamlRoot，避免页面卸载后引用失效）。</summary>
     public Microsoft.UI.Xaml.XamlRoot WindowContentRoot => RootFrame.XamlRoot;
 
+    // ===================== 使用引导（介绍每个功能怎么用） =====================
+
+    private sealed record TourStep(Type? Page, string TargetName, string Title, string Body);
+
+    private readonly List<TourStep> _tour =
+    [
+        new(typeof(MainPage), "InputCard", "第一步：选要处理的视频",
+            "在「输入视频」这里点「浏览」挑文件（.mp4 / .mkv / .avi / .mov）。已经拆好帧的话，也可以导入 PNG 帧文件夹跳过拆帧。"),
+        new(typeof(MainPage), "OptionsCard", "第二步：勾选要做的处理",
+            "超分放大分辨率、补帧提升流畅度、SDR→HDR 提升观感；字幕 / 元数据 / 封面会在检测到后自动放开勾选。"),
+        new(typeof(MainPage), "StartButton", "第三步：开始处理",
+            "点「开始处理」后进度条和日志会实时刷新；跑完可以「下载成品到本机」，也可以在输出目录直接取成品。"),
+        new(typeof(AdvancedPage), "SrEngineCombo", "高级：超分引擎",
+            "这里选超分算法与模型。显卡够用就走 GPU；显存吃紧可以回高级页打开「降低部分画质以降低显存/内存占用」。"),
+        new(typeof(AdvancedPage), "IfEngineCombo", "高级：补帧模型",
+            "补帧用 RIFE 系模型，档位越高越流畅也越吃性能；和超分可以同时开，流水线会自动串联。"),
+        new(typeof(SettingsPage), "RemoteCard", "手机远程控制",
+            "在「设置 → 远程控制」点「启动远程控制」；手机端连同一台电脑就能选片、看进度、下载成品和报错报告。"),
+    ];
+
+    private int _tourIndex;
+    private bool _tourActive;
+
+    /// <summary>开始逐步引导：自动切到目标页面，框选控件并弹出说明。</summary>
+    private void StartTour()
+    {
+        if (_tourActive)
+        {
+            ShowTourStep(_tourIndex);
+            return;
+        }
+
+        _tourActive = true;
+        _tourIndex = 0;
+        TourOverlay.StepRequested += OnTourStepRequested;
+        ShowTourStep(0);
+    }
+
+    private void EndTour()
+    {
+        if (!_tourActive)
+        {
+            return;
+        }
+
+        _tourActive = false;
+        TourOverlay.StepRequested -= OnTourStepRequested;
+        TourOverlay.Close();
+    }
+
+    private void OnTourStepRequested(object? sender, int index)
+    {
+        if (index < 0 || index >= _tour.Count)
+        {
+            EndTour();
+            return;
+        }
+
+        ShowTourStep(index);
+    }
+
+    private async void ShowTourStep(int index)
+    {
+        if (!_tourActive || index < 0 || index >= _tour.Count)
+        {
+            return;
+        }
+
+        _tourIndex = index;
+        var step = _tour[index];
+
+        if (step.Page is Type pageType && RootFrame.CurrentSourcePageType != pageType)
+        {
+            NavigatePage(pageType);
+            await Task.Delay(420);
+        }
+
+        if (!_tourActive || _tourIndex != index)
+        {
+            return;
+        }
+
+        var page = RootFrame.Content as Page;
+        var target = page?.FindName(step.TargetName) as FrameworkElement;
+        if (target is not null)
+        {
+            // 目标可能在滚动区域外，先滚进来再量位置。
+            target.StartBringIntoView();
+            await Task.Delay(240);
+            if (!_tourActive || _tourIndex != index)
+            {
+                return;
+            }
+        }
+
+        TourOverlay.ShowStep(target, step.Title, step.Body, index, _tour.Count);
+    }
+
     // ===================== 自适应导航（主页 / 高级 / 进行中 / 齿轮设置） =====================
 
     /// <summary>程序设置导航选中项时抑制 SelectionChanged，避免与页面导航互相触发。</summary>
@@ -659,6 +759,14 @@ public sealed partial class MainWindow : Window
         if (args.SelectedItem is not NavigationViewItem item) return;
 
         var tag = item.Tag as string;
+        if (tag == "tour")
+        {
+            StartTour();
+            return;
+        }
+
+        if (_tourActive) EndTour();
+
         if (tag == "ez") NavigatePage(typeof(MainPage));
         else if (tag == "adv") NavigatePage(typeof(AdvancedPage));
         else if (tag == "progress") NavigatePage(typeof(ProgressPage));
