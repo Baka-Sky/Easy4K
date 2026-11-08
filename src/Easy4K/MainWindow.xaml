@@ -200,14 +200,16 @@
         </Viewbox>
 
         <!-- 首次启动的全屏欢迎动画：铺满整窗、盖住导航，动画结束后浮出标题和两个按钮 -->
-        <Grid x:Name="WelcomeOverlay" Grid.Row="0" Grid.RowSpan="2" Visibility="Collapsed"
-              Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+        <Grid x:Name="WelcomeOverlay" Grid.Row="0" Grid.RowSpan="2" Visibility="Collapsed">
+            <!-- 纯色背景层：切教程时只让这一层收缩到第一步卡片，图标和文字先淡出，不会被压扁 -->
+            <Border x:Name="WelcomeBackdrop" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"/>
+
             <hero:WelcomeHero x:Name="WelcomeHero"
                               HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
 
             <StackPanel x:Name="WelcomePanel"
                         HorizontalAlignment="Center" VerticalAlignment="Bottom"
-                        Margin="24,0,24,56" Spacing="10" MaxWidth="760">
+                        Margin="24,0,24,110" Spacing="10" MaxWidth="760">
                 <TextBlock Text="欢迎使用 Easy4K 2" FontSize="34" FontWeight="Bold"
                            HorizontalAlignment="Center" TextAlignment="Center"/>
                 <TextBlock Text="体验旗舰级的软件性能，体验旗舰级的超分补帧体验"

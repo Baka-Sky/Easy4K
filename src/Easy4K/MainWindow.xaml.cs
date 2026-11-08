@@ -669,6 +669,9 @@ public sealed partial class MainWindow : Window
         // 星座整体上移一点，给底部欢迎文案和按钮留出视觉空间。
         WelcomeHero.ContentOffsetY = -70;
 
+        // 背景层用与穹顶同色系的径向渐变，图标淡出后收缩时颜色不会跳。
+        WelcomeBackdrop.Background = CreateWelcomeBackdropBrush();
+
         // 文字和按钮跟着动画一起浮出（WelcomeHero 自带的分层揭示，和 PowerToys 一样在 Logo 落下后出现）。
         WelcomeHero.RevealTargets.Add(WelcomePanel);
         WelcomeOverlay.Visibility = Visibility.Visible;
@@ -686,8 +689,8 @@ public sealed partial class MainWindow : Window
     private void OnWelcomeTour(object sender, RoutedEventArgs e) => _ = DismissWelcomeAsync(startTour: true);
 
     /// <summary>
-    /// 结束欢迎层：走教程时先把整块欢迎层收缩到第一步的目标卡片大小（颜色保持），再淡出；
-    /// 直接跳过则只做淡出。
+    /// 结束欢迎层：文字和图标先淡出（避免被缩放压扁），只留背景色块收缩到第一步的目标卡片，
+    /// 然后整体淡出、教程淡入；直接跳过则只做淡出。
     /// </summary>
     private async Task DismissWelcomeAsync(bool startTour)
     {
@@ -699,21 +702,21 @@ public sealed partial class MainWindow : Window
         _welcomeActive = false;
         Vm.MarkWelcomeShown();          // 只出现一次
 
-        // 文案先收起，只留背景色块参与收缩。
-        WelcomePanel.Visibility = Visibility.Collapsed;
+        await FadeOutAsync(WelcomePanel, 160);
+        await FadeOutAsync(WelcomeHero, 240);
 
         if (startTour)
         {
             var target = ResolveTourTarget(0);
-            if (target is not null && WelcomeOverlay.ActualWidth > 0 && WelcomeOverlay.ActualHeight > 0)
+            if (target is not null && WelcomeBackdrop.ActualWidth > 0 && WelcomeBackdrop.ActualHeight > 0)
             {
                 var rect = target.TransformToVisual(ZoomHost).TransformBounds(
                     new Rect(0, 0, target.ActualWidth, target.ActualHeight));
 
-                var visual = ElementCompositionPreview.GetElementVisual(WelcomeOverlay);
+                var visual = ElementCompositionPreview.GetElementVisual(WelcomeBackdrop);
                 var compositor = visual.Compositor;
-                var sx = (float)(rect.Width / WelcomeOverlay.ActualWidth);
-                var sy = (float)(rect.Height / WelcomeOverlay.ActualHeight);
+                var sx = (float)(rect.Width / WelcomeBackdrop.ActualWidth);
+                var sy = (float)(rect.Height / WelcomeBackdrop.ActualHeight);
 
                 // 以目标卡片中心为缩放锚点，缩完正好铺在卡片上。
                 visual.CenterPoint = new Vector3(
@@ -725,43 +728,72 @@ public sealed partial class MainWindow : Window
                 var scale = compositor.CreateVector3KeyFrameAnimation();
                 scale.InsertKeyFrame(0f, Vector3.One, ease);
                 scale.InsertKeyFrame(1f, new Vector3(sx, sy, 1f));
-                scale.Duration = TimeSpan.FromMilliseconds(460);
+                scale.Duration = TimeSpan.FromMilliseconds(420);
                 visual.StartAnimation("Scale", scale);
 
-                await Task.Delay(470);
+                await Task.Delay(420);
             }
 
             StartTour();
         }
 
-        await FadeOutWelcomeAsync();
+        await FadeOutAsync(WelcomeOverlay, 300);
         FinishWelcome();
     }
 
-    private async Task FadeOutWelcomeAsync()
+    private static async Task FadeOutAsync(UIElement element, int milliseconds)
     {
-        var visual = ElementCompositionPreview.GetElementVisual(WelcomeOverlay);
+        var visual = ElementCompositionPreview.GetElementVisual(element);
         var fade = visual.Compositor.CreateScalarKeyFrameAnimation();
         fade.InsertKeyFrame(1f, 0f);
-        fade.Duration = TimeSpan.FromMilliseconds(300);
+        fade.Duration = TimeSpan.FromMilliseconds(milliseconds);
         visual.StartAnimation("Opacity", fade);
-        await Task.Delay(310);
+        await Task.Delay(milliseconds);
     }
 
     private void FinishWelcome()
     {
         WelcomeOverlay.Visibility = Visibility.Collapsed;
 
-        var visual = ElementCompositionPreview.GetElementVisual(WelcomeOverlay);
-        visual.StopAnimation("Opacity");
-        visual.StopAnimation("Scale");
-        visual.Opacity = 1f;
-        visual.Scale = Vector3.One;
+        foreach (var element in new UIElement[] { WelcomeOverlay, WelcomePanel })
+        {
+            var visual = ElementCompositionPreview.GetElementVisual(element);
+            visual.StopAnimation("Opacity");
+            visual.Opacity = 1f;
+        }
+
+        var heroVisual = ElementCompositionPreview.GetElementVisual(WelcomeHero);
+        heroVisual.StopAnimation("Opacity");
+        heroVisual.Opacity = 1f;
+
+        var backdrop = ElementCompositionPreview.GetElementVisual(WelcomeBackdrop);
+        backdrop.StopAnimation("Scale");
+        backdrop.Scale = Vector3.One;
 
         if (WelcomeHero.Parent is Panel host)
         {
             host.Children.Remove(WelcomeHero);   // 触发 Unloaded，释放合成场景
         }
+    }
+
+    /// <summary>与 WelcomeHero 穹顶同色系的径向渐变（深色深蓝 / 浅色淡蓝），用于收缩时的背景层。</summary>
+    private RadialGradientBrush CreateWelcomeBackdropBrush()
+    {
+        var light = RootLayout.ActualTheme == ElementTheme.Light;
+        var center = light ? Windows.UI.Color.FromArgb(255, 0xD8, 0xE4, 0xEE) : Windows.UI.Color.FromArgb(255, 0x0C, 0x22, 0x44);
+        var edge = light ? Windows.UI.Color.FromArgb(255, 0x9C, 0xBE, 0xD8) : Windows.UI.Color.FromArgb(255, 0x04, 0x0C, 0x1C);
+
+        var brush = new RadialGradientBrush
+        {
+            MappingMode = BrushMappingMode.RelativeToBoundingBox,
+            Center = new Point(0.5, 0.42),
+            GradientOrigin = new Point(0.5, 0.42),
+            RadiusX = 0.85,
+            RadiusY = 0.85,
+        };
+        brush.GradientStops.Add(new GradientStop { Color = center, Offset = 0 });
+        brush.GradientStops.Add(new GradientStop { Color = edge, Offset = 1 });
+        return brush;
     }
 
     private FrameworkElement? ResolveTourTarget(int index)
