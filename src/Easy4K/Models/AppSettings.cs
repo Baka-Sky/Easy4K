@@ -39,8 +39,8 @@ public sealed class AppSettings
     /// <summary>使用 CPU 处理所有模型（超分/补帧 NCNN -g -1），速度慢，仅在 GPU 不可用/不稳定时使用</summary>
     public bool UseCpuProcessing { get; set; }
 
-    /// <summary>崩溃时尝试使用老版本处理架构：拆帧/合并先用新版 FFmpeg，失败自动改用老版本 FFmpeg；
-    /// SDR→HDR 先用新版 NVEncC，失败自动改用老版本 NVEncC。老版本对旧驱动兼容性更好。</summary>
+    /// <summary>崩溃时尝试使用老版本处理架构：SDR→HDR 先用新版 NVEncC，失败自动改用老版本 NVEncC。
+    /// FFmpeg 只保留 8.x 一个版本，不再有老版本 FFmpeg 兜底。</summary>
     public bool TryOldFfmpegOnCrash { get; set; }
 
     /// <summary>HDR 转换饱和度（NVEncC --vpp-ngx-truehdr saturation，最高 200）</summary>
@@ -161,8 +161,6 @@ public sealed class ToolPathConfig
 {
     public string FFmpegDir { get; set; } = "FFmpeg-Lei";
     public string FFprobeDir { get; set; } = "FFmpeg-Lei";
-    /// <summary>老版本 FFmpeg 目录（崩溃兜底用，FFmpeg 8.x，兼容老显卡驱动）</summary>
-    public string FFmpegOldDir { get; set; } = "FFmpeg-Old";
     public string RealEsrganDir { get; set; } = "realesrgan-ncnn";
     public string RifeDir { get; set; } = "rife";
     public string NvEncDir { get; set; } = "NVEncC_9.32_x64";

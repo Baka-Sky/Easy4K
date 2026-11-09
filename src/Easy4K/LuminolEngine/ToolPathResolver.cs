@@ -23,7 +23,6 @@ public static class ToolPathResolver
         var toolsRoot = ResolveToolsRoot(settings.ToolsRoot);
 
         var ffmpegDir = Path.Combine(toolsRoot, pathConfig.FFmpegDir);
-        var ffmpegOldDir = Path.Combine(toolsRoot, pathConfig.FFmpegOldDir);
         var reDir = Path.Combine(toolsRoot, pathConfig.RealEsrganDir);
         var rifeDir = Path.Combine(toolsRoot, pathConfig.RifeDir);
         var nvDir = Path.Combine(toolsRoot, pathConfig.NvEncDir);
@@ -44,8 +43,6 @@ public static class ToolPathResolver
             ToolsRoot = toolsRoot,
             FFmpegExe = Path.Combine(ffmpegDir, "bin", "ffmpeg.exe"),
             FFprobeExe = Path.Combine(ffmpegDir, "bin", "ffprobe.exe"),
-            FFmpegOldExe = Path.Combine(ffmpegOldDir, "bin", "ffmpeg.exe"),
-            FFprobeOldExe = Path.Combine(ffmpegOldDir, "bin", "ffprobe.exe"),
             RealEsrganExe = Path.Combine(reDir, "realesrgan-ncnn-vulkan.exe"),
             RealEsrganModelsRoot = Path.Combine(reDir, "models"),
             RealCuganExe = Path.Combine(realCuganDir, "realcugan-ncnn-vulkan.exe"),

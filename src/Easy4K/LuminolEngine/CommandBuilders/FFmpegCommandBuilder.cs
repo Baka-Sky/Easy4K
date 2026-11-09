@@ -20,7 +20,8 @@ public static class FFmpegCommandBuilder
         var pattern = Path.Combine(framesDir, "%08d.png").Replace('\\', '/');
         var hw = useGpu ? (string.IsNullOrEmpty(hwAccel) ? " -hwaccel auto" : $" -hwaccel {hwAccel}") : "";
         // -q:v 2 高质量 PNG；-y 覆盖
-        // -fps_mode passthrough：FFmpeg 9 已移除 -vsync（旧值 0 = passthrough），等价替换，保持逐帧不丢不补
+        // -fps_mode passthrough：新版 FFmpeg 已弃用 -vsync（旧值 0 = passthrough），等价替换，保持逐帧不丢不补
+        // （FFmpeg 5.1+ 均支持 -fps_mode，当前随包的 8.x 可正常使用）
         var args = $"-y{hw} -i \"{videoPath}\" -q:v 2 -fps_mode passthrough \"{pattern}\"";
         return (args, pattern);
     }

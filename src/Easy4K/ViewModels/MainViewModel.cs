@@ -835,8 +835,8 @@ public partial class MainViewModel : ObservableObject
         _app.TryOldFfmpegOnCrash = value;
         _settings.Save(_app, _pathConfig);
         _logger.Info(value
-            ? "已勾选「崩溃时尝试使用老版本处理架构」：FFmpeg（拆帧/合并/HDR/音频嵌入）和 NVEncC（HDR）失败时自动改用老版本重试"
-            : "已取消：拆帧/合并/HDR/音频嵌入只使用当前版本工具（失败后拆帧/合并仍会回退 CPU）");
+            ? "已勾选「崩溃时尝试使用老版本处理架构」：NVEncC（HDR）失败时自动改用老版本重试"
+            : "已取消：HDR 只使用当前版本 NVEncC；FFmpeg 8 失败后仍会回退 CPU 处理");
     }
 
     partial void OnSceneGuardEnabledChanged(bool value)
@@ -2861,19 +2861,11 @@ public partial class MainViewModel : ObservableObject
 
         var exit = await RunCfrAsync(Tools.FFmpegExe);
 
-        // 与流水线内其它阶段同一套兜底：新版 FFmpeg 崩了用老版本再试一次（勾选「崩溃时尝试使用老版本处理架构」时）
-        if (exit != 0 && !ct.IsCancellationRequested && _app.TryOldFfmpegOnCrash && Tools.FFmpegOldExists)
-        {
-            _logger.Warn("新版 FFmpeg 转换动态帧率失败，改用老版本 FFmpeg 重试");
-            ProgressDetail = "正在转换为静态帧率（CFR，老版本 FFmpeg）...";
-            exit = await RunCfrAsync(Tools.FFmpegOldExe);
-        }
-
         if (ct.IsCancellationRequested) { CfrConverting = false; return null; }
 
         if (exit != 0 || !File.Exists(outPath) || new FileInfo(outPath).Length == 0)
         {
-            _logger.Error($"动态帧率转换失败（ffmpeg 退出码 {exit}，新版与老版本均未成功）");
+            _logger.Error($"动态帧率转换失败（ffmpeg 退出码 {exit}）");
             CfrConverting = false;
             return null;
         }

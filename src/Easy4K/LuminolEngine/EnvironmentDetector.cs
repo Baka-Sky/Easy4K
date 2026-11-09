@@ -22,8 +22,6 @@ public sealed class EnvironmentDetector
         {
             Check("FFmpeg", _tools.FFmpegExists, extra: _tools.FFmpegExists ? GetVersion(_tools.FFmpegExe, "-version") : ""),
             Check("FFprobe", _tools.FFprobeExists, extra: _tools.FFprobeExists ? GetVersion(_tools.FFprobeExe, "-version") : ""),
-            // 老版本兜底工具（勾选「崩溃时尝试使用老版本处理架构」时才用到，缺失不影响正常处理）
-            CheckOldFfmpegTools(),
             // ncnn 工具没有版本输出（-v 只是 verbose，会打印 usage 退出），只报是否部署
             Check("Real-ESRGAN", _tools.RealEsrganExists, extra: _tools.RealEsrganExists ? "已部署" : ""),
             Check("RIFE", _tools.RifeExists, extra: _tools.RifeExists ? "已部署" : "")
@@ -65,32 +63,6 @@ public sealed class EnvironmentDetector
                 hint: gpu.IsRtx ? "" : "SDR→HDR 需要 RTX 20/30/40/50 系列"));
         }
         return list;
-    }
-
-    /// <summary>老版本 FFmpeg / FFprobe（兜底用）：两个都标出实际版本，缺失也只提示、不算必装。</summary>
-    private CheckResult CheckOldFfmpegTools()
-    {
-        if (!_tools.FFmpegOldExists)
-            return Check("FFmpeg（老版本兜底）", false, extra: "未安装", required: false,
-                hint: "可不装；勾选「崩溃时尝试使用老版本处理架构」时才用到");
-
-        var ff = ShortVersion(GetVersion(_tools.FFmpegOldExe, "-version"));
-        var fp = File.Exists(_tools.FFprobeOldExe)
-            ? ShortVersion(GetVersion(_tools.FFprobeOldExe, "-version"))
-            : "缺失";
-        return Check("FFmpeg（老版本兜底）", true, extra: $"ffmpeg {ff} ｜ ffprobe {fp}", required: false);
-    }
-
-    /// <summary>从 "ffmpeg version n8.1.3-27-gxxxx Copyright ..." 里取出简短的 "8.1.3"。</summary>
-    private static string ShortVersion(string line)
-    {
-        var m = Regex.Match(line ?? "", @"version\s+(\S+)");
-        if (!m.Success) return "未知";
-        var v = m.Groups[1].Value;
-        if (v.StartsWith('n')) v = v[1..];
-        var dash = v.IndexOf('-');
-        if (dash > 0) v = v[..dash];
-        return v;
     }
 
     // ===================== 模型文件（真扫盘） =====================

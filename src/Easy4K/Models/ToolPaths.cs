@@ -6,11 +6,6 @@ public sealed class ToolPaths
     public string ToolsRoot { get; set; } = "";
     public string FFmpegExe { get; set; } = "";
     public string FFprobeExe { get; set; } = "";
-    /// <summary>老版本 FFmpeg（Tools\FFmpeg-Old\bin\ffmpeg.exe，FFmpeg 8.x）。
-    /// 新版在部分老显卡驱动上会崩溃，拆帧/合并失败时用它兜底重试。</summary>
-    public string FFmpegOldExe { get; set; } = "";
-    /// <summary>老版本 ffprobe（Tools\FFmpeg-Old\bin\ffprobe.exe）</summary>
-    public string FFprobeOldExe { get; set; } = "";
     public string RealEsrganExe { get; set; } = "";
     public string RealEsrganModelsRoot { get; set; } = "";
     /// <summary>Real-CUGAN 引擎（ Tools\realcugan-ncnn\realcugan-ncnn-vulkan.exe，动漫超分）</summary>
@@ -52,8 +47,6 @@ public sealed class ToolPaths
 
     public bool FFmpegExists => File.Exists(FFmpegExe);
     public bool FFprobeExists => File.Exists(FFprobeExe);
-    /// <summary>老版本 FFmpeg 是否已部署（兜底重试的前提）</summary>
-    public bool FFmpegOldExists => File.Exists(FFmpegOldExe);
     public bool RealEsrganExists => File.Exists(RealEsrganExe);
     public bool RifeExists => File.Exists(RifeExe);
     public bool NvEncExists => File.Exists(NvEncExe);

@@ -454,65 +454,35 @@ public sealed class ProcessingOrchestrator
         return true;
     }
 
-    /// <summary>FFmpeg 工具档位：新版 → 老版本 → CPU。每个阶段都从新版开始重试，崩了逐级降。</summary>
-    private enum FfmpegTier { New, Old, Cpu }
+    /// <summary>FFmpeg 工具档位：硬件加速档（失败后降 CPU 重试）。只保留 FFmpeg 8，不再有老版本档。</summary>
+    private enum FfmpegTier { New, Cpu }
 
-    /// <summary>档位对应的 ffmpeg.exe（老版本未部署时回落到新版）。</summary>
-    private static string TierExe(ProcessingContext ctx, FfmpegTier tier)
-        => tier == FfmpegTier.New || !ctx.Tools.FFmpegOldExists ? ctx.Tools.FFmpegExe : ctx.Tools.FFmpegOldExe;
+    /// <summary>档位对应的 ffmpeg.exe（只有一个版本，档位只影响是否允许硬件加速）。</summary>
+    private static string TierExe(ProcessingContext ctx, FfmpegTier tier) => ctx.Tools.FFmpegExe;
 
     /// <summary>该档位是否允许硬件加速（CPU 档位强制软件处理）。</summary>
     private static bool TierAllowsGpu(FfmpegTier tier) => tier != FfmpegTier.Cpu;
 
-    /// <summary>崩溃后降档：新版 →（开关允许时）老版本 → CPU。返回 false 表示已无档可降（本例失败）。</summary>
+    /// <summary>崩溃后降档：新版 → CPU。返回 false 表示已无档可降（本例失败）。</summary>
     private bool DowngradeTier(ProcessingContext ctx, ref FfmpegTier tier)
     {
-        switch (tier)
+        if (tier == FfmpegTier.New)
         {
-            case FfmpegTier.New:
-                if (ShouldTryOldFfmpeg(ctx))
-                {
-                    tier = FfmpegTier.Old;
-                    _logger.Warn("新版 FFmpeg 崩溃，本例改用老版本 FFmpeg 重试");
-                }
-                else
-                {
-                    tier = FfmpegTier.Cpu;
-                    _logger.Warn("新版 FFmpeg 崩溃，本例改用 CPU 处理");
-                }
-                return true;
-            case FfmpegTier.Old:
-                tier = FfmpegTier.Cpu;
-                _logger.Warn("老版本 FFmpeg 仍崩溃，本例改用 CPU 处理");
-                return true;
-            default:
-                return false;
+            tier = FfmpegTier.Cpu;
+            _logger.Warn("FFmpeg 处理失败，本例改用 CPU 处理");
+            return true;
         }
+
+        return false;
     }
 
     /// <summary>拆帧阶段文案：永远反映真实档位与后端。</summary>
     private static string SplitStageText(FfmpegTier tier, bool gpu)
-        => tier == FfmpegTier.Old ? "拆帧中(老版本)" : (gpu ? "拆帧中(GPU加速)" : "拆帧中(CPU处理)");
+        => gpu ? "拆帧中(GPU加速)" : "拆帧中(CPU处理)";
 
     /// <summary>合并阶段文案：永远反映真实档位与后端。</summary>
     private static string MergeStageText(FfmpegTier tier, bool hw)
-        => tier == FfmpegTier.Old ? "合并中(老版本)" : (hw ? "合并中(GPU加速)" : "合并中(CPU处理)");
-
-    /// <summary>是否应改用老版本 FFmpeg 重试（拆帧/合并/HDR/音频嵌入都走这里）：
-    /// 用户勾选了「崩溃时尝试使用老版本处理架构」且老版本已部署。</summary>
-    private bool ShouldTryOldFfmpeg(ProcessingContext ctx)
-    {
-        if (!ctx.Settings.TryOldFfmpegOnCrash) return false;
-        return CanFallbackToOldFfmpeg(ctx);
-    }
-
-    /// <summary>老版本 FFmpeg 是否已部署（未部署时告警一次，无法兜底）。</summary>
-    private bool CanFallbackToOldFfmpeg(ProcessingContext ctx)
-    {
-        if (ctx.Tools.FFmpegOldExists) return true;
-        _logger.Warn("未找到 Tools/FFmpeg-Old/bin/ffmpeg.exe，无法用老版本 FFmpeg 兜底重试");
-        return false;
-    }
+        => hw ? "合并中(GPU加速)" : "合并中(CPU处理)";
 
     /// <summary>是否应改用老版本 NVEncC 重试（同一开关，7.74 兜底）。</summary>
     private bool ShouldTryOldNvenc(ProcessingContext ctx)
@@ -1357,7 +1327,7 @@ public sealed class ProcessingOrchestrator
             _logger.Info("从输入视频提取音频...");
             var exExit = await RunFfmpegTieredAsync(ctx, ProcessStage.AddingAudio,
                 _ => FFmpegCommandBuilder.ExtractAudio(ctx.InputVideo, audioPath),
-                tier => "提取音频" + TierSuffix(tier), ct);
+                tier => "提取音频", ct);
             if (exExit != 0 || !File.Exists(audioPath))
             {
                 _audioSrSkipReason = "音轨提取失败";
@@ -1560,7 +1530,7 @@ public sealed class ProcessingOrchestrator
                 _logger.Info("从输入视频提取音频...");
                 var exExit = await RunFfmpegTieredAsync(ctx, ProcessStage.AddingAudio,
                     _ => FFmpegCommandBuilder.ExtractAudio(ctx.InputVideo, audioPath),
-                    tier => "提取音频" + TierSuffix(tier), ct);
+                    tier => "提取音频", ct);
                 if (exExit != 0 || !File.Exists(audioPath))
                 {
                     Fail(ctx.Options.MergeAudio
@@ -1622,7 +1592,7 @@ public sealed class ProcessingOrchestrator
                         var args = FFmpegCommandBuilder.EmbedAudio(currentVideo, audioToEmbed, audioEmbedded, useGpu, embedRate, audioMark);
                         _logger.Command($"ffmpeg {args}");
                         exit = await RunStageAsync(ProcessStage.AddingAudio,
-                            tier == FfmpegTier.Old ? "合并音频中(老版本)" : useGpu ? "合并音频中(GPU加速)" : "合并音频中(CPU处理)",
+                            useGpu ? "合并音频中(GPU加速)" : "合并音频中(CPU处理)",
                             TierExe(ctx, tier), args, ct);
                         if (exit == 0)
                         {
@@ -1719,10 +1689,10 @@ public sealed class ProcessingOrchestrator
             coverFile = Path.Combine(st.TempRoot, "cover.png").Replace('\\', '/');
             var coverExit = await RunFfmpegTieredAsync(ctx, ProcessStage.Merging,
                 _ => FFmpegCommandBuilder.ExtractCover(ctx.InputVideo, ctx.Video.CoverStreamIndex, coverFile),
-                tier => "提取原视频封面中" + TierSuffix(tier), ct);
+                tier => "提取原视频封面中", ct);
             if (coverExit != 0 || !File.Exists(coverFile))
             {
-                Fail("封面嵌入失败：无法从原视频提取封面图（新版、老版本、CPU 处理均无法完成）");
+                Fail("封面嵌入失败：无法从原视频提取封面图（GPU 与 CPU 处理均无法完成）");
                 return false;
             }
         }
@@ -1740,11 +1710,11 @@ public sealed class ProcessingOrchestrator
         var exit = await RunFfmpegTieredAsync(ctx, ProcessStage.Merging,
             _ => FFmpegCommandBuilder.EmbedMetadataAndCover(st.CurrentVideo, ctx.InputVideo, muxed,
                 copyMetadata, coverFile, comment),
-            tier => label + TierSuffix(tier), ct);
+            tier => label, ct);
 
         if (exit != 0 || !File.Exists(muxed))
         {
-            Fail("元数据/封面嵌入失败（新版、老版本、CPU 处理均无法完成）");
+            Fail("元数据/封面嵌入失败（GPU 与 CPU 处理均无法完成）");
             return false;
         }
 
@@ -2338,9 +2308,6 @@ public sealed class ProcessingOrchestrator
         }
     }
 
-    /// <summary>档位文案后缀：老版本加 (老版本)，其余（新版/CPU）不加。</summary>
-    private static string TierSuffix(FfmpegTier tier) => tier == FfmpegTier.Old ? "(老版本)" : "";
-
     // ===================== 音频超分（阶段5.5） =====================
 
     /// <summary>音频超分（AudioSR）：把已提取的音轨转成 48k WAV → 跑 audiosr_onnx.py → 返回升采样后的 48kHz WAV。
@@ -2391,11 +2358,11 @@ public sealed class ProcessingOrchestrator
             });
             var convExit = await RunFfmpegTieredAsync(ctx, ProcessStage.AudioSr,
                 _ => FFmpegCommandBuilder.ToWav48k(inputAudio, inWav),
-                tier => stageLabel + TierSuffix(tier), ct);
+                tier => stageLabel, ct);
             if (convExit != 0 || !File.Exists(inWav))
             {
                 _audioSrSkipReason = "音轨转 48k WAV 失败";
-                _logger.Warn("音频超分跳过：音轨转 48k WAV 失败（新版、老版本 FFmpeg 均未成功）");
+                _logger.Warn("音频超分跳过：音轨转 48k WAV 失败（FFmpeg 处理失败）");
                 return null;
             }
 
