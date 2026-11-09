@@ -2576,6 +2576,19 @@ public partial class MainViewModel : ObservableObject
         if (Video is null || !Video.IsValid) { _logger.Error("请先选择有效的输入视频（或导入帧文件夹并填写参数）"); return; }
         if (!HasExternalFrames && !File.Exists(InputVideo)) { _logger.Error("输入视频文件不存在"); return; }
 
+        // 帧去重 AI 模型缺失 → 直接拒绝启动，不允许静默回退到四阶判决器
+        if (DedupEnabled)
+        {
+            var dedupModel = DedupMode == "uhd" ? Tools.SfdpModelFp32 : Tools.SfdpModelFp16;
+            if (!File.Exists(dedupModel))
+            {
+                var msg = $"无法启动：帧去重 AI 模型缺失（{dedupModel}）。请补齐 Tools\\SFDP 下的模型文件，或在「高级」页关闭帧去重。";
+                _logger.Error(msg);
+                StartFailed?.Invoke(msg);
+                return;
+            }
+        }
+
         // 预检目录可写：目录"存在但当前用户无访问权限"时，Directory.Exists 返回 false（跳过清理），
         // 直到拆帧阶段 CreateDirectory 才抛 "Access to the path ... is denied"，用户只能看到一行模糊的"处理异常"。
         // 这里提前创建/校验临时与输出目录，失败则给出明确原因并阻止启动。

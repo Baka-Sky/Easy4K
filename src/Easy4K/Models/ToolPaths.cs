@@ -64,6 +64,13 @@ public sealed class ToolPaths
     public string HdrAiModel => Path.Combine(ToolsRoot, "HDRTVNet", "hdr_ensemble.onnx");
     public bool HdrAiExists => File.Exists(HdrAiModel);
 
+    /// <summary>帧去重 AI（SFDP 孪生网络）FP32 模型：完美模式使用。属必需项，缺失时不允许启动。</summary>
+    public string SfdpModelFp32 => Path.Combine(ToolsRoot, "SFDP", "model.onnx");
+    /// <summary>帧去重 AI（SFDP 孪生网络）FP16 模型：性能模式使用。属必需项，缺失时不允许启动。</summary>
+    public string SfdpModelFp16 => Path.Combine(ToolsRoot, "SFDP", "model_fp16.onnx");
+    /// <summary>两个去重模型都在才算就绪（完美 / 性能模式各用一个，不允许静默回退）</summary>
+    public bool SfdpModelsOk => File.Exists(SfdpModelFp32) && File.Exists(SfdpModelFp16);
+
     /// <summary>AudioSR 驱动脚本是否就绪</summary>
     public bool AudioSrScriptExists => File.Exists(AudioSrScript);
     /// <summary>AudioSR fp16 权重包是否就绪（只看 UNet 图与权重，两个都在才算）</summary>

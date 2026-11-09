@@ -302,10 +302,14 @@ public partial class App : Application
         if (!tools.RifeExists) missing.Add("RIFE 补帧引擎");
         if (!HasModelFiles(tools.RealEsrganModelsRoot)) missing.Add("超分模型文件（realesrgan models 目录为空）");
         if (!HasModelFiles(tools.RifeModelsRoot)) missing.Add("补帧模型文件（rife models 目录为空）");
+        // 帧去重 AI（SFDP）是必需能力：完美/性能模式各需一个 ONNX，缺任何一个都不允许进入，
+        // 不再静默回退到四阶判决器。
+        if (!File.Exists(tools.SfdpModelFp32)) missing.Add("帧去重 AI 模型（Tools\\SFDP\\model.onnx，完美模式）");
+        if (!File.Exists(tools.SfdpModelFp16)) missing.Add("帧去重 AI 模型（Tools\\SFDP\\model_fp16.onnx，性能模式）");
 
         if (missing.Count == 0) return null;
 
-        return "检测到以下必要文件/模型缺失，部分功能将无法使用：\n\n"
+        return "检测到以下必要文件/模型缺失，Easy4K 无法启动：\n\n"
              + string.Join("\n", missing.Select(m => "· " + m))
              + "\n\n请确认 Tools 目录完整后重新启动 Easy4K。";
     }

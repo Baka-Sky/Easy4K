@@ -172,17 +172,20 @@ public sealed class EnvironmentDetector
         });
 
         // ---------- 帧去重：SFDP 孪生网络 ----------
-        var sfdpFp32 = Path.Combine(_tools.ToolsRoot, "SFDP", "model.onnx");
-        var sfdpFp16 = Path.Combine(_tools.ToolsRoot, "SFDP", "model_fp16.onnx");
+        var sfdpFp32 = _tools.SfdpModelFp32;
+        var sfdpFp16 = _tools.SfdpModelFp16;
+        var sfdpMissing = new List<string>();
+        if (!File.Exists(sfdpFp32)) sfdpMissing.Add("model.onnx（完美模式）");
+        if (!File.Exists(sfdpFp16)) sfdpMissing.Add("model_fp16.onnx（性能模式）");
         list.Add(new CheckResult
         {
             Name = "去重模型 · SFDP 孪生网络",
-            Ok = File.Exists(sfdpFp32) || File.Exists(sfdpFp16),
-            Required = false,
+            Ok = sfdpMissing.Count == 0,
+            Required = true,
             Extra = $"FP32 {SizeText(sfdpFp32)} · FP16 {SizeText(sfdpFp16)}",
-            Hint = File.Exists(sfdpFp32) || File.Exists(sfdpFp16)
+            Hint = sfdpMissing.Count == 0
                 ? ""
-                : "Tools\\SFDP 下没有 model.onnx / model_fp16.onnx，帧去重会回退到四阶判决器",
+                : $"缺少 {string.Join(" / ", sfdpMissing)}；帧去重 AI 模型为必需项，缺失时启动自检会阻止进入，请补齐 Tools\\SFDP",
             Lines = new List<string> { $"完美模式 ← {sfdpFp32}", $"性能模式 ← {sfdpFp16}" }
         });
 
