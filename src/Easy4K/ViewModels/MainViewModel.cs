@@ -3831,9 +3831,25 @@ public partial class MainViewModel : ObservableObject
     public string CheckEnvironment()
     {
         var results = _env.CheckAll();
+        var required = results.Where(r => r.Required).ToList();
+        var optional = results.Where(r => !r.Required).ToList();
+        var missingRequired = required.Where(r => !r.Ok).ToList();
+
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("==== 环境检测结果 ====");
-        foreach (var r in results)
+        if (missingRequired.Count == 0)
+        {
+            sb.AppendLine($"必需项 {required.Count}/{required.Count} 就绪：可以正常启动。");
+        }
+        else
+        {
+            sb.AppendLine($"必需项 {required.Count - missingRequired.Count}/{required.Count} 就绪：缺少 {missingRequired.Count} 项，" +
+                          "启动自检会直接阻止进入 Easy4K。");
+            sb.AppendLine("缺失：" + string.Join("、", missingRequired.Select(r => r.Name)));
+        }
+        sb.AppendLine();
+
+        void Append(EnvironmentDetector.CheckResult r)
         {
             sb.Append($"[{r.Status}] {r.Name}");
             if (!string.IsNullOrEmpty(r.Extra)) sb.Append($"  ({r.Extra})");
@@ -3842,6 +3858,12 @@ public partial class MainViewModel : ObservableObject
                 sb.AppendLine($"        · {line}");
             if (!string.IsNullOrEmpty(r.Hint)) sb.AppendLine($"        → {r.Hint}");
         }
+
+        sb.AppendLine("-------- 必需（缺任一无法启动） --------");
+        foreach (var r in required) Append(r);
+        sb.AppendLine();
+        sb.AppendLine("-------- 可选（缺失只影响对应功能） --------");
+        foreach (var r in optional) Append(r);
         sb.AppendLine("====================");
         var text = sb.ToString();
         _logger.Info(text);
