@@ -43,6 +43,9 @@ namespace Easy4K.Controls.WelcomeHero
         private const float SettleRevealMs = 450f;
         private const float RevealDistance = 24f;
 
+        // 入场动画整段时长（飞入 + 砸落 + 穹顶/光环/待机动效启动）之后再放开指针互动。
+        private const float IntroInteractionDelayMs = 2200f;
+
         private static readonly TimeSpan AssetLoadTimeout = TimeSpan.FromMilliseconds(1500);
 
         private readonly List<LoadedImageSurface> _iconSurfaces = [];
@@ -52,10 +55,13 @@ namespace Easy4K.Controls.WelcomeHero
         private WelcomeHeroScene _scene;
         private LoadedImageSurface _logoSurface;
         private DispatcherQueueTimer _loadTimeout;
+        private DispatcherQueueTimer _introTimer;
         private InputCursor _handCursor;
         private WelcomeHeroPlayback _activePlayback;
         private int _pendingLoads;
         private bool _started;
+        /// <summary>入场动画是否已结束（结束前忽略鼠标悬停/点击，避免动画被指针特效打断）。</summary>
+        private bool _introDone;
         private int _hoveredTile = -1;
         private bool _hoveringLogo;
         private bool _pointerOver;
@@ -155,10 +161,10 @@ namespace Easy4K.Controls.WelcomeHero
             {
                 _scene.ShowFinalState();
                 _started = true;
+                _introDone = true;
                 return;
             }
 
-            _scene.EnablePointerEffects(ElementCompositionPreview.GetPointerPositionPropertySet(SceneHost));
             _scene.HideAll();
 
             // Start once every icon is decoded, so nothing pops in mid-flight; never wait forever though.
@@ -196,6 +202,8 @@ namespace Easy4K.Controls.WelcomeHero
         {
             _loadTimeout?.Stop();
             _loadTimeout = null;
+            _introTimer?.Stop();
+            _introTimer = null;
 
             ElementCompositionPreview.SetElementChildVisual(SceneHost, null);
             _scene?.Dispose();
@@ -217,6 +225,7 @@ namespace Easy4K.Controls.WelcomeHero
 
             _pendingLoads = 0;
             _started = false;
+            _introDone = false;
             _hoveredTile = -1;
             _hoveringLogo = false;
             _pointerOver = false;
@@ -262,7 +271,10 @@ namespace Easy4K.Controls.WelcomeHero
                 // Animations were turned off mid-session: drop all motion, including whatever is still in flight.
                 _activePlayback = WelcomeHeroPlayback.Static;
                 _loadTimeout?.Stop();
+                _introTimer?.Stop();
+                _introTimer = null;
                 _started = true;
+                _introDone = true;
                 _scene.DisablePointerEffects();
                 _scene.ShowFinalState();
                 ShowRevealTargets();
@@ -321,11 +333,47 @@ namespace Easy4K.Controls.WelcomeHero
                 _scene.PlayIntro();
                 RevealContent(IntroRevealStartMs, IntroRevealStaggerMs, IntroRevealMs);
                 IntroStarted?.Invoke(this, EventArgs.Empty);
+                BeginInteractionLock();
             }
             else
             {
                 _scene.PlaySettle();
                 RevealContent(SettleRevealStartMs, SettleRevealStaggerMs, SettleRevealMs);
+                AllowPointerEffects();
+            }
+        }
+
+        /// <summary>
+        /// 入场动画期间屏蔽指针互动（否则鼠标一动方块就会歪、会放大），
+        /// 等整段动画（飞入 + 砸落 + 冲击波）结束后再开启倾斜/放大。
+        /// </summary>
+        private void BeginInteractionLock()
+        {
+            _introDone = false;
+            _introTimer?.Stop();
+            _introTimer = DispatcherQueue.CreateTimer();
+            _introTimer.Interval = TimeSpan.FromMilliseconds(IntroInteractionDelayMs);
+            _introTimer.IsRepeating = false;
+            _introTimer.Tick += (_, _) => AllowPointerEffects();
+            _introTimer.Start();
+        }
+
+        /// <summary>动画结束后才把指针特效接上，并同步当前指针是否在画面上。</summary>
+        private void AllowPointerEffects()
+        {
+            _introTimer?.Stop();
+            _introTimer = null;
+
+            if (_scene is null || _activePlayback == WelcomeHeroPlayback.Static)
+            {
+                return;
+            }
+
+            _introDone = true;
+            _scene.EnablePointerEffects(ElementCompositionPreview.GetPointerPositionPropertySet(SceneHost));
+            if (_pointerOver)
+            {
+                _scene.SetPointerActive(true);
             }
         }
 
@@ -387,6 +435,11 @@ namespace Easy4K.Controls.WelcomeHero
         private void SceneHost_PointerEntered(object sender, PointerRoutedEventArgs e)
         {
             _pointerOver = true;
+            if (!_introDone)
+            {
+                return;
+            }
+
             if (_activePlayback != WelcomeHeroPlayback.Static)
             {
                 _scene?.SetPointerActive(true);
@@ -395,11 +448,24 @@ namespace Easy4K.Controls.WelcomeHero
             UpdateHover(e);
         }
 
-        private void SceneHost_PointerMoved(object sender, PointerRoutedEventArgs e) => UpdateHover(e);
+        private void SceneHost_PointerMoved(object sender, PointerRoutedEventArgs e)
+        {
+            if (!_introDone)
+            {
+                return;
+            }
+
+            UpdateHover(e);
+        }
 
         private void SceneHost_PointerExited(object sender, PointerRoutedEventArgs e)
         {
             _pointerOver = false;
+            if (!_introDone)
+            {
+                return;
+            }
+
             if (_activePlayback != WelcomeHeroPlayback.Static)
             {
                 _scene?.SetPointerActive(false);
@@ -410,7 +476,7 @@ namespace Easy4K.Controls.WelcomeHero
 
         private void SceneHost_Tapped(object sender, TappedRoutedEventArgs e)
         {
-            if (_scene is null)
+            if (_scene is null || !_introDone)
             {
                 return;
             }
@@ -423,8 +489,12 @@ namespace Easy4K.Controls.WelcomeHero
             else if (logo && _started && _activePlayback != WelcomeHeroPlayback.Static)
             {
                 // Easter egg: power it on again.
+                // 先把指针特效彻底摘掉（倾斜/放大是合成表达式，光屏蔽事件不够），再播入场，
+                // 否则鼠标一动手感还是会被打乱。
+                _scene.DisablePointerEffects();
                 _activePlayback = WelcomeHeroPlayback.Intro;
                 _scene.PlayIntro();
+                BeginInteractionLock();
             }
         }
 

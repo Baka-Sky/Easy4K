@@ -21,6 +21,12 @@ public sealed partial class SettingsPage : Page
         InitializeComponent();
         LanguageCombo.ItemsSource = Loc.Languages.Select(language => language.Name).ToArray();
         SyncCurrentValues();
+
+#if !DEBUG
+        // 发布版不暴露重播 OOBE，只保留「重新启动新手引导」
+        ReplayWelcomeButton.Visibility = Visibility.Collapsed;
+        WelcomeCardDesc.Text = "首次启动会播放一次欢迎动画，之后可以随时从这里重新走一遍新手引导，不会影响其他设置。";
+#endif
     }
 
     /// <summary>把主题与语言控件对齐当前配置。</summary>
@@ -140,6 +146,8 @@ public sealed partial class SettingsPage : Page
     private void OnAbout(object sender, RoutedEventArgs e) => App.MainWindow?.NavigateToAbout();
 
     private void OnReplayWelcome(object sender, RoutedEventArgs e) => App.MainWindow?.ReplayWelcome();
+
+    private void OnRestartTour(object sender, RoutedEventArgs e) => App.MainWindow?.ReplayTour();
 
     private void OnExit(object sender, RoutedEventArgs e) => Application.Current.Exit();
 }

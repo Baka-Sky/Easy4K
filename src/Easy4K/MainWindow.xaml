@@ -86,8 +86,8 @@
                 <NavigationViewItem x:Name="IntroNavItem" Content="开场" Tag="intro" Visibility="Collapsed"/>
                 <!-- 引导：仅开发版显示，复刻 ClassIsland 的新手引导 -->
                 <NavigationViewItem x:Name="GuideNavItem" Content="引导" Tag="guide" Visibility="Collapsed"/>
-                <!-- 使用引导：正式功能，点一下开始逐步介绍每个功能的用法 -->
-                <NavigationViewItem x:Name="TourNavItem" Content="使用引导" Tag="tour"/>
+                <!-- 使用引导：仅开发版显示（发布版隐藏） -->
+                <NavigationViewItem x:Name="TourNavItem" Content="使用引导" Tag="tour" Visibility="Collapsed"/>
             </NavigationView.MenuItems>
 
             <Grid>
