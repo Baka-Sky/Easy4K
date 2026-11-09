@@ -20,8 +20,8 @@ public sealed class EnvironmentDetector
     {
         var list = new List<CheckResult>
         {
-            Check("FFmpeg", _tools.FFmpegExists, extra: _tools.FFmpegExists ? "v" + ShortVersion(GetVersion(_tools.FFmpegExe, "-version")) : ""),
-            Check("FFprobe", _tools.FFprobeExists, extra: _tools.FFprobeExists ? "v" + ShortVersion(GetVersion(_tools.FFprobeExe, "-version")) : ""),
+            Check("FFmpeg", _tools.FFmpegExists, extra: _tools.FFmpegExists ? GetVersion(_tools.FFmpegExe, "-version") : ""),
+            Check("FFprobe", _tools.FFprobeExists, extra: _tools.FFprobeExists ? GetVersion(_tools.FFprobeExe, "-version") : ""),
             // ncnn 工具没有版本输出（-v 只是 verbose，会打印 usage 退出），只报是否部署
             Check("Real-ESRGAN", _tools.RealEsrganExists, extra: _tools.RealEsrganExists ? "已部署" : ""),
             Check("RIFE", _tools.RifeExists, extra: _tools.RifeExists ? "已部署" : "")
@@ -97,8 +97,7 @@ public sealed class EnvironmentDetector
             {
                 Name = $"超分模型 · {fam.Label}",
                 Ok = ok.Count > 0,
-                // Real-ESRGAN 是主超分引擎，模型目录为空时启动自检会阻止进入；其它算法族缺失只影响对应功能
-                Required = fam.ExeKey == "esrgan",
+                Required = false,
                 Extra = $"{ok.Count}/{total} 可用（目录 {dir}）",
                 Hint = miss.Count == 0 ? "" : $"缺 {miss.Count} 个：{string.Join("、", miss.Take(6))}{(miss.Count > 6 ? " …" : "")}",
                 Lines = Tail(ok, "可用模型")
@@ -266,18 +265,6 @@ public sealed class EnvironmentDetector
 
     private static string Yes(string path) =>
         !string.IsNullOrWhiteSpace(path) && File.Exists(path) ? "有" : "缺";
-
-    /// <summary>从 "ffmpeg version n8.1.3-27-gxxxx Copyright ..." 里取出简短的 "8.1.3"。</summary>
-    private static string ShortVersion(string line)
-    {
-        var m = Regex.Match(line ?? "", @"version\s+(\S+)");
-        if (!m.Success) return "未知";
-        var v = m.Groups[1].Value;
-        if (v.StartsWith('n')) v = v[1..];
-        var dash = v.IndexOf('-');
-        if (dash > 0) v = v[..dash];
-        return v;
-    }
 
     private static string SizeText(string path)
     {
