@@ -86,7 +86,7 @@ public sealed class EnvironmentDetector
             {
                 foreach (var s in v.Scales)
                 {
-                    var path = SrModelFile(fam.ExeKey, dir, v.Name, s);
+                    var path = SrModelFile(_tools, fam.ExeKey, dir, v.Name, s);
                     if (!string.IsNullOrEmpty(path) && File.Exists(path)) ok.Add($"{v.Name} ×{s}");
                     else miss.Add($"{v.Name} ×{s}");
                 }
@@ -192,13 +192,75 @@ public sealed class EnvironmentDetector
         return list;
     }
 
+    /// <summary>
+    /// 启动自检用的「缺一不可」清单：全部超分模型（每个模型 × 每个倍率）、全部补帧模型
+    /// （已部署的 rife-v* 目录必须完整，常用白名单必须存在）、SFDP 两个去重模型。
+    /// 返回逐项中文描述，空列表表示全部就绪。
+    /// </summary>
+    public static List<string> MissingRequiredModels(ToolPaths tools)
+    {
+        var missing = new List<string>();
+
+        foreach (var fam in SrCatalog.Families)
+        {
+            var exe = tools.SrExeFor(fam.ExeKey);
+            if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
+            {
+                missing.Add($"超分引擎 {fam.Label}");
+                continue;
+            }
+
+            var dir = Path.GetDirectoryName(exe) ?? "";
+            foreach (var v in fam.Variants)
+            {
+                foreach (var s in v.Scales)
+                {
+                    var path = SrModelFile(tools, fam.ExeKey, dir, v.Name, s);
+                    if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                        missing.Add($"超分模型 {v.Name} ×{s}");
+                }
+            }
+        }
+
+        var rifeRoot = tools.RifeModelsRoot;
+        if (string.IsNullOrWhiteSpace(rifeRoot) || !Directory.Exists(rifeRoot))
+        {
+            missing.Add("补帧模型目录（Tools\\rife）");
+        }
+        else
+        {
+            var dirs = Directory.EnumerateDirectories(rifeRoot)
+                .Where(d => Path.GetFileName(d).StartsWith("rife-v", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (dirs.Count == 0) missing.Add("补帧模型（Tools\\rife 下没有任何 rife-v* 模型）");
+
+            foreach (var d in dirs)
+            {
+                var name = Path.GetFileName(d);
+                if (!File.Exists(Path.Combine(d, "flownet.param"))) missing.Add($"补帧模型 {name}（缺 flownet.param）");
+                else if (!File.Exists(Path.Combine(d, "flownet.bin"))) missing.Add($"补帧模型 {name}（缺 flownet.bin）");
+            }
+
+            foreach (var name in RifeCommandBuilder.PreferredModels)
+            {
+                if (!Directory.Exists(Path.Combine(rifeRoot, name)))
+                    missing.Add($"补帧模型 {name}（常用模型缺失）");
+            }
+        }
+
+        if (!File.Exists(tools.SfdpModelFp32)) missing.Add("去重模型 SFDP model.onnx（完美模式）");
+        if (!File.Exists(tools.SfdpModelFp16)) missing.Add("去重模型 SFDP model_fp16.onnx（性能模式）");
+
+        return missing;
+    }
+
     /// <summary>某个「超分模型 × 倍率」实际需要的 .param 路径；未知返回空串。</summary>
-    private string SrModelFile(string exeKey, string engineDir, string modelName, int scale)
+    private static string SrModelFile(ToolPaths tools, string exeKey, string engineDir, string modelName, int scale)
     {
         switch (exeKey)
         {
             case "esrgan":
-                return Path.Combine(_tools.RealEsrganModelsRoot, modelName + ".param");
+                return Path.Combine(tools.RealEsrganModelsRoot, modelName + ".param");
 
             case "cugan":
                 {
