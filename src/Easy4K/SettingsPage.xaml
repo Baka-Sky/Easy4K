@@ -138,7 +138,7 @@
                 <!-- 欢迎动画（OOBE）+ 重走新手引导：发布版只保留「重新启动新手引导」 -->
                 <Border x:Name="WelcomeCard" Style="{StaticResource CardBorder}">
                     <StackPanel Spacing="6">
-                        <TextBlock Text="欢迎动画" Style="{StaticResource SectionTitle}"/>
+                        <TextBlock Text="OOBE" Style="{StaticResource SectionTitle}"/>
                         <TextBlock x:Name="WelcomeCardDesc" FontSize="13" Opacity="0.7" TextWrapping="Wrap"
                                    Text="首次启动时会铺满整窗播放一次欢迎动画，之后可以随时从这里重新播放或重新走一遍新手引导，不会影响其他设置。"/>
                         <StackPanel Orientation="Horizontal" Spacing="8">
