@@ -489,6 +489,9 @@ namespace Easy4K.Controls.WelcomeHero
             else if (logo && _started && _activePlayback != WelcomeHeroPlayback.Static)
             {
                 // Easter egg: power it on again.
+                // 先把指针特效彻底摘掉（倾斜/放大是合成表达式，光屏蔽事件不够），再播入场，
+                // 否则鼠标一动手感还是会被打乱。
+                _scene.DisablePointerEffects();
                 _activePlayback = WelcomeHeroPlayback.Intro;
                 _scene.PlayIntro();
                 BeginInteractionLock();
