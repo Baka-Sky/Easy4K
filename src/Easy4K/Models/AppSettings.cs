@@ -159,8 +159,9 @@ public sealed class AppSettings
 /// <summary>工具子目录相对 ToolsRoot 的路径</summary>
 public sealed class ToolPathConfig
 {
-    public string FFmpegDir { get; set; } = "FFmpeg-Lei";
-    public string FFprobeDir { get; set; } = "FFmpeg-Lei";
+    /// <summary>FFmpeg 8.x 目录（只保留 8 系列，目录名即版本号）</summary>
+    public string FFmpegDir { get; set; } = "FFmpeg-8";
+    public string FFprobeDir { get; set; } = "FFmpeg-8";
     public string RealEsrganDir { get; set; } = "realesrgan-ncnn";
     public string RifeDir { get; set; } = "rife";
     public string NvEncDir { get; set; } = "NVEncC_9.32_x64";

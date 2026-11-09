@@ -20,9 +20,9 @@ public static class FFmpegCommandBuilder
         var pattern = Path.Combine(framesDir, "%08d.png").Replace('\\', '/');
         var hw = useGpu ? (string.IsNullOrEmpty(hwAccel) ? " -hwaccel auto" : $" -hwaccel {hwAccel}") : "";
         // -q:v 2 高质量 PNG；-y 覆盖
-        // -fps_mode passthrough：新版 FFmpeg 已弃用 -vsync（旧值 0 = passthrough），等价替换，保持逐帧不丢不补
-        // （FFmpeg 5.1+ 均支持 -fps_mode，当前随包的 8.x 可正常使用）
-        var args = $"-y{hw} -i \"{videoPath}\" -q:v 2 -fps_mode passthrough \"{pattern}\"";
+        // -vsync 0（passthrough）：沿用升级 FFmpeg 9 之前（278fb94^）流水线的写法，8.1.3 实测可用，
+        // 逐帧不丢不补；-vsync 是 9.x 才移除的参数，随包现在只有 8.x。
+        var args = $"-y{hw} -i \"{videoPath}\" -q:v 2 -vsync 0 \"{pattern}\"";
         return (args, pattern);
     }
 
@@ -39,7 +39,7 @@ public static class FFmpegCommandBuilder
         var from = Math.Max(0, fromFrame);
         var to = Math.Max(from, toFrame);
         var select = $"select='between(n\\,{from}\\,{to})'";
-        var args = $"-y{hw} -i \"{videoPath}\" -vf \"{select}\" -q:v 2 -fps_mode passthrough \"{pattern}\"";
+        var args = $"-y{hw} -i \"{videoPath}\" -vf \"{select}\" -q:v 2 -vsync 0 \"{pattern}\"";
         return (args, pattern);
     }
 
