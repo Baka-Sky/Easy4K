@@ -23,7 +23,9 @@ public sealed partial class SettingsPage : Page
         SyncCurrentValues();
 
 #if !DEBUG
-        WelcomeCard.Visibility = Visibility.Collapsed;   // 重播 OOBE 只给开发版用
+        // 发布版不暴露重播 OOBE，只保留「重新启动新手引导」
+        ReplayWelcomeButton.Visibility = Visibility.Collapsed;
+        WelcomeCardDesc.Text = "首次启动会播放一次欢迎动画，之后可以随时从这里重新走一遍新手引导，不会影响其他设置。";
 #endif
     }
 
