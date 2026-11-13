@@ -100,6 +100,7 @@ public partial class MainViewModel : ObservableObject
         _srModel = app.DefaultSrModel;
         _ifModel = app.DefaultIfModel;
         _useSafeFrameRate = app.UseSafeFrameRate;
+        _retryUhdOnCrash = app.RetryUhdOnCrash;
         _lowerQualityForVram = app.LowerQualityForVram;
         _useGpuAcceleration = app.UseGpuAcceleration;
         _useCpuProcessing = app.UseCpuProcessing;
@@ -723,7 +724,19 @@ public partial class MainViewModel : ObservableObject
     private bool _isPaused;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CrashUhdOptionVis))]
     private bool _useSafeFrameRate;
+
+    /// <summary>崩溃降级时尝试启用 UHD 模式：关闭安全帧率后补帧崩溃，重试时加 -u 省显存。
+    /// 不勾选则只把线程降为 1:1:1（保持原画质）。</summary>
+    [ObservableProperty]
+    private bool _retryUhdOnCrash;
+
+    /// <summary>「崩溃降级时尝试启用 UHD 模式」选项是否显示：只在「未开安全帧率且不是 CPU 模式」时才有意义</summary>
+    public Microsoft.UI.Xaml.Visibility CrashUhdOptionVis
+        => !UseSafeFrameRate && !UseCpuProcessing
+            ? Microsoft.UI.Xaml.Visibility.Visible
+            : Microsoft.UI.Xaml.Visibility.Collapsed;
 
     /// <summary>降低部分画质以降低显存占用（-u UHD 模式，realesrgan/rife 均生效，可与安全帧率共存）</summary>
     [ObservableProperty]
@@ -735,6 +748,7 @@ public partial class MainViewModel : ObservableObject
 
     /// <summary>使用 CPU 处理所有模型（超分/补帧 NCNN -g -1），速度慢</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CrashUhdOptionVis))]
     private bool _useCpuProcessing;
 
     /// <summary>转场保护：PySceneDetect 检测剪切点，转场处不插值（消除补帧鬼影）</summary>
@@ -799,6 +813,15 @@ public partial class MainViewModel : ObservableObject
     {
         _app.UseSafeFrameRate = value;
         _settings.Save(_app, _pathConfig);
+    }
+
+    partial void OnRetryUhdOnCrashChanged(bool value)
+    {
+        _app.RetryUhdOnCrash = value;
+        _settings.Save(_app, _pathConfig);
+        _logger.Info(value
+            ? "已勾选崩溃降级时尝试启用 UHD 模式：补帧崩溃后的 1:1:1 重试会加 -u 省显存"
+            : "已取消崩溃降级时启用 UHD 模式：补帧崩溃后只把线程降为 1:1:1 重试");
     }
 
     partial void OnLowerQualityForVramChanged(bool value)
@@ -2725,13 +2748,7 @@ public partial class MainViewModel : ObservableObject
             Tools = Tools,
             // CPU 模式遇到不支持 CPU 的超分模型时，弹窗让用户选「改用 GPU」或「更换模型」；
             // 无人值守（API 自动测试）下不弹窗，传 null 让它按历史行为自动升级 GPU
-            OnSrCpuIncompatibleAsync = HeadlessAutoTest ? null : AskSrCpuIncompatibleAsync,
-            // 补帧崩溃降级时询问是否启用 UHD 省显存模式；无人值守（自动测试/远程控制）不弹窗，按不启用处理
-            AskEnableUhdOnRetryAsync = HeadlessAutoTest
-                || LuminolEngine.RemoteControl.RemoteControlServer.IsActive
-                || LuminolEngine.RemoteControl.RemoteSession.IsActive
-                ? null
-                : AskEnableUhdOnRetryAsync
+            OnSrCpuIncompatibleAsync = HeadlessAutoTest ? null : AskSrCpuIncompatibleAsync
         };
 
         _orchestratorAssigned.ProgressChanged += OnProgressChanged;
@@ -2986,28 +3003,6 @@ public partial class MainViewModel : ObservableObject
             {
                 _logger.Warn($"询问超分模型 CPU 兼容性失败，自动改用 GPU：{ex.Message}");
                 tcs.TrySetResult(true);
-            }
-        });
-        return tcs.Task;
-    }
-
-    /// <summary>补帧崩溃降级时询问用户：重试是否同时启用 UHD 省显存模式。
-    /// true = 启用 UHD 重试；false = 保持原画质只把线程降为 1:1:1。</summary>
-    private Task<bool> AskEnableUhdOnRetryAsync()
-    {
-        var window = App.MainWindow;
-        if (window is null) return Task.FromResult(false);
-        var tcs = new TaskCompletionSource<bool>();
-        _dispatcherQueue.TryEnqueue(async () =>
-        {
-            try
-            {
-                tcs.TrySetResult(await window.ConfirmUhdRetryAsync());
-            }
-            catch (Exception ex)
-            {
-                _logger.Warn($"询问是否启用 UHD 重试失败，按不启用处理：{ex.Message}");
-                tcs.TrySetResult(false);
             }
         });
         return tcs.Task;

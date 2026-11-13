@@ -331,6 +331,9 @@
                         <CheckBox x:Name="SkipVideoReviewCb" Content="跳过视频审查（合并完成后不再用 ffprobe 比对成品帧数与帧目录帧数）"
                                   IsChecked="{x:Bind Vm.SkipVideoReview, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="SafeFrameRateCb" Content="开启安全帧率 (NCNN 遇到设备丢失/显存/内存溢出时强制停止)" IsChecked="{x:Bind Vm.UseSafeFrameRate, Mode=TwoWay}" FontSize="12"/>
+                        <CheckBox x:Name="CrashUhdCb" Content="崩溃降级时尝试启用 UHD 模式（仅在未开安全帧率时显示：补帧崩溃后线程降为 1:1:1 重试，并加 -u 省显存）"
+                                  IsChecked="{x:Bind Vm.RetryUhdOnCrash, Mode=TwoWay}" FontSize="12"
+                                  Visibility="{x:Bind Vm.CrashUhdOptionVis, Mode=OneWay}"/>
                         <CheckBox x:Name="LowerQualityCb" Content="降低部分画质以降低显存/内存占用 (NCNN: -u UHD 模式；PyTorch 轨补帧: FP16 半精度，不支持时自动回退；可与安全帧率共存)" IsChecked="{x:Bind Vm.LowerQualityForVram, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="GpuAccelerationCb" Content="{x:Bind Vm.GpuAccelerationLabel, Mode=OneWay}" IsChecked="{x:Bind Vm.UseGpuAcceleration, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="CpuProcessingCb" Content="使用CPU处理所有模型 (超分/补帧 NCNN -g -1；注意：超分无 CPU 后端会自动升级为 GPU、SDR→HDR 固定用 NVIDIA GPU；速度很慢，仅在 GPU 不可用/不稳定时建议开启)"

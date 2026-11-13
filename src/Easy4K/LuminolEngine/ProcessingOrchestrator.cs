@@ -39,10 +39,6 @@ public sealed class ProcessingContext
     /// 返回 true = 改用 GPU 继续；false = 结束任务让用户更换模型。
     /// null = 无人值守（处理前测试/自动测试），按历史行为自动升级 GPU。</summary>
     public Func<string, Task<bool>>? OnSrCpuIncompatibleAsync { get; set; }
-
-    /// <summary>补帧崩溃降级时的询问回调：返回 true = 重试时启用 UHD 省显存模式；false = 保持原画质只降线程。
-    /// 仅在未勾选「降低部分画质」时才询问；null = 无人值守（处理前测试/自动测试/远程控制），按不启用处理。</summary>
-    public Func<Task<bool>>? AskEnableUhdOnRetryAsync { get; set; }
 }
 
 /// <summary>处理流水线编排（与《Easy4K流水线逻辑》一致）：
@@ -1138,7 +1134,7 @@ public sealed class ProcessingOrchestrator
     }
 
     /// <summary>阶段4 补帧：读取超分帧 → NCNN 线程 → UHD 降级模式 → CPU 检测 → 补帧中。
-    /// 失败时：开启安全帧率 → 自动停止并提示；未开启 → 线程改为 1:1:1，并询问是否同时启用 UHD 省显存重试。</summary>
+    /// 失败时：开启安全帧率 → 自动停止并提示；未开启 → 线程改为 1:1:1，并按「崩溃降级时尝试启用 UHD 模式」决定是否加 -u。</summary>
     private async Task<bool> InterpolationStageAsync(PipelineState st, CancellationToken ct)
     {
         var ctx = st.Ctx;
@@ -1265,12 +1261,10 @@ public sealed class ProcessingOrchestrator
             }
 
             // 未开启安全帧率：NCNN 轨自动把处理线程改为 1:1:1 重试；
-            // 是否同时启用 UHD 省显存模式交给用户选（已勾选「降低部分画质」则直接沿用，不重复问）
+            // 是否额外启用 UHD 省显存由高级页「崩溃降级时尝试启用 UHD 模式」决定（不弹窗打断处理）
             if (!useTorch)
             {
-                var retryUhd = ctx.Settings.LowerQualityForVram;
-                if (!retryUhd && ctx.AskEnableUhdOnRetryAsync is not null)
-                    retryUhd = await ctx.AskEnableUhdOnRetryAsync();
+                var retryUhd = ctx.Settings.LowerQualityForVram || ctx.Settings.RetryUhdOnCrash;
 
                 _logger.Warn(retryUhd
                     ? "检测到补帧报错，自动将处理线程改为 1:1:1 并启用 UHD 省显存模式重试"
