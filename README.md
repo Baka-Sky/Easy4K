@@ -156,7 +156,7 @@ Easy4K/
 ├── FFmpeg-8/                   # FFmpeg 8.1.3 工具（ffmpeg.exe / ffprobe.exe）
 ├── realesrgan-ncnn/            # Real-ESRGAN 工具 + models/
 ├── rife/                       # RIFE 工具 + 全部模型子目录
-├── NVEncC_9.32_x64/            # NVEncC (HDR 编码)
+├── NVEncC-7/                   # NVEncC 7.74 (HDR 编码，唯一版本)
 ├── Temp/                       # 处理中间产物（帧序列）
 └── Output/                     # 最终输出视频
 ```

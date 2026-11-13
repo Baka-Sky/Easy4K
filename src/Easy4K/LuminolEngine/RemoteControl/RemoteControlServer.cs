@@ -689,7 +689,6 @@ public sealed class RemoteControlServer
                 lowerQualityForVram = _vm.LowerQualityForVram,
                 useGpuAcceleration = _vm.UseGpuAcceleration,
                 useCpuProcessing = _vm.UseCpuProcessing,
-                tryOldFfmpegOnCrash = _vm.TryOldFfmpegOnCrash,
                 noReport = _vm.NoReport,
                 reportAutoOpen = _vm.ReportAutoOpen,
                 reportDir = _vm.ReportDir,
@@ -1211,7 +1210,6 @@ public sealed class RemoteControlServer
         _vm.LowerQualityForVram = Bool("lowerQualityForVram", _vm.LowerQualityForVram);
         _vm.UseGpuAcceleration = Bool("useGpuAcceleration", _vm.UseGpuAcceleration);
         _vm.UseCpuProcessing = Bool("useCpuProcessing", _vm.UseCpuProcessing);
-        _vm.TryOldFfmpegOnCrash = Bool("tryOldFfmpegOnCrash", _vm.TryOldFfmpegOnCrash);
         _vm.NoReport = Bool("noReport", _vm.NoReport);
         _vm.ReportAutoOpen = Bool("reportAutoOpen", _vm.ReportAutoOpen);
         var reportDir = Str("reportDir", "");
@@ -1309,7 +1307,6 @@ public sealed class RemoteControlServer
                 lowerQualityForVram = _vm.LowerQualityForVram,
                 useGpuAcceleration = _vm.UseGpuAcceleration,
                 useCpuProcessing = _vm.UseCpuProcessing,
-                tryOldFfmpegOnCrash = _vm.TryOldFfmpegOnCrash,
                 noReport = _vm.NoReport,
                 reportAutoOpen = _vm.ReportAutoOpen,
                 reportDir = _vm.ReportDir,

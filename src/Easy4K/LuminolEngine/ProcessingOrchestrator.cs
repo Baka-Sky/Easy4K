@@ -484,15 +484,6 @@ public sealed class ProcessingOrchestrator
     private static string MergeStageText(FfmpegTier tier, bool hw)
         => hw ? "合并中(GPU加速)" : "合并中(CPU处理)";
 
-    /// <summary>是否应改用老版本 NVEncC 重试（同一开关，7.74 兜底）。</summary>
-    private bool ShouldTryOldNvenc(ProcessingContext ctx)
-    {
-        if (!ctx.Settings.TryOldFfmpegOnCrash) return false;
-        if (ctx.Tools.NvEncOldExists) return true;
-        _logger.Warn("已勾选「崩溃时尝试使用老版本处理架构」，但未找到 Tools/NVEncC-Old/NVEncC64.exe，无法重试");
-        return false;
-    }
-
     // ===================== 转场保护（PySceneDetect） =====================
 
     /// <summary>用 PySceneDetect 扫一遍源视频的剪切点，结果缓存到临时目录（续跑直接复用）。
@@ -1470,13 +1461,6 @@ public sealed class ProcessingOrchestrator
                 _logger.Command($"NVEncC64 {args}");
                 var exit = await RunStageWithProgress(ProcessStage.HdrConverting, "HDR转换中", 100,
                     ctx.Tools.NvEncExe, args, ParseNvencProgress, null, ct, percentDisplay: true);
-                if (exit != 0 && ShouldTryOldNvenc(ctx))
-                {
-                    // 新版 NVEncC 在这台机器上崩溃 → 用老版本（7.74）重试一次
-                    _logger.Warn("新版 NVEncC 转换失败，改用老版本 NVEncC 重试");
-                    exit = await RunStageWithProgress(ProcessStage.HdrConverting, "HDR转换中(老版本)", 100,
-                        ctx.Tools.NvEncOldExe, args, ParseNvencProgress, null, ct, percentDisplay: true);
-                }
                 if (exit != 0)
                 {
                     Fail("HDR 转换失败");

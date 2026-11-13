@@ -335,8 +335,6 @@
                                   Checked="OnUseCpuProcessingChecked"
                                   Unchecked="OnUseCpuProcessingUnchecked"
                                   FontSize="12"/>
-                        <CheckBox x:Name="OldFfmpegCb" Content="崩溃时尝试使用老版本处理架构（SDR→HDR 的 NVEncC 失败时自动切老版本重试，进度标注「(老版本)」；FFmpeg 只有 8.x 一个版本，失败后直接回退 CPU 标注「(CPU处理)」）"
-                                  IsChecked="{x:Bind Vm.TryOldFfmpegOnCrash, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="NoReportCb" Content="不生成配置文件（处理完成后不再生成 HTML 报告文件）"
                                   IsChecked="{x:Bind Vm.NoReport, Mode=TwoWay}" FontSize="12"/>
                         <CheckBox x:Name="ReportAutoOpenCb" Content="报告生成后自动用浏览器打开（关掉后报告照常生成，但不再弹浏览器）"

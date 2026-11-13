@@ -5,7 +5,7 @@ using Easy4K.LuminolEngine.CommandBuilders;
 
 namespace Easy4K.LuminolEngine;
 
-/// <summary>环境检测：工具是否齐全 + 版本（特别是 NVEncC ≥ 9.32 才支持 --vpp-ngx-truehdr），
+/// <summary>环境检测：工具是否齐全 + 版本（特别是 NVEncC ≥ 7.30 才支持 --vpp-ngx-truehdr），
 /// 并且逐个数模型文件（超分各引擎按「模型 × 倍率」核对 .param，补帧扫 rife 模型目录，
 /// SFDP / HDR / AudioSR 核对 .onnx）。输出一个检测结果列表，UI 直接展示。</summary>
 public sealed class EnvironmentDetector
@@ -30,23 +30,18 @@ public sealed class EnvironmentDetector
         // 模型文件：逐个真扫盘核对，缺哪个模型明确列出来
         list.AddRange(CheckModelFiles());
 
-        // NVEncC：需要版本 ≥ 9.32 才支持 --vpp-ngx-truehdr (BUG-05)
+        // NVEncC：需要版本 ≥ 7.30 才支持 --vpp-ngx-truehdr (BUG-05)；随包只有 7.74 一个版本
         if (_tools.NvEncExists)
         {
             var ver = GetNvEncVersion(_tools.NvEncExe);
-            var ok = ParseNvEncVersion(ver) >= new Version(9, 32);
+            var ok = ParseNvEncVersion(ver) >= new Version(7, 30);
             list.Add(Check("NVEncC64", ok, extra: $"v{ver}", required: false,
-                hint: ok ? "" : "版本需 ≥ 9.32 才支持 --vpp-ngx-truehdr，请升级"));
+                hint: ok ? "" : "版本需 ≥ 7.30 才支持 --vpp-ngx-truehdr，请升级"));
         }
         else
         {
             list.Add(Check("NVEncC64", false, extra: "未安装", required: false, hint: "仅 SDR→HDR 功能需要"));
         }
-
-        list.Add(_tools.NvEncOldExists
-            ? Check("NVEncC64（老版本兜底）", true, extra: $"v{GetNvEncVersion(_tools.NvEncOldExe)}", required: false)
-            : Check("NVEncC64（老版本兜底）", false, extra: "未安装", required: false,
-                    hint: "可不装；HDR 转换崩溃且勾选「崩溃时尝试使用老版本处理架构」时才用到"));
 
         list.Add(_tools.SceneDetectReady
             ? Check("转场检测 · PySceneDetect", true, extra: "已部署", required: false)

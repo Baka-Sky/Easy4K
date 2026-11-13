@@ -108,7 +108,6 @@ public static class CrashReportService
             Tool("FFmpeg", t.FFmpegExe, t.FFmpegExists);
             Tool("FFprobe", t.FFprobeExe, t.FFprobeExists);
             Tool("NVEncC", t.NvEncExe, t.NvEncExists);
-            Tool("NVEncC-Old", t.NvEncOldExe, t.NvEncOldExists);
             Tool("RealESRGAN", t.RealEsrganExe, t.RealEsrganExists);
             Tool("RIFE", t.RifeExe, t.RifeExists);
             Tool("HDRTVNet 模型", t.HdrAiModel, t.HdrAiExists);

@@ -1838,7 +1838,7 @@ public sealed partial class MainWindow : Window
         "附加能力（「高级」页）：帧去重（自研 SFDP 孪生网络 ONNX，DirectML / CPU 自动降级）、\n" +
         "  转场优化（PySceneDetect 检测镜头切换，转场处不插值）、音频超分（AudioSR，48kHz 高带宽重建）。\n" +
         "性能选项：四段解析线程（解码 / 编码分开）、流水线 GPU 指定（核显机器可强制独显）、\n" +
-        "  涡轮多段并行、HDR 崩溃时自动回退老版本 NVEncC、FFmpeg 失败自动回退 CPU。\n\n" +
+        "  涡轮多段并行、HDR 由 NVEncC 7.74 完成、FFmpeg 处理失败自动回退 CPU。\n\n" +
         "========== 免责声明 ==========\n\n" +
         "1. 本软件以\"现状\"（AS-IS）提供，开发者不对其正确性、可靠性、完整性及适用性作任何明示或暗示保证。\n\n" +
         "2. 使用本软件及所调用第三方组件（FFmpeg / ncnn / PyTorch / AudioSR / NVEncC 等）产生的一切后果，包括但不限于：\n" +

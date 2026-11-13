@@ -19,8 +19,6 @@ public sealed class ToolPaths
     public string RifeExe { get; set; } = "";
     public string RifeModelsRoot { get; set; } = "";
     public string NvEncExe { get; set; } = "";
-    /// <summary>老版本 NVEncC（Tools\NVEncC-Old\NVEncC64.exe，7.74）。新版在部分老驱动上跑不起来时兜底。</summary>
-    public string NvEncOldExe { get; set; } = "";
     /// <summary>便携 Python（Tools\python\python.exe）：音频超分（AudioSR）驱动脚本用它运行，
     /// 不存在时回退系统 python。补帧已统一走 NCNN（Vulkan），不再需要 PyTorch。</summary>
     public string PortablePythonExe { get; set; } = "";
@@ -50,8 +48,6 @@ public sealed class ToolPaths
     public bool RealEsrganExists => File.Exists(RealEsrganExe);
     public bool RifeExists => File.Exists(RifeExe);
     public bool NvEncExists => File.Exists(NvEncExe);
-    /// <summary>老版本 NVEncC 是否已部署（HDR 兜底重试的前提）</summary>
-    public bool NvEncOldExists => File.Exists(NvEncOldExe);
 
     /// <summary>AI SDR→HDR 模型（HDRTVNet++ AGCM+LE，ONNX）。存在即表示可用 DirectML 做 HDR 重建。</summary>
     public string HdrAiModel => Path.Combine(ToolsRoot, "HDRTVNet", "hdr_ensemble.onnx");

@@ -26,7 +26,6 @@ public static class ToolPathResolver
         var reDir = Path.Combine(toolsRoot, pathConfig.RealEsrganDir);
         var rifeDir = Path.Combine(toolsRoot, pathConfig.RifeDir);
         var nvDir = Path.Combine(toolsRoot, pathConfig.NvEncDir);
-        var nvOldDir = Path.Combine(toolsRoot, pathConfig.NvEncOldDir);
         var portablePythonDir = Path.Combine(toolsRoot, "python");
         var audioSrDir = Path.Combine(toolsRoot, "AudioSR");
         // PyTorch 轨（DRBA/GMFSS/UMSS/GIMM-VFI）：独立 Python 3.12 环境 + 统一驱动脚本
@@ -53,7 +52,6 @@ public static class ToolPathResolver
             // RIFE 模型在 I:\NEWSVFI\rife\rife-v4.6\ 等子目录下，工具 exe 在 rife\ 根下
             RifeModelsRoot = rifeDir,
             NvEncExe = Path.Combine(nvDir, "NVEncC64.exe"),
-            NvEncOldExe = Path.Combine(nvOldDir, "NVEncC64.exe"),
             // 便携 Python 解释器（现供 AudioSR 音频超分使用；补帧已统一走 NCNN，不再有 PyTorch 依赖）
             PortablePythonExe = Path.Combine(portablePythonDir, "python.exe"),
             AudioSrDir = audioSrDir,

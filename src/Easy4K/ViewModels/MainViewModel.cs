@@ -103,7 +103,6 @@ public partial class MainViewModel : ObservableObject
         _lowerQualityForVram = app.LowerQualityForVram;
         _useGpuAcceleration = app.UseGpuAcceleration;
         _useCpuProcessing = app.UseCpuProcessing;
-        _tryOldFfmpegOnCrash = app.TryOldFfmpegOnCrash;
         _sceneGuardEnabled = app.SceneGuardEnabled;
         _noReport = !app.ReportEnabled;
         _reportAutoOpen = app.ReportAutoOpen;
@@ -737,10 +736,6 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _useCpuProcessing;
 
-    /// <summary>崩溃时尝试使用老版本处理架构（拆帧/合并用老版 FFmpeg，HDR 用老版 NVEncC）</summary>
-    [ObservableProperty]
-    private bool _tryOldFfmpegOnCrash;
-
     /// <summary>转场保护：PySceneDetect 检测剪切点，转场处不插值（消除补帧鬼影）</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStart))]
@@ -828,15 +823,6 @@ public partial class MainViewModel : ObservableObject
             if (string.Equals(AudioSrPrecision, "fp16", StringComparison.OrdinalIgnoreCase)) AudioSrPrecision = "fp32";
             if (string.Equals(SfAudioPrecision, "fp16", StringComparison.OrdinalIgnoreCase)) SfAudioPrecision = "fp32";
         }
-    }
-
-    partial void OnTryOldFfmpegOnCrashChanged(bool value)
-    {
-        _app.TryOldFfmpegOnCrash = value;
-        _settings.Save(_app, _pathConfig);
-        _logger.Info(value
-            ? "已勾选「崩溃时尝试使用老版本处理架构」：NVEncC（HDR）失败时自动改用老版本重试"
-            : "已取消：HDR 只使用当前版本 NVEncC；FFmpeg 8 失败后仍会回退 CPU 处理");
     }
 
     partial void OnSceneGuardEnabledChanged(bool value)
@@ -2035,26 +2021,6 @@ public partial class MainViewModel : ObservableObject
                 ProgressPercent = pctValue;
             });
         }, ct: ct);
-
-        // 崩溃时尝试使用老版本处理架构：新版 NVEncC 失败 → 老版本重试一次
-        if (exit != 0 && _app.TryOldFfmpegOnCrash && Tools.NvEncOldExists)
-        {
-            _logger.Warn("单文件 HDR：新版 NVEncC 失败，改用老版本 NVEncC 重试");
-            SfStatus = "HDR 转换中（老版本）… 0%";
-            exit = await _runner.RunAsync(Tools.NvEncOldExe, args, onLine: line =>
-            {
-                var m = SfHdrPercentRe.Match(line);
-                if (!m.Success) return;
-                var pct = m.Groups[1].Value;
-                var pctValue = double.TryParse(pct, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var p) ? p : 0;
-                _dispatcherQueue.TryEnqueue(() =>
-                {
-                    SfStatus = $"HDR 转换中（老版本）… {pct}%";
-                    ProgressPercent = pctValue;
-                });
-            }, ct: ct);
-        }
 
         if (exit != 0 || !File.Exists(output))
         {
