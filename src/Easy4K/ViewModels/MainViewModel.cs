@@ -1205,6 +1205,8 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(OutputResolutionText))]
     [NotifyPropertyChangedFor(nameof(TargetFpsText))]
     [NotifyPropertyChangedFor(nameof(FinalOutputName))]
+    [NotifyPropertyChangedFor(nameof(HasValidVideo))]
+    [NotifyPropertyChangedFor(nameof(CustomOutputNameBoxEnabled))]
     [NotifyPropertyChangedFor(nameof(VideoInfoText))]
     [NotifyPropertyChangedFor(nameof(CanStart))]
     [NotifyPropertyChangedFor(nameof(CanStartReason))]
@@ -1327,11 +1329,49 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>是否已选中有效视频（自定义输出文件名的启用条件）</summary>
+    public bool HasValidVideo => Video is { IsValid: true };
+
+    /// <summary>勾选「自定义输出文件名」：关闭时沿用 Easy4K 自动生成的名称</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FinalOutputName))]
+    [NotifyPropertyChangedFor(nameof(CustomOutputNameBoxEnabled))]
+    private bool _customOutputNameEnabled;
+
+    /// <summary>用户填写的成品文件名（不含扩展名也可，落盘时统一补 .mkv）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FinalOutputName))]
+    private string _customOutputName = "";
+
+    /// <summary>自定义文件名输入框是否可用：必须已勾选且已选中有效视频（需求：仅在选择了视频时才启用）</summary>
+    public bool CustomOutputNameBoxEnabled => CustomOutputNameEnabled && HasValidVideo;
+
+    /// <summary>实际生效的自定义成品文件名：未勾选、没选视频或为空时返回空串（表示用自动命名）</summary>
+    public string CustomOutputFileName
+    {
+        get
+        {
+            if (!CustomOutputNameEnabled || !HasValidVideo) return "";
+            var name = (CustomOutputName ?? "").Trim();
+            if (name.Length == 0) return "";
+            foreach (var ch in Path.GetInvalidFileNameChars()) name = name.Replace(ch, '_');
+            name = name.TrimEnd('.', ' ');
+            if (name.Length == 0) return "";
+            return name.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase) ? name : name + ".mkv";
+        }
+    }
+
     public string FinalOutputName
     {
         get
         {
             if (Video is null || !Video.IsValid || string.IsNullOrEmpty(InputVideo)) return "选择视频后自动生成";
+            var custom = CustomOutputFileName;
+            if (custom.Length > 0) return custom;
+            if (CustomOutputNameEnabled)
+                return string.IsNullOrWhiteSpace(CustomOutputName)
+                    ? "请填写自定义输出文件名"
+                    : "自定义文件名包含无效字符";
             var w = SuperResolution ? Video.Width * SrScale : Video.Width;
             var h = SuperResolution ? Video.Height * SrScale : Video.Height;
             return OutputNamer.Build(InputVideo, SuperResolution, Interpolation, SdrToHdr, w, h, EffectiveOutFps, MergeAudio);
@@ -2602,6 +2642,29 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        // 自定义输出文件名：勾选且填了有效名称时，成品直接用它；与输出目录已有文件重名则拒绝启动
+        var customOutName = CustomOutputFileName;
+        if (CustomOutputNameEnabled && HasValidVideo && customOutName.Length == 0)
+        {
+            var msg = "已勾选「自定义输出文件名」，但文件名为空或只包含无效字符。\n\n"
+                + "请填写文件名，或取消勾选改用 Easy4K 自动命名。";
+            _logger.Error("无法启动：自定义输出文件名为空");
+            StartFailed?.Invoke(msg);
+            return;
+        }
+        if (customOutName.Length > 0)
+        {
+            var target = Path.Combine(OutputRoot, customOutName);
+            if (File.Exists(target))
+            {
+                var msg = $"产出文件名重复：输出目录中已存在「{customOutName}」。\n\n"
+                    + "请修改自定义输出文件名，或先把已有文件改名/移走后再开始处理。";
+                _logger.Error($"无法启动：{msg.Replace("\n\n", " ")}");
+                StartFailed?.Invoke(msg);
+                return;
+            }
+        }
+
         // 涡轮模式复检：用户可以先切到固态盘开启涡轮、再把主页的临时目录改回机械盘，从而绕过勾选时的检查。
         // 因此开跑前再验一次；命中机械盘就关闭涡轮，并且明确告知用户（不静默处理）。
         if (TurboMode)
@@ -2711,6 +2774,8 @@ public partial class MainViewModel : ObservableObject
             InputVideo = pipelineInput,
             // 输出文件仍按原视频命名（转换后的中间文件叫 input_cfr，不能拿它当成品名）
             OutputNameBase = HasExternalFrames ? "" : InputVideo,
+            // 自定义成品文件名（空 = 用 OutputNamer 自动命名）
+            CustomOutputFileName = customOutName,
             TempRoot = TempRoot.Replace('\\', '/'),
             OutputRoot = OutputRoot.Replace('\\', '/'),
             ExternalFramesDir = ExternalFramesDir.Replace('\\', '/'),

@@ -100,6 +100,21 @@
                             <TextBox  Grid.Column="1" Text="{x:Bind Vm.OutputRoot, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="成品视频输出目录" Style="{StaticResource GlassTextBox}"/>
                             <Button   Grid.Column="2" Content="浏览" Click="OnBrowseOutput" Style="{StaticResource GlassButton}"/>
                         </Grid>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0" x:Name="CustomOutputNameCb" Content="自定义输出文件名" FontSize="12"
+                                      IsChecked="{x:Bind Vm.CustomOutputNameEnabled, Mode=TwoWay}"
+                                      IsEnabled="{x:Bind Vm.HasValidVideo, Mode=OneWay}"
+                                      VerticalAlignment="Center"/>
+                            <TextBox  Grid.Column="1" Text="{x:Bind Vm.CustomOutputName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      PlaceholderText="输入成品文件名（自动补 .mkv）"
+                                      IsEnabled="{x:Bind Vm.CustomOutputNameBoxEnabled, Mode=OneWay}"
+                                      Style="{StaticResource GlassTextBox}"/>
+                        </Grid>
+                        <TextBlock Text="自定义文件名仅在已选择视频时可用；与输出目录已有文件重名时不会开始处理。" FontSize="11" Opacity="0.6"/>
                     </StackPanel>
                 </Border>
 

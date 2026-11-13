@@ -384,7 +384,7 @@ public sealed partial class MainWindow : Window
             if ((RemoteControlServer.IsActive || RemoteSession.IsActive)) return;
             var dlg = new ContentDialog
             {
-                Title = "无法开始处理",
+                Title = DialogTitle("无法开始处理"),
                 Content = msg,
                 CloseButtonText = "知道了",
                 DefaultButton = ContentDialogButton.Close,

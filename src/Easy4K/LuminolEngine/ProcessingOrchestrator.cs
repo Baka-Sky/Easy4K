@@ -14,6 +14,8 @@ public sealed class ProcessingContext
     /// <summary>成品文件命名基准（原视频路径）。输入视频可能是自动转换出来的中间文件，
     /// 空 = 用 <see cref="InputVideo"/>；帧文件夹模式用 <see cref="ExternalFramesDir"/>。</summary>
     public string OutputNameBase { get; set; } = "";
+    /// <summary>用户在主页填写的自定义成品文件名（含 .mkv）；空 = 按 OutputNamer 自动命名</summary>
+    public string CustomOutputFileName { get; set; } = "";
     public string TempRoot { get; set; } = "";
     public string OutputRoot { get; set; } = "";
     /// <summary>手动导入的外部帧文件夹（非空时复制到 Temp/input_frames 并跳过拆帧）</summary>
@@ -1725,8 +1727,11 @@ public sealed class ProcessingOrchestrator
         var nameBase = string.IsNullOrEmpty(ctx.OutputNameBase)
             ? (string.IsNullOrEmpty(ctx.InputVideo) ? ctx.ExternalFramesDir : ctx.InputVideo)
             : ctx.OutputNameBase;
-        var finalName = OutputNamer.Build(nameBase, ctx.Options.SuperResolution, ctx.Options.Interpolation,
-            st.HdrDone, st.OutWidth, st.OutHeight, st.OutFps, ctx.Options.MergeAudio);
+        // 自定义文件名优先；为空时按规格书自动命名
+        var finalName = string.IsNullOrEmpty(ctx.CustomOutputFileName)
+            ? OutputNamer.Build(nameBase, ctx.Options.SuperResolution, ctx.Options.Interpolation,
+                st.HdrDone, st.OutWidth, st.OutHeight, st.OutFps, ctx.Options.MergeAudio)
+            : ctx.CustomOutputFileName;
         var finalPath = Path.Combine(ctx.OutputRoot, finalName).Replace('\\', '/');
         Directory.CreateDirectory(ctx.OutputRoot);
         File.Copy(st.CurrentVideo, finalPath, overwrite: true);
