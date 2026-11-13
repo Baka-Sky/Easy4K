@@ -1223,6 +1223,8 @@ public partial class MainViewModel : ObservableObject
     /// 避免勾着一个不可能生效的选项；清空视频（检测中/清空输入）时也一律取消勾选。</summary>
     partial void OnVideoChanged(VideoInfo? value)
     {
+        // 自定义文件名只在选中有效视频时可用：一旦不可用就同时取消勾选，不留"灰着却还勾着"的状态
+        if (value is null || !value.IsValid) CustomOutputNameEnabled = false;
         if (value is null)
         {
             KeepSubtitles = false;
@@ -2541,14 +2543,46 @@ public partial class MainViewModel : ObservableObject
 
     // ===================== 处理流程 =====================
 
+    /// <summary>自定义输出文件名的启动前校验。返回 null = 没问题；否则是要展示给用户的错误文案。</summary>
+    private string? CheckCustomOutputNameError()
+    {
+        if (!CustomOutputNameEnabled || !HasValidVideo) return null;
+        var name = CustomOutputFileName;
+        if (name.Length == 0)
+        {
+            return "已勾选「自定义输出文件名」，但文件名为空或只包含无效字符。\n\n"
+                + "请填写文件名，或取消勾选改用 Easy4K 自动命名。";
+        }
+        if (string.IsNullOrWhiteSpace(OutputRoot)) return null;
+        return File.Exists(Path.Combine(OutputRoot, name))
+            ? $"产出文件名重复：输出目录中已存在「{name}」。\n\n"
+                + "请修改自定义输出文件名，或先把已有文件改名/移走后再开始处理。"
+            : null;
+    }
+
+    /// <summary>阻塞式拦截自定义文件名问题：返回 true = 已拦截并已弹窗。点「开始处理」时最先调用。</summary>
+    private bool BlockOnCustomOutputNameError()
+    {
+        var msg = CheckCustomOutputNameError();
+        if (msg is null) return false;
+        _logger.Error($"无法启动：{msg.Replace("\n\n", " ")}");
+        StartFailed?.Invoke(msg);
+        return true;
+    }
+
     /// <summary>启动前确认流程（顺序执行）：
-    /// 0) 检测到动态帧率 → 先提示改用 PR / 剪映转成静态帧率，用户取消则阻断启动；
-    /// 1) 临时目录有旧文件/缓存不符 → 弹窗引导（重新选择临时目录/清理缓存/取消），未解决则阻断启动；
-    /// 2) CPU 处理模式开启 → 弹最终警告"不建议开启 CPU 处理"，取消则不启动。
+    /// 0) 自定义输出文件名重复/为空 → 立即弹窗提示并阻断（不跑处理前测试、不切「进行中」页）；
+    /// 1) 检测到动态帧率 → 提示改用 PR / 剪映转成静态帧率，用户取消则阻断启动；
+    /// 2) 临时目录有旧文件/缓存不符 → 弹窗引导（重新选择临时目录/清理缓存/取消），未解决则阻断启动；
+    /// 3) CPU 处理模式开启 → 弹最终警告"不建议开启 CPU 处理"，取消则不启动。
     /// 弹窗由 MainWindow 弹出并处理，处理完成后回调 DialogResult 唤醒本流程继续。</summary>
     public async Task<bool> ConfirmStartAsync()
     {
-        // 0. 动态帧率提醒最先弹：VFR 的帧间隔不固定，拆帧/补帧按恒定帧率重建容易音画不同步
+        // 0. 自定义输出文件名重复/为空 → 最先拦下：点「开始处理」立即提示，
+        //    不先跑处理前测试，也不切换到「进行中」页
+        if (BlockOnCustomOutputNameError()) return false;
+
+        // 1. 动态帧率提醒最先弹：VFR 的帧间隔不固定，拆帧/补帧按恒定帧率重建容易音画不同步
         if (Video is { IsValid: true, IsVariableFrameRate: true } && VariableFrameRateDetected is not null)
         {
             _dialogTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -2642,28 +2676,10 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        // 自定义输出文件名：勾选且填了有效名称时，成品直接用它；与输出目录已有文件重名则拒绝启动
+        // 自定义输出文件名：重复/为空 → 拒绝启动（首页路径已在 ConfirmStartAsync 里提前拦下，
+        // 这里保留兜底，覆盖快捷键、远程指令等直接进 StartAsync 的入口）
+        if (BlockOnCustomOutputNameError()) return;
         var customOutName = CustomOutputFileName;
-        if (CustomOutputNameEnabled && HasValidVideo && customOutName.Length == 0)
-        {
-            var msg = "已勾选「自定义输出文件名」，但文件名为空或只包含无效字符。\n\n"
-                + "请填写文件名，或取消勾选改用 Easy4K 自动命名。";
-            _logger.Error("无法启动：自定义输出文件名为空");
-            StartFailed?.Invoke(msg);
-            return;
-        }
-        if (customOutName.Length > 0)
-        {
-            var target = Path.Combine(OutputRoot, customOutName);
-            if (File.Exists(target))
-            {
-                var msg = $"产出文件名重复：输出目录中已存在「{customOutName}」。\n\n"
-                    + "请修改自定义输出文件名，或先把已有文件改名/移走后再开始处理。";
-                _logger.Error($"无法启动：{msg.Replace("\n\n", " ")}");
-                StartFailed?.Invoke(msg);
-                return;
-            }
-        }
 
         // 涡轮模式复检：用户可以先切到固态盘开启涡轮、再把主页的临时目录改回机械盘，从而绕过勾选时的检查。
         // 因此开跑前再验一次；命中机械盘就关闭涡轮，并且明确告知用户（不静默处理）。
