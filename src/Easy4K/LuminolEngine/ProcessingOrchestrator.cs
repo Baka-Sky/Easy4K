@@ -39,6 +39,10 @@ public sealed class ProcessingContext
     /// 返回 true = 改用 GPU 继续；false = 结束任务让用户更换模型。
     /// null = 无人值守（处理前测试/自动测试），按历史行为自动升级 GPU。</summary>
     public Func<string, Task<bool>>? OnSrCpuIncompatibleAsync { get; set; }
+
+    /// <summary>补帧崩溃降级时的询问回调：返回 true = 重试时启用 UHD 省显存模式；false = 保持原画质只降线程。
+    /// 仅在未勾选「降低部分画质」时才询问；null = 无人值守（处理前测试/自动测试/远程控制），按不启用处理。</summary>
+    public Func<Task<bool>>? AskEnableUhdOnRetryAsync { get; set; }
 }
 
 /// <summary>处理流水线编排（与《Easy4K流水线逻辑》一致）：
@@ -1134,7 +1138,7 @@ public sealed class ProcessingOrchestrator
     }
 
     /// <summary>阶段4 补帧：读取超分帧 → NCNN 线程 → UHD 降级模式 → CPU 检测 → 补帧中。
-    /// 失败时：开启安全帧率 → 自动停止并提示；未开启 → 线程改为 1:1:1 重试（不改画质档位）。</summary>
+    /// 失败时：开启安全帧率 → 自动停止并提示；未开启 → 线程改为 1:1:1，并询问是否同时启用 UHD 省显存重试。</summary>
     private async Task<bool> InterpolationStageAsync(PipelineState st, CancellationToken ct)
     {
         var ctx = st.Ctx;
@@ -1260,10 +1264,17 @@ public sealed class ProcessingOrchestrator
                 return false;
             }
 
-            // 未开启安全帧率：NCNN 轨自动把处理线程改为 1:1:1 重试（不额外开 UHD 模式，画质与本次一致）
+            // 未开启安全帧率：NCNN 轨自动把处理线程改为 1:1:1 重试；
+            // 是否同时启用 UHD 省显存模式交给用户选（已勾选「降低部分画质」则直接沿用，不重复问）
             if (!useTorch)
             {
-                _logger.Warn("检测到补帧报错，自动将处理线程改为 1:1:1 重试");
+                var retryUhd = ctx.Settings.LowerQualityForVram;
+                if (!retryUhd && ctx.AskEnableUhdOnRetryAsync is not null)
+                    retryUhd = await ctx.AskEnableUhdOnRetryAsync();
+
+                _logger.Warn(retryUhd
+                    ? "检测到补帧报错，自动将处理线程改为 1:1:1 并启用 UHD 省显存模式重试"
+                    : "检测到补帧报错，自动将处理线程改为 1:1:1 重试（保持原画质，未启用 UHD）");
                 ProgressChanged?.Invoke(new ProcessProgress
                 {
                     Stage = ProcessStage.Interpolating,
@@ -1272,9 +1283,9 @@ public sealed class ProcessingOrchestrator
                     Total = 0
                 });
                 await CleanPartialOutputAsync(ifFrames, ProcessStage.Interpolating, "补帧中(降级)", ct);
-                var retryArgs = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, ifTarget, "1:1:1", useUhdMode: ctx.Settings.LowerQualityForVram, useCpu: cpu,
+                var retryArgs = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, ifTarget, "1:1:1", useUhdMode: retryUhd, useCpu: cpu,
                     gpuIndex: Math.Clamp(ctx.Settings.PipelineGpuIndex, 0, 8));
-                _logger.Command($"rife-ncnn-vulkan {retryArgs}（降级 1:1:1 重试）");
+                _logger.Command($"rife-ncnn-vulkan {retryArgs}（降级 1:1:1{(retryUhd ? " + UHD 省显存" : "")} 重试）");
                 exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(降级重试)", ifTarget,
                     ctx.Tools.RifeExe, retryArgs, ifFrames, ct);
                 if (exit != 0)

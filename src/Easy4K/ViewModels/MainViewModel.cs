@@ -2725,7 +2725,13 @@ public partial class MainViewModel : ObservableObject
             Tools = Tools,
             // CPU 模式遇到不支持 CPU 的超分模型时，弹窗让用户选「改用 GPU」或「更换模型」；
             // 无人值守（API 自动测试）下不弹窗，传 null 让它按历史行为自动升级 GPU
-            OnSrCpuIncompatibleAsync = HeadlessAutoTest ? null : AskSrCpuIncompatibleAsync
+            OnSrCpuIncompatibleAsync = HeadlessAutoTest ? null : AskSrCpuIncompatibleAsync,
+            // 补帧崩溃降级时询问是否启用 UHD 省显存模式；无人值守（自动测试/远程控制）不弹窗，按不启用处理
+            AskEnableUhdOnRetryAsync = HeadlessAutoTest
+                || LuminolEngine.RemoteControl.RemoteControlServer.IsActive
+                || LuminolEngine.RemoteControl.RemoteSession.IsActive
+                ? null
+                : AskEnableUhdOnRetryAsync
         };
 
         _orchestratorAssigned.ProgressChanged += OnProgressChanged;
@@ -2980,6 +2986,28 @@ public partial class MainViewModel : ObservableObject
             {
                 _logger.Warn($"询问超分模型 CPU 兼容性失败，自动改用 GPU：{ex.Message}");
                 tcs.TrySetResult(true);
+            }
+        });
+        return tcs.Task;
+    }
+
+    /// <summary>补帧崩溃降级时询问用户：重试是否同时启用 UHD 省显存模式。
+    /// true = 启用 UHD 重试；false = 保持原画质只把线程降为 1:1:1。</summary>
+    private Task<bool> AskEnableUhdOnRetryAsync()
+    {
+        var window = App.MainWindow;
+        if (window is null) return Task.FromResult(false);
+        var tcs = new TaskCompletionSource<bool>();
+        _dispatcherQueue.TryEnqueue(async () =>
+        {
+            try
+            {
+                tcs.TrySetResult(await window.ConfirmUhdRetryAsync());
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn($"询问是否启用 UHD 重试失败，按不启用处理：{ex.Message}");
+                tcs.TrySetResult(false);
             }
         });
         return tcs.Task;

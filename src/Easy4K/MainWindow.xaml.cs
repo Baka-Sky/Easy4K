@@ -1753,7 +1753,7 @@ public sealed partial class MainWindow : Window
     {
         var dlg = new ContentDialog
         {
-            Title = title,
+            Title = DialogTitle(title),
             Content = new TextBlock { Text = content, TextWrapping = TextWrapping.Wrap },
             PrimaryButtonText = primaryText,
             CloseButtonText = closeText,
@@ -1762,6 +1762,17 @@ public sealed partial class MainWindow : Window
         };
         return await dlg.ShowLocalizedAsync() == ContentDialogResult.Primary;
     }
+
+    /// <summary>补帧崩溃降级时询问：重试是否同时启用 UHD 省显存模式。
+    /// true = 启用 UHD 重试（画质略降、显存占用更低）；false = 保持原画质，只把线程降为 1:1:1。</summary>
+    public Task<bool> ConfirmUhdRetryAsync() => ShowChoiceDialogAsync(
+        "检测到崩溃",
+        "补帧过程中检测到显卡崩溃（Vulkan 设备丢失或显存溢出）。\n\n"
+        + "本次会自动把处理线程降为 1:1:1 重试。是否同时启用 UHD 省显存模式？\n\n"
+        + "· 启用 UHD：显存占用更低、成功率更高，但画面细节会略有损失\n"
+        + "· 不启用：保持当前画质档位，仅降低线程数重试",
+        "启用 UHD 重试",
+        "不启用，直接重试");
 
     public Task ShowHelpAsync()
     {
