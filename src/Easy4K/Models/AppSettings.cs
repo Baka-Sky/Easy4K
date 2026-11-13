@@ -96,6 +96,9 @@ public sealed class AppSettings
     /// <summary>每次启动是否先用 Res 里的 1 秒测试视频按保存的默认步骤跑一遍自检，通过后再进入正式界面</summary>
     public bool StartupSelfTest { get; set; } = true;
 
+    /// <summary>跳过视频审查：合并完成后不再用 ffprobe 比对成品帧数与帧目录帧数（默认关闭，即照常审查）</summary>
+    public bool SkipVideoReview { get; set; }
+
     // ===================== 处理完成 HTML 报告 =====================
     /// <summary>处理完成后是否自动生成 HTML 报告（记录本次选项/命令/抽帧）</summary>
     public bool ReportEnabled { get; set; } = true;

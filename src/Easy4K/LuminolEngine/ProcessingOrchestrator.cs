@@ -190,8 +190,10 @@ public sealed class ProcessingOrchestrator
             return st.TempVideo;
         }
 
-        // ============ 阶段7：视频审查 ============
-        if (!await AuditStageAsync(st, ct)) return null;
+        // ============ 阶段7：视频审查（高级页可勾选跳过） ============
+        if (ctx.Settings.SkipVideoReview)
+            _logger.Warn("已勾选跳过视频审查：本次不比对成品帧数与帧目录帧数");
+        else if (!await AuditStageAsync(st, ct)) return null;
 
         // ============ 阶段8：元数据 / 封面 ============
         if (!await MetadataCoverStageAsync(st, ct)) return null;
@@ -1132,7 +1134,7 @@ public sealed class ProcessingOrchestrator
     }
 
     /// <summary>阶段4 补帧：读取超分帧 → NCNN 线程 → UHD 降级模式 → CPU 检测 → 补帧中。
-    /// 失败时：开启安全帧率 → 自动停止并提示；未开启 → 线程改为 1:1:1 并开 UHD 省显存重试。</summary>
+    /// 失败时：开启安全帧率 → 自动停止并提示；未开启 → 线程改为 1:1:1 重试（不改画质档位）。</summary>
     private async Task<bool> InterpolationStageAsync(PipelineState st, CancellationToken ct)
     {
         var ctx = st.Ctx;
@@ -1258,10 +1260,10 @@ public sealed class ProcessingOrchestrator
                 return false;
             }
 
-            // 未开启安全帧率：NCNN 轨自动把处理线程改为 1:1:1 并开 UHD 省显存模式重试
+            // 未开启安全帧率：NCNN 轨自动把处理线程改为 1:1:1 重试（不额外开 UHD 模式，画质与本次一致）
             if (!useTorch)
             {
-                _logger.Warn("检测到补帧报错，自动将处理线程改为 1:1:1 并开启 UHD 省显存模式重试");
+                _logger.Warn("检测到补帧报错，自动将处理线程改为 1:1:1 重试");
                 ProgressChanged?.Invoke(new ProcessProgress
                 {
                     Stage = ProcessStage.Interpolating,
@@ -1270,9 +1272,9 @@ public sealed class ProcessingOrchestrator
                     Total = 0
                 });
                 await CleanPartialOutputAsync(ifFrames, ProcessStage.Interpolating, "补帧中(降级)", ct);
-                var retryArgs = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, ifTarget, "1:1:1", useUhdMode: true, useCpu: cpu,
+                var retryArgs = RifeCommandBuilder.Build(inputDirForIf, ifFrames, ctx.IfModel, ctx.IfMultiplier, ifTarget, "1:1:1", useUhdMode: ctx.Settings.LowerQualityForVram, useCpu: cpu,
                     gpuIndex: Math.Clamp(ctx.Settings.PipelineGpuIndex, 0, 8));
-                _logger.Command($"rife-ncnn-vulkan {retryArgs}（降级 1:1:1 + 省显存重试）");
+                _logger.Command($"rife-ncnn-vulkan {retryArgs}（降级 1:1:1 重试）");
                 exit = await RunStageWithDirectoryPolling(ProcessStage.Interpolating, "补帧中(降级重试)", ifTarget,
                     ctx.Tools.RifeExe, retryArgs, ifFrames, ct);
                 if (exit != 0)

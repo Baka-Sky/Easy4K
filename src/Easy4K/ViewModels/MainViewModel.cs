@@ -107,6 +107,7 @@ public partial class MainViewModel : ObservableObject
         _noReport = !app.ReportEnabled;
         _reportAutoOpen = app.ReportAutoOpen;
         _skipStartupSelfTest = !app.StartupSelfTest;
+        _skipVideoReview = app.SkipVideoReview;
         _threadCount = Math.Clamp(app.ThreadCount, 1, 32);
         // 四段线程：解码/编码分开。旧配置没有新字段时，编码沿用 ThreadCount、解码保持 1（等价旧的 1:N:N）
         _srEncodeThreads = Math.Clamp(app.SrEncodeThreads > 0 ? app.SrEncodeThreads : app.ThreadCount, 1, 32);
@@ -762,6 +763,10 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _skipStartupSelfTest;
 
+    /// <summary>勾选=跳过视频审查（合并完成后不再比对成品帧数与帧目录帧数）</summary>
+    [ObservableProperty]
+    private bool _skipVideoReview;
+
     /// <summary>是否显示图片预览（处理中可随时开关）</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PreviewHintText))]
@@ -848,6 +853,14 @@ public partial class MainViewModel : ObservableObject
         _settings.Save(_app, _pathConfig);
         _logger.Info(value ? "已勾选跳过测试：开始处理时不再先用 1 秒测试视频验证流程，直接处理"
                            : "已取消：每次开始处理前先用 1 秒测试视频验证勾选流程，通过后再处理正式视频");
+    }
+
+    partial void OnSkipVideoReviewChanged(bool value)
+    {
+        _app.SkipVideoReview = value;
+        _settings.Save(_app, _pathConfig);
+        _logger.Info(value ? "已勾选跳过视频审查：合并完成后不再比对成品帧数与帧目录帧数"
+                           : "已取消：合并完成后照常比对成品帧数与帧目录帧数");
     }
 
     partial void OnThreadCountChanged(int value)
