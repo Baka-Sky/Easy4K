@@ -95,7 +95,7 @@
 
   <!-- 构建后自动把项目根 Tools（FFmpeg/NVEncC/realesrgan/rife/AudioSR/便携python）增量同步到输出目录，
        保证 Debug/Release/publish 产物自包含可运行。robocopy 退出码 0-7 均为成功，>=8 才报错。
-       注意：排除列表里不能带 bin —— FFmpeg-Lei\bin 是必需的原生组件目录。 -->
+       注意：排除列表里不能带 bin —— FFmpeg-8\bin 是必需的原生组件目录。 -->
   <Target Name="CopyToolsToOutput" AfterTargets="Build">
     <Exec IgnoreExitCode="true" Command="robocopy &quot;$(MSBuildThisFileDirectory)..\..\Tools&quot; &quot;$(OutDir)Tools&quot; /E /NFL /NDL /NJH /NJS /NP /XD .git obj __pycache__ &amp; if %25ERRORLEVEL% GEQ 8 exit /b 1" />
   </Target>

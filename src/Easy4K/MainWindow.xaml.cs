@@ -384,7 +384,7 @@ public sealed partial class MainWindow : Window
             if ((RemoteControlServer.IsActive || RemoteSession.IsActive)) return;
             var dlg = new ContentDialog
             {
-                Title = "无法开始处理",
+                Title = DialogTitle("无法开始处理"),
                 Content = msg,
                 CloseButtonText = "知道了",
                 DefaultButton = ContentDialogButton.Close,
@@ -1283,18 +1283,21 @@ public sealed partial class MainWindow : Window
     /// <summary>遥控另一台 Easy4K 时，对方要求安全密钥 → 弹出输入框。</summary>
     public async Task<string?> PromptRemoteKeyInputAsync()
     {
-        var box = new PasswordBox { PlaceholderText = "对方 Easy4K 的安全密钥" };
+        var appFont = Application.Current.Resources["AppFontFamily"] as FontFamily;
+        var box = new PasswordBox { PlaceholderText = "对方 Easy4K 的安全密钥", FontFamily = appFont };
         var panel = new StackPanel { Spacing = 8 };
         panel.Children.Add(new TextBlock
         {
             Text = "对方已启用远程控制安全密钥，请输入后连接。",
-            TextWrapping = TextWrapping.Wrap
+            TextWrapping = TextWrapping.Wrap,
+            FontFamily = appFont
         });
         panel.Children.Add(box);
 
         var dialog = new ContentDialog
         {
-            Title = "输入安全密钥",
+            Title = DialogTitle("输入安全密钥"),
+            FontFamily = appFont,
             Content = panel,
             PrimaryButtonText = "连接",
             CloseButtonText = "取消",
@@ -1308,19 +1311,22 @@ public sealed partial class MainWindow : Window
     /// <summary>创建 / 修改安全密钥对话框；askOld=true 时先验证旧密钥。</summary>
     private async Task<string?> ShowRemoteKeyDialogAsync(string title, string message, bool askOld)
     {
+        // 弹窗里的文本框/占位符/说明文字显式指定内嵌字体，避免 PasswordBox 内部走系统默认字体
+        var appFont = Application.Current.Resources["AppFontFamily"] as FontFamily;
         var error = new TextBlock
         {
             FontSize = 12,
+            FontFamily = appFont,
             TextWrapping = TextWrapping.Wrap,
             Foreground = new SolidColorBrush(Microsoft.UI.Colors.OrangeRed),
             Visibility = Visibility.Collapsed
         };
-        var oldBox = new PasswordBox { PlaceholderText = "原安全密钥" };
-        var newBox = new PasswordBox { PlaceholderText = $"新安全密钥（至少 {RemoteKeyStore.MinLength} 位）" };
-        var confirmBox = new PasswordBox { PlaceholderText = "再次输入新密钥" };
+        var oldBox = new PasswordBox { PlaceholderText = "原安全密钥", FontFamily = appFont };
+        var newBox = new PasswordBox { PlaceholderText = $"新安全密钥（至少 {RemoteKeyStore.MinLength} 位）", FontFamily = appFont };
+        var confirmBox = new PasswordBox { PlaceholderText = "再次输入新密钥", FontFamily = appFont };
 
         var panel = new StackPanel { Spacing = 8 };
-        panel.Children.Add(new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, FontFamily = appFont });
         if (askOld) panel.Children.Add(oldBox);
         panel.Children.Add(newBox);
         panel.Children.Add(confirmBox);
@@ -1330,7 +1336,8 @@ public sealed partial class MainWindow : Window
         {
             var dialog = new ContentDialog
             {
-                Title = title,
+                Title = DialogTitle(title),
+                FontFamily = appFont,
                 Content = panel,
                 PrimaryButtonText = "确定",
                 CloseButtonText = "取消",
@@ -1746,7 +1753,7 @@ public sealed partial class MainWindow : Window
     {
         var dlg = new ContentDialog
         {
-            Title = title,
+            Title = DialogTitle(title),
             Content = new TextBlock { Text = content, TextWrapping = TextWrapping.Wrap },
             PrimaryButtonText = primaryText,
             CloseButtonText = closeText,
@@ -1838,7 +1845,7 @@ public sealed partial class MainWindow : Window
         "附加能力（「高级」页）：帧去重（自研 SFDP 孪生网络 ONNX，DirectML / CPU 自动降级）、\n" +
         "  转场优化（PySceneDetect 检测镜头切换，转场处不插值）、音频超分（AudioSR，48kHz 高带宽重建）。\n" +
         "性能选项：四段解析线程（解码 / 编码分开）、流水线 GPU 指定（核显机器可强制独显）、\n" +
-        "  涡轮多段并行、崩溃时自动回退老版本 FFmpeg / NVEncC。\n\n" +
+        "  涡轮多段并行、HDR 由 NVEncC 7.74 完成、FFmpeg 处理失败自动回退 CPU。\n\n" +
         "========== 免责声明 ==========\n\n" +
         "1. 本软件以\"现状\"（AS-IS）提供，开发者不对其正确性、可靠性、完整性及适用性作任何明示或暗示保证。\n\n" +
         "2. 使用本软件及所调用第三方组件（FFmpeg / ncnn / PyTorch / AudioSR / NVEncC 等）产生的一切后果，包括但不限于：\n" +
@@ -1881,11 +1888,20 @@ public sealed partial class MainWindow : Window
         "项目主页：https://github.com/Baka-Sky/Easy4K\n" +
         "模型主页：https://huggingface.co/Sudabaka/SFDP-Siamese-NET-AI";
 
+    /// <summary>ContentDialog 模板里的标题(CONTENT 也是)用编译期 StaticResource 的
+    /// ContentControlThemeFontFamily，App 级资源覆盖不到；标题改成显式指定内嵌字体的 TextBlock，
+    /// 保证弹窗标题也是鸿蒙字体。</summary>
+    private static TextBlock DialogTitle(string text) => new()
+    {
+        Text = text,
+        FontFamily = Application.Current.Resources["AppFontFamily"] as FontFamily
+    };
+
     private async void ShowDialog(string title, string content)
     {
         var dlg = new ContentDialog
         {
-            Title = title,
+            Title = DialogTitle(title),
             // 长文本（如环境/显卡检测结果、帮助、关于）用可滚动区域展示；
             // 字体走全局内嵌字体，与其它弹窗保持一致（原先是 Consolas 等宽，中文会回退成系统字体）
             Content = new ScrollViewer

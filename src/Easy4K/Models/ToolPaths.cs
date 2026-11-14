@@ -6,11 +6,6 @@ public sealed class ToolPaths
     public string ToolsRoot { get; set; } = "";
     public string FFmpegExe { get; set; } = "";
     public string FFprobeExe { get; set; } = "";
-    /// <summary>老版本 FFmpeg（Tools\FFmpeg-Old\bin\ffmpeg.exe，FFmpeg 8.x）。
-    /// 新版在部分老显卡驱动上会崩溃，拆帧/合并失败时用它兜底重试。</summary>
-    public string FFmpegOldExe { get; set; } = "";
-    /// <summary>老版本 ffprobe（Tools\FFmpeg-Old\bin\ffprobe.exe）</summary>
-    public string FFprobeOldExe { get; set; } = "";
     public string RealEsrganExe { get; set; } = "";
     public string RealEsrganModelsRoot { get; set; } = "";
     /// <summary>Real-CUGAN 引擎（ Tools\realcugan-ncnn\realcugan-ncnn-vulkan.exe，动漫超分）</summary>
@@ -24,8 +19,6 @@ public sealed class ToolPaths
     public string RifeExe { get; set; } = "";
     public string RifeModelsRoot { get; set; } = "";
     public string NvEncExe { get; set; } = "";
-    /// <summary>老版本 NVEncC（Tools\NVEncC-Old\NVEncC64.exe，7.74）。新版在部分老驱动上跑不起来时兜底。</summary>
-    public string NvEncOldExe { get; set; } = "";
     /// <summary>便携 Python（Tools\python\python.exe）：音频超分（AudioSR）驱动脚本用它运行，
     /// 不存在时回退系统 python。补帧已统一走 NCNN（Vulkan），不再需要 PyTorch。</summary>
     public string PortablePythonExe { get; set; } = "";
@@ -52,17 +45,20 @@ public sealed class ToolPaths
 
     public bool FFmpegExists => File.Exists(FFmpegExe);
     public bool FFprobeExists => File.Exists(FFprobeExe);
-    /// <summary>老版本 FFmpeg 是否已部署（兜底重试的前提）</summary>
-    public bool FFmpegOldExists => File.Exists(FFmpegOldExe);
     public bool RealEsrganExists => File.Exists(RealEsrganExe);
     public bool RifeExists => File.Exists(RifeExe);
     public bool NvEncExists => File.Exists(NvEncExe);
-    /// <summary>老版本 NVEncC 是否已部署（HDR 兜底重试的前提）</summary>
-    public bool NvEncOldExists => File.Exists(NvEncOldExe);
 
     /// <summary>AI SDR→HDR 模型（HDRTVNet++ AGCM+LE，ONNX）。存在即表示可用 DirectML 做 HDR 重建。</summary>
     public string HdrAiModel => Path.Combine(ToolsRoot, "HDRTVNet", "hdr_ensemble.onnx");
     public bool HdrAiExists => File.Exists(HdrAiModel);
+
+    /// <summary>帧去重 AI（SFDP 孪生网络）FP32 模型：完美模式使用。属必需项，缺失时不允许启动。</summary>
+    public string SfdpModelFp32 => Path.Combine(ToolsRoot, "SFDP", "model.onnx");
+    /// <summary>帧去重 AI（SFDP 孪生网络）FP16 模型：性能模式使用。属必需项，缺失时不允许启动。</summary>
+    public string SfdpModelFp16 => Path.Combine(ToolsRoot, "SFDP", "model_fp16.onnx");
+    /// <summary>两个去重模型都在才算就绪（完美 / 性能模式各用一个，不允许静默回退）</summary>
+    public bool SfdpModelsOk => File.Exists(SfdpModelFp32) && File.Exists(SfdpModelFp16);
 
     /// <summary>AudioSR 驱动脚本是否就绪</summary>
     public bool AudioSrScriptExists => File.Exists(AudioSrScript);

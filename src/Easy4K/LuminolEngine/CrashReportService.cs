@@ -107,9 +107,7 @@ public static class CrashReportService
             sb.AppendLine($"Tools 根目录 : {t.ToolsRoot}");
             Tool("FFmpeg", t.FFmpegExe, t.FFmpegExists);
             Tool("FFprobe", t.FFprobeExe, t.FFprobeExists);
-            Tool("FFmpeg-Old", t.FFmpegOldExe, t.FFmpegOldExists);
             Tool("NVEncC", t.NvEncExe, t.NvEncExists);
-            Tool("NVEncC-Old", t.NvEncOldExe, t.NvEncOldExists);
             Tool("RealESRGAN", t.RealEsrganExe, t.RealEsrganExists);
             Tool("RIFE", t.RifeExe, t.RifeExists);
             Tool("HDRTVNet 模型", t.HdrAiModel, t.HdrAiExists);

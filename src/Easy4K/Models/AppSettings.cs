@@ -34,14 +34,12 @@ public sealed class AppSettings
     public bool UseSafeFrameRate { get; set; } = true;
     /// <summary>降低部分画质以降低显存占用（-u UHD 模式），可与安全帧率共存</summary>
     public bool LowerQualityForVram { get; set; }
+    /// <summary>崩溃降级时尝试启用 UHD 模式：关闭安全帧率后补帧崩溃，1:1:1 重试时额外加 -u 省显存</summary>
+    public bool RetryUhdOnCrash { get; set; }
     /// <summary>使 FFmpeg 尝试使用 GPU 加速（拆帧解码 -hwaccel / 合并帧 GPU 编码器优先，失败自动回退 CPU）</summary>
     public bool UseGpuAcceleration { get; set; } = true;
     /// <summary>使用 CPU 处理所有模型（超分/补帧 NCNN -g -1），速度慢，仅在 GPU 不可用/不稳定时使用</summary>
     public bool UseCpuProcessing { get; set; }
-
-    /// <summary>崩溃时尝试使用老版本处理架构：拆帧/合并先用新版 FFmpeg，失败自动改用老版本 FFmpeg；
-    /// SDR→HDR 先用新版 NVEncC，失败自动改用老版本 NVEncC。老版本对旧驱动兼容性更好。</summary>
-    public bool TryOldFfmpegOnCrash { get; set; }
 
     /// <summary>HDR 转换饱和度（NVEncC --vpp-ngx-truehdr saturation，最高 200）</summary>
     public int HdrSaturation { get; set; } = 200;
@@ -99,6 +97,9 @@ public sealed class AppSettings
 
     /// <summary>每次启动是否先用 Res 里的 1 秒测试视频按保存的默认步骤跑一遍自检，通过后再进入正式界面</summary>
     public bool StartupSelfTest { get; set; } = true;
+
+    /// <summary>跳过视频审查：合并完成后不再用 ffprobe 比对成品帧数与帧目录帧数（默认关闭，即照常审查）</summary>
+    public bool SkipVideoReview { get; set; }
 
     // ===================== 处理完成 HTML 报告 =====================
     /// <summary>处理完成后是否自动生成 HTML 报告（记录本次选项/命令/抽帧）</summary>
@@ -159,13 +160,10 @@ public sealed class AppSettings
 /// <summary>工具子目录相对 ToolsRoot 的路径</summary>
 public sealed class ToolPathConfig
 {
-    public string FFmpegDir { get; set; } = "FFmpeg-Lei";
-    public string FFprobeDir { get; set; } = "FFmpeg-Lei";
-    /// <summary>老版本 FFmpeg 目录（崩溃兜底用，FFmpeg 8.x，兼容老显卡驱动）</summary>
-    public string FFmpegOldDir { get; set; } = "FFmpeg-Old";
+    /// <summary>FFmpeg 8.x 目录（只保留 8 系列，目录名即版本号）</summary>
+    public string FFmpegDir { get; set; } = "FFmpeg-8";
+    public string FFprobeDir { get; set; } = "FFmpeg-8";
     public string RealEsrganDir { get; set; } = "realesrgan-ncnn";
     public string RifeDir { get; set; } = "rife";
-    public string NvEncDir { get; set; } = "NVEncC_9.32_x64";
-    /// <summary>老版本 NVEncC 目录（HDR 崩溃兜底用）</summary>
-    public string NvEncOldDir { get; set; } = "NVEncC-Old";
+    public string NvEncDir { get; set; } = "NVEncC-7";
 }

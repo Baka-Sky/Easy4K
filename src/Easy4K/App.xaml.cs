@@ -296,25 +296,20 @@ public partial class App : Application
     {
         var missing = new List<string>();
 
-        if (!tools.FFmpegExists) missing.Add("FFmpeg（Tools 下的 ffmpeg.exe）");
-        if (!tools.FFprobeExists) missing.Add("FFprobe（Tools 下的 ffprobe.exe）");
+        if (!tools.FFmpegExists) missing.Add("FFmpeg（Tools\\FFmpeg-8 下的 ffmpeg.exe）");
+        if (!tools.FFprobeExists) missing.Add("FFprobe（Tools\\FFmpeg-8 下的 ffprobe.exe）");
         if (!tools.RealEsrganExists) missing.Add("Real-ESRGAN 超分引擎");
         if (!tools.RifeExists) missing.Add("RIFE 补帧引擎");
-        if (!HasModelFiles(tools.RealEsrganModelsRoot)) missing.Add("超分模型文件（realesrgan models 目录为空）");
-        if (!HasModelFiles(tools.RifeModelsRoot)) missing.Add("补帧模型文件（rife models 目录为空）");
+        // 全部超分模型（模型 × 倍率）、全部补帧模型（含常用白名单）、SFDP 两个去重模型：
+        // 缺任何一个都直接阻止进入，并逐项列出缺失的具体模型。
+        missing.AddRange(EnvironmentDetector.MissingRequiredModels(tools));
 
         if (missing.Count == 0) return null;
 
-        return "检测到以下必要文件/模型缺失，部分功能将无法使用：\n\n"
+        return "检测到以下必需文件/模型缺失（缺一个都无法启动）：\n\n"
              + string.Join("\n", missing.Select(m => "· " + m))
-             + "\n\n请确认 Tools 目录完整后重新启动 Easy4K。";
+             + "\n\n请补齐 Tools 目录后重新启动 Easy4K。";
     }
-
-    /// <summary>模型目录里是否至少有一个 .param（ncnn 模型描述文件）</summary>
-    private static bool HasModelFiles(string dir) =>
-        !string.IsNullOrWhiteSpace(dir)
-        && Directory.Exists(dir)
-        && Directory.EnumerateFiles(dir, "*.param", SearchOption.AllDirectories).Any();
 
     /// <summary>API 自动测试父进程：逐例拉起 --api-case 子进程（跑完关闭再启动下一例），最后写桌面报告并退出。</summary>
     private static async Task RunApiOrchestratorDelayedAsync(bool fullMatrix)

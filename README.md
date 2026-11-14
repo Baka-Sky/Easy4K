@@ -153,10 +153,10 @@ Easy4K/
 ├── Easy4K.LuminolCore.dll             # 帧去重动态库（主程序直接调用，也可给别的 .NET 程序用）
 ├── appsettings.json            # 配置（工具路径、默认模型、线程数等）
 ├── Assets/                     # 应用资源（图标等）
-├── FFmpeg-Lei/                 # FFmpeg 工具（ffmpeg.exe / ffprobe.exe）
+├── FFmpeg-8/                   # FFmpeg 8.1.3 工具（ffmpeg.exe / ffprobe.exe）
 ├── realesrgan-ncnn/            # Real-ESRGAN 工具 + models/
 ├── rife/                       # RIFE 工具 + 全部模型子目录
-├── NVEncC_9.32_x64/            # NVEncC (HDR 编码)
+├── NVEncC-7/                   # NVEncC 7.74 (HDR 编码，唯一版本)
 ├── Temp/                       # 处理中间产物（帧序列）
 └── Output/                     # 最终输出视频
 ```

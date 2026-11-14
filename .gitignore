@@ -20,8 +20,8 @@ crash.log
 
 ## 外部工具与模型（体积大，不入库，发布时单独复制）
 Tools/
-FFmpeg-Lei/
-NVEncC_9.32_x64/
+FFmpeg-8/
+NVEncC-7/
 realesrgan-ncnn/
 rife/
 

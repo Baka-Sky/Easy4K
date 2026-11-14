@@ -100,14 +100,15 @@ public partial class MainViewModel : ObservableObject
         _srModel = app.DefaultSrModel;
         _ifModel = app.DefaultIfModel;
         _useSafeFrameRate = app.UseSafeFrameRate;
+        _retryUhdOnCrash = app.RetryUhdOnCrash;
         _lowerQualityForVram = app.LowerQualityForVram;
         _useGpuAcceleration = app.UseGpuAcceleration;
         _useCpuProcessing = app.UseCpuProcessing;
-        _tryOldFfmpegOnCrash = app.TryOldFfmpegOnCrash;
         _sceneGuardEnabled = app.SceneGuardEnabled;
         _noReport = !app.ReportEnabled;
         _reportAutoOpen = app.ReportAutoOpen;
         _skipStartupSelfTest = !app.StartupSelfTest;
+        _skipVideoReview = app.SkipVideoReview;
         _threadCount = Math.Clamp(app.ThreadCount, 1, 32);
         // 四段线程：解码/编码分开。旧配置没有新字段时，编码沿用 ThreadCount、解码保持 1（等价旧的 1:N:N）
         _srEncodeThreads = Math.Clamp(app.SrEncodeThreads > 0 ? app.SrEncodeThreads : app.ThreadCount, 1, 32);
@@ -723,7 +724,19 @@ public partial class MainViewModel : ObservableObject
     private bool _isPaused;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CrashUhdOptionVis))]
     private bool _useSafeFrameRate;
+
+    /// <summary>崩溃降级时尝试启用 UHD 模式：关闭安全帧率后补帧崩溃，重试时加 -u 省显存。
+    /// 不勾选则只把线程降为 1:1:1（保持原画质）。</summary>
+    [ObservableProperty]
+    private bool _retryUhdOnCrash;
+
+    /// <summary>「崩溃降级时尝试启用 UHD 模式」选项是否显示：只在「未开安全帧率且不是 CPU 模式」时才有意义</summary>
+    public Microsoft.UI.Xaml.Visibility CrashUhdOptionVis
+        => !UseSafeFrameRate && !UseCpuProcessing
+            ? Microsoft.UI.Xaml.Visibility.Visible
+            : Microsoft.UI.Xaml.Visibility.Collapsed;
 
     /// <summary>降低部分画质以降低显存占用（-u UHD 模式，realesrgan/rife 均生效，可与安全帧率共存）</summary>
     [ObservableProperty]
@@ -735,11 +748,8 @@ public partial class MainViewModel : ObservableObject
 
     /// <summary>使用 CPU 处理所有模型（超分/补帧 NCNN -g -1），速度慢</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CrashUhdOptionVis))]
     private bool _useCpuProcessing;
-
-    /// <summary>崩溃时尝试使用老版本处理架构（拆帧/合并用老版 FFmpeg，HDR 用老版 NVEncC）</summary>
-    [ObservableProperty]
-    private bool _tryOldFfmpegOnCrash;
 
     /// <summary>转场保护：PySceneDetect 检测剪切点，转场处不插值（消除补帧鬼影）</summary>
     [ObservableProperty]
@@ -766,6 +776,10 @@ public partial class MainViewModel : ObservableObject
     /// <summary>勾选=跳过处理前测试（反相存入配置 StartupSelfTest；勾选后点开始处理不再先跑测试视频验证）</summary>
     [ObservableProperty]
     private bool _skipStartupSelfTest;
+
+    /// <summary>勾选=跳过视频审查（合并完成后不再比对成品帧数与帧目录帧数）</summary>
+    [ObservableProperty]
+    private bool _skipVideoReview;
 
     /// <summary>是否显示图片预览（处理中可随时开关）</summary>
     [ObservableProperty]
@@ -801,6 +815,15 @@ public partial class MainViewModel : ObservableObject
         _settings.Save(_app, _pathConfig);
     }
 
+    partial void OnRetryUhdOnCrashChanged(bool value)
+    {
+        _app.RetryUhdOnCrash = value;
+        _settings.Save(_app, _pathConfig);
+        _logger.Info(value
+            ? "已勾选崩溃降级时尝试启用 UHD 模式：补帧崩溃后的 1:1:1 重试会加 -u 省显存"
+            : "已取消崩溃降级时启用 UHD 模式：补帧崩溃后只把线程降为 1:1:1 重试");
+    }
+
     partial void OnLowerQualityForVramChanged(bool value)
     {
         _app.LowerQualityForVram = value;
@@ -830,15 +853,6 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    partial void OnTryOldFfmpegOnCrashChanged(bool value)
-    {
-        _app.TryOldFfmpegOnCrash = value;
-        _settings.Save(_app, _pathConfig);
-        _logger.Info(value
-            ? "已勾选「崩溃时尝试使用老版本处理架构」：FFmpeg（拆帧/合并/HDR/音频嵌入）和 NVEncC（HDR）失败时自动改用老版本重试"
-            : "已取消：拆帧/合并/HDR/音频嵌入只使用当前版本工具（失败后拆帧/合并仍会回退 CPU）");
-    }
-
     partial void OnSceneGuardEnabledChanged(bool value)
     {
         _app.SceneGuardEnabled = value;
@@ -862,6 +876,14 @@ public partial class MainViewModel : ObservableObject
         _settings.Save(_app, _pathConfig);
         _logger.Info(value ? "已勾选跳过测试：开始处理时不再先用 1 秒测试视频验证流程，直接处理"
                            : "已取消：每次开始处理前先用 1 秒测试视频验证勾选流程，通过后再处理正式视频");
+    }
+
+    partial void OnSkipVideoReviewChanged(bool value)
+    {
+        _app.SkipVideoReview = value;
+        _settings.Save(_app, _pathConfig);
+        _logger.Info(value ? "已勾选跳过视频审查：合并完成后不再比对成品帧数与帧目录帧数"
+                           : "已取消：合并完成后照常比对成品帧数与帧目录帧数");
     }
 
     partial void OnThreadCountChanged(int value)
@@ -1183,6 +1205,8 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(OutputResolutionText))]
     [NotifyPropertyChangedFor(nameof(TargetFpsText))]
     [NotifyPropertyChangedFor(nameof(FinalOutputName))]
+    [NotifyPropertyChangedFor(nameof(HasValidVideo))]
+    [NotifyPropertyChangedFor(nameof(CustomOutputNameBoxEnabled))]
     [NotifyPropertyChangedFor(nameof(VideoInfoText))]
     [NotifyPropertyChangedFor(nameof(CanStart))]
     [NotifyPropertyChangedFor(nameof(CanStartReason))]
@@ -1199,6 +1223,8 @@ public partial class MainViewModel : ObservableObject
     /// 避免勾着一个不可能生效的选项；清空视频（检测中/清空输入）时也一律取消勾选。</summary>
     partial void OnVideoChanged(VideoInfo? value)
     {
+        // 自定义文件名只在选中有效视频时可用：一旦不可用就同时取消勾选，不留"灰着却还勾着"的状态
+        if (value is null || !value.IsValid) CustomOutputNameEnabled = false;
         if (value is null)
         {
             KeepSubtitles = false;
@@ -1305,11 +1331,49 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>是否已选中有效视频（自定义输出文件名的启用条件）</summary>
+    public bool HasValidVideo => Video is { IsValid: true };
+
+    /// <summary>勾选「自定义输出文件名」：关闭时沿用 Easy4K 自动生成的名称</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FinalOutputName))]
+    [NotifyPropertyChangedFor(nameof(CustomOutputNameBoxEnabled))]
+    private bool _customOutputNameEnabled;
+
+    /// <summary>用户填写的成品文件名（不含扩展名也可，落盘时统一补 .mkv）</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FinalOutputName))]
+    private string _customOutputName = "";
+
+    /// <summary>自定义文件名输入框是否可用：必须已勾选且已选中有效视频（需求：仅在选择了视频时才启用）</summary>
+    public bool CustomOutputNameBoxEnabled => CustomOutputNameEnabled && HasValidVideo;
+
+    /// <summary>实际生效的自定义成品文件名：未勾选、没选视频或为空时返回空串（表示用自动命名）</summary>
+    public string CustomOutputFileName
+    {
+        get
+        {
+            if (!CustomOutputNameEnabled || !HasValidVideo) return "";
+            var name = (CustomOutputName ?? "").Trim();
+            if (name.Length == 0) return "";
+            foreach (var ch in Path.GetInvalidFileNameChars()) name = name.Replace(ch, '_');
+            name = name.TrimEnd('.', ' ');
+            if (name.Length == 0) return "";
+            return name.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase) ? name : name + ".mkv";
+        }
+    }
+
     public string FinalOutputName
     {
         get
         {
             if (Video is null || !Video.IsValid || string.IsNullOrEmpty(InputVideo)) return "选择视频后自动生成";
+            var custom = CustomOutputFileName;
+            if (custom.Length > 0) return custom;
+            if (CustomOutputNameEnabled)
+                return string.IsNullOrWhiteSpace(CustomOutputName)
+                    ? "请填写自定义输出文件名"
+                    : "自定义文件名包含无效字符";
             var w = SuperResolution ? Video.Width * SrScale : Video.Width;
             var h = SuperResolution ? Video.Height * SrScale : Video.Height;
             return OutputNamer.Build(InputVideo, SuperResolution, Interpolation, SdrToHdr, w, h, EffectiveOutFps, MergeAudio);
@@ -2036,26 +2100,6 @@ public partial class MainViewModel : ObservableObject
             });
         }, ct: ct);
 
-        // 崩溃时尝试使用老版本处理架构：新版 NVEncC 失败 → 老版本重试一次
-        if (exit != 0 && _app.TryOldFfmpegOnCrash && Tools.NvEncOldExists)
-        {
-            _logger.Warn("单文件 HDR：新版 NVEncC 失败，改用老版本 NVEncC 重试");
-            SfStatus = "HDR 转换中（老版本）… 0%";
-            exit = await _runner.RunAsync(Tools.NvEncOldExe, args, onLine: line =>
-            {
-                var m = SfHdrPercentRe.Match(line);
-                if (!m.Success) return;
-                var pct = m.Groups[1].Value;
-                var pctValue = double.TryParse(pct, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var p) ? p : 0;
-                _dispatcherQueue.TryEnqueue(() =>
-                {
-                    SfStatus = $"HDR 转换中（老版本）… {pct}%";
-                    ProgressPercent = pctValue;
-                });
-            }, ct: ct);
-        }
-
         if (exit != 0 || !File.Exists(output))
         {
             SfStatus = $"HDR 转换失败（退出码 {exit}），详见「进行中」页日志";
@@ -2499,14 +2543,46 @@ public partial class MainViewModel : ObservableObject
 
     // ===================== 处理流程 =====================
 
+    /// <summary>自定义输出文件名的启动前校验。返回 null = 没问题；否则是要展示给用户的错误文案。</summary>
+    private string? CheckCustomOutputNameError()
+    {
+        if (!CustomOutputNameEnabled || !HasValidVideo) return null;
+        var name = CustomOutputFileName;
+        if (name.Length == 0)
+        {
+            return "已勾选「自定义输出文件名」，但文件名为空或只包含无效字符。\n\n"
+                + "请填写文件名，或取消勾选改用 Easy4K 自动命名。";
+        }
+        if (string.IsNullOrWhiteSpace(OutputRoot)) return null;
+        return File.Exists(Path.Combine(OutputRoot, name))
+            ? $"产出文件名重复：输出目录中已存在「{name}」。\n\n"
+                + "请修改自定义输出文件名，或先把已有文件改名/移走后再开始处理。"
+            : null;
+    }
+
+    /// <summary>阻塞式拦截自定义文件名问题：返回 true = 已拦截并已弹窗。点「开始处理」时最先调用。</summary>
+    private bool BlockOnCustomOutputNameError()
+    {
+        var msg = CheckCustomOutputNameError();
+        if (msg is null) return false;
+        _logger.Error($"无法启动：{msg.Replace("\n\n", " ")}");
+        StartFailed?.Invoke(msg);
+        return true;
+    }
+
     /// <summary>启动前确认流程（顺序执行）：
-    /// 0) 检测到动态帧率 → 先提示改用 PR / 剪映转成静态帧率，用户取消则阻断启动；
-    /// 1) 临时目录有旧文件/缓存不符 → 弹窗引导（重新选择临时目录/清理缓存/取消），未解决则阻断启动；
-    /// 2) CPU 处理模式开启 → 弹最终警告"不建议开启 CPU 处理"，取消则不启动。
+    /// 0) 自定义输出文件名重复/为空 → 立即弹窗提示并阻断（不跑处理前测试、不切「进行中」页）；
+    /// 1) 检测到动态帧率 → 提示改用 PR / 剪映转成静态帧率，用户取消则阻断启动；
+    /// 2) 临时目录有旧文件/缓存不符 → 弹窗引导（重新选择临时目录/清理缓存/取消），未解决则阻断启动；
+    /// 3) CPU 处理模式开启 → 弹最终警告"不建议开启 CPU 处理"，取消则不启动。
     /// 弹窗由 MainWindow 弹出并处理，处理完成后回调 DialogResult 唤醒本流程继续。</summary>
     public async Task<bool> ConfirmStartAsync()
     {
-        // 0. 动态帧率提醒最先弹：VFR 的帧间隔不固定，拆帧/补帧按恒定帧率重建容易音画不同步
+        // 0. 自定义输出文件名重复/为空 → 最先拦下：点「开始处理」立即提示，
+        //    不先跑处理前测试，也不切换到「进行中」页
+        if (BlockOnCustomOutputNameError()) return false;
+
+        // 1. 动态帧率提醒最先弹：VFR 的帧间隔不固定，拆帧/补帧按恒定帧率重建容易音画不同步
         if (Video is { IsValid: true, IsVariableFrameRate: true } && VariableFrameRateDetected is not null)
         {
             _dialogTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -2576,6 +2652,19 @@ public partial class MainViewModel : ObservableObject
         if (Video is null || !Video.IsValid) { _logger.Error("请先选择有效的输入视频（或导入帧文件夹并填写参数）"); return; }
         if (!HasExternalFrames && !File.Exists(InputVideo)) { _logger.Error("输入视频文件不存在"); return; }
 
+        // 帧去重 AI 模型缺失 → 直接拒绝启动，不允许静默回退到四阶判决器
+        if (DedupEnabled)
+        {
+            var dedupModel = DedupMode == "uhd" ? Tools.SfdpModelFp32 : Tools.SfdpModelFp16;
+            if (!File.Exists(dedupModel))
+            {
+                var msg = $"无法启动：帧去重 AI 模型缺失（{dedupModel}）。请补齐 Tools\\SFDP 下的模型文件，或在「高级」页关闭帧去重。";
+                _logger.Error(msg);
+                StartFailed?.Invoke(msg);
+                return;
+            }
+        }
+
         // 预检目录可写：目录"存在但当前用户无访问权限"时，Directory.Exists 返回 false（跳过清理），
         // 直到拆帧阶段 CreateDirectory 才抛 "Access to the path ... is denied"，用户只能看到一行模糊的"处理异常"。
         // 这里提前创建/校验临时与输出目录，失败则给出明确原因并阻止启动。
@@ -2586,6 +2675,11 @@ public partial class MainViewModel : ObservableObject
             StartFailed?.Invoke(msg);
             return;
         }
+
+        // 自定义输出文件名：重复/为空 → 拒绝启动（首页路径已在 ConfirmStartAsync 里提前拦下，
+        // 这里保留兜底，覆盖快捷键、远程指令等直接进 StartAsync 的入口）
+        if (BlockOnCustomOutputNameError()) return;
+        var customOutName = CustomOutputFileName;
 
         // 涡轮模式复检：用户可以先切到固态盘开启涡轮、再把主页的临时目录改回机械盘，从而绕过勾选时的检查。
         // 因此开跑前再验一次；命中机械盘就关闭涡轮，并且明确告知用户（不静默处理）。
@@ -2696,6 +2790,8 @@ public partial class MainViewModel : ObservableObject
             InputVideo = pipelineInput,
             // 输出文件仍按原视频命名（转换后的中间文件叫 input_cfr，不能拿它当成品名）
             OutputNameBase = HasExternalFrames ? "" : InputVideo,
+            // 自定义成品文件名（空 = 用 OutputNamer 自动命名）
+            CustomOutputFileName = customOutName,
             TempRoot = TempRoot.Replace('\\', '/'),
             OutputRoot = OutputRoot.Replace('\\', '/'),
             ExternalFramesDir = ExternalFramesDir.Replace('\\', '/'),
@@ -2848,19 +2944,11 @@ public partial class MainViewModel : ObservableObject
 
         var exit = await RunCfrAsync(Tools.FFmpegExe);
 
-        // 与流水线内其它阶段同一套兜底：新版 FFmpeg 崩了用老版本再试一次（勾选「崩溃时尝试使用老版本处理架构」时）
-        if (exit != 0 && !ct.IsCancellationRequested && _app.TryOldFfmpegOnCrash && Tools.FFmpegOldExists)
-        {
-            _logger.Warn("新版 FFmpeg 转换动态帧率失败，改用老版本 FFmpeg 重试");
-            ProgressDetail = "正在转换为静态帧率（CFR，老版本 FFmpeg）...";
-            exit = await RunCfrAsync(Tools.FFmpegOldExe);
-        }
-
         if (ct.IsCancellationRequested) { CfrConverting = false; return null; }
 
         if (exit != 0 || !File.Exists(outPath) || new FileInfo(outPath).Length == 0)
         {
-            _logger.Error($"动态帧率转换失败（ffmpeg 退出码 {exit}，新版与老版本均未成功）");
+            _logger.Error($"动态帧率转换失败（ffmpeg 退出码 {exit}）");
             CfrConverting = false;
             return null;
         }

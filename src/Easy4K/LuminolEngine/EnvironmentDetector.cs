@@ -5,7 +5,7 @@ using Easy4K.LuminolEngine.CommandBuilders;
 
 namespace Easy4K.LuminolEngine;
 
-/// <summary>环境检测：工具是否齐全 + 版本（特别是 NVEncC ≥ 9.32 才支持 --vpp-ngx-truehdr），
+/// <summary>环境检测：工具是否齐全 + 版本（特别是 NVEncC ≥ 7.30 才支持 --vpp-ngx-truehdr），
 /// 并且逐个数模型文件（超分各引擎按「模型 × 倍率」核对 .param，补帧扫 rife 模型目录，
 /// SFDP / HDR / AudioSR 核对 .onnx）。输出一个检测结果列表，UI 直接展示。</summary>
 public sealed class EnvironmentDetector
@@ -22,8 +22,6 @@ public sealed class EnvironmentDetector
         {
             Check("FFmpeg", _tools.FFmpegExists, extra: _tools.FFmpegExists ? GetVersion(_tools.FFmpegExe, "-version") : ""),
             Check("FFprobe", _tools.FFprobeExists, extra: _tools.FFprobeExists ? GetVersion(_tools.FFprobeExe, "-version") : ""),
-            // 老版本兜底工具（勾选「崩溃时尝试使用老版本处理架构」时才用到，缺失不影响正常处理）
-            CheckOldFfmpegTools(),
             // ncnn 工具没有版本输出（-v 只是 verbose，会打印 usage 退出），只报是否部署
             Check("Real-ESRGAN", _tools.RealEsrganExists, extra: _tools.RealEsrganExists ? "已部署" : ""),
             Check("RIFE", _tools.RifeExists, extra: _tools.RifeExists ? "已部署" : "")
@@ -32,23 +30,18 @@ public sealed class EnvironmentDetector
         // 模型文件：逐个真扫盘核对，缺哪个模型明确列出来
         list.AddRange(CheckModelFiles());
 
-        // NVEncC：需要版本 ≥ 9.32 才支持 --vpp-ngx-truehdr (BUG-05)
+        // NVEncC：需要版本 ≥ 7.30 才支持 --vpp-ngx-truehdr (BUG-05)；随包只有 7.74 一个版本
         if (_tools.NvEncExists)
         {
             var ver = GetNvEncVersion(_tools.NvEncExe);
-            var ok = ParseNvEncVersion(ver) >= new Version(9, 32);
+            var ok = ParseNvEncVersion(ver) >= new Version(7, 30);
             list.Add(Check("NVEncC64", ok, extra: $"v{ver}", required: false,
-                hint: ok ? "" : "版本需 ≥ 9.32 才支持 --vpp-ngx-truehdr，请升级"));
+                hint: ok ? "" : "版本需 ≥ 7.30 才支持 --vpp-ngx-truehdr，请升级"));
         }
         else
         {
             list.Add(Check("NVEncC64", false, extra: "未安装", required: false, hint: "仅 SDR→HDR 功能需要"));
         }
-
-        list.Add(_tools.NvEncOldExists
-            ? Check("NVEncC64（老版本兜底）", true, extra: $"v{GetNvEncVersion(_tools.NvEncOldExe)}", required: false)
-            : Check("NVEncC64（老版本兜底）", false, extra: "未安装", required: false,
-                    hint: "可不装；HDR 转换崩溃且勾选「崩溃时尝试使用老版本处理架构」时才用到"));
 
         list.Add(_tools.SceneDetectReady
             ? Check("转场检测 · PySceneDetect", true, extra: "已部署", required: false)
@@ -65,32 +58,6 @@ public sealed class EnvironmentDetector
                 hint: gpu.IsRtx ? "" : "SDR→HDR 需要 RTX 20/30/40/50 系列"));
         }
         return list;
-    }
-
-    /// <summary>老版本 FFmpeg / FFprobe（兜底用）：两个都标出实际版本，缺失也只提示、不算必装。</summary>
-    private CheckResult CheckOldFfmpegTools()
-    {
-        if (!_tools.FFmpegOldExists)
-            return Check("FFmpeg（老版本兜底）", false, extra: "未安装", required: false,
-                hint: "可不装；勾选「崩溃时尝试使用老版本处理架构」时才用到");
-
-        var ff = ShortVersion(GetVersion(_tools.FFmpegOldExe, "-version"));
-        var fp = File.Exists(_tools.FFprobeOldExe)
-            ? ShortVersion(GetVersion(_tools.FFprobeOldExe, "-version"))
-            : "缺失";
-        return Check("FFmpeg（老版本兜底）", true, extra: $"ffmpeg {ff} ｜ ffprobe {fp}", required: false);
-    }
-
-    /// <summary>从 "ffmpeg version n8.1.3-27-gxxxx Copyright ..." 里取出简短的 "8.1.3"。</summary>
-    private static string ShortVersion(string line)
-    {
-        var m = Regex.Match(line ?? "", @"version\s+(\S+)");
-        if (!m.Success) return "未知";
-        var v = m.Groups[1].Value;
-        if (v.StartsWith('n')) v = v[1..];
-        var dash = v.IndexOf('-');
-        if (dash > 0) v = v[..dash];
-        return v;
     }
 
     // ===================== 模型文件（真扫盘） =====================
@@ -114,7 +81,7 @@ public sealed class EnvironmentDetector
             {
                 foreach (var s in v.Scales)
                 {
-                    var path = SrModelFile(fam.ExeKey, dir, v.Name, s);
+                    var path = SrModelFile(_tools, fam.ExeKey, dir, v.Name, s);
                     if (!string.IsNullOrEmpty(path) && File.Exists(path)) ok.Add($"{v.Name} ×{s}");
                     else miss.Add($"{v.Name} ×{s}");
                 }
@@ -172,17 +139,20 @@ public sealed class EnvironmentDetector
         });
 
         // ---------- 帧去重：SFDP 孪生网络 ----------
-        var sfdpFp32 = Path.Combine(_tools.ToolsRoot, "SFDP", "model.onnx");
-        var sfdpFp16 = Path.Combine(_tools.ToolsRoot, "SFDP", "model_fp16.onnx");
+        var sfdpFp32 = _tools.SfdpModelFp32;
+        var sfdpFp16 = _tools.SfdpModelFp16;
+        var sfdpMissing = new List<string>();
+        if (!File.Exists(sfdpFp32)) sfdpMissing.Add("model.onnx（完美模式）");
+        if (!File.Exists(sfdpFp16)) sfdpMissing.Add("model_fp16.onnx（性能模式）");
         list.Add(new CheckResult
         {
             Name = "去重模型 · SFDP 孪生网络",
-            Ok = File.Exists(sfdpFp32) || File.Exists(sfdpFp16),
-            Required = false,
+            Ok = sfdpMissing.Count == 0,
+            Required = true,
             Extra = $"FP32 {SizeText(sfdpFp32)} · FP16 {SizeText(sfdpFp16)}",
-            Hint = File.Exists(sfdpFp32) || File.Exists(sfdpFp16)
+            Hint = sfdpMissing.Count == 0
                 ? ""
-                : "Tools\\SFDP 下没有 model.onnx / model_fp16.onnx，帧去重会回退到四阶判决器",
+                : $"缺少 {string.Join(" / ", sfdpMissing)}；帧去重 AI 模型为必需项，缺失时启动自检会阻止进入，请补齐 Tools\\SFDP",
             Lines = new List<string> { $"完美模式 ← {sfdpFp32}", $"性能模式 ← {sfdpFp16}" }
         });
 
@@ -217,13 +187,75 @@ public sealed class EnvironmentDetector
         return list;
     }
 
+    /// <summary>
+    /// 启动自检用的「缺一不可」清单：全部超分模型（每个模型 × 每个倍率）、全部补帧模型
+    /// （已部署的 rife-v* 目录必须完整，常用白名单必须存在）、SFDP 两个去重模型。
+    /// 返回逐项中文描述，空列表表示全部就绪。
+    /// </summary>
+    public static List<string> MissingRequiredModels(ToolPaths tools)
+    {
+        var missing = new List<string>();
+
+        foreach (var fam in SrCatalog.Families)
+        {
+            var exe = tools.SrExeFor(fam.ExeKey);
+            if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
+            {
+                missing.Add($"超分引擎 {fam.Label}");
+                continue;
+            }
+
+            var dir = Path.GetDirectoryName(exe) ?? "";
+            foreach (var v in fam.Variants)
+            {
+                foreach (var s in v.Scales)
+                {
+                    var path = SrModelFile(tools, fam.ExeKey, dir, v.Name, s);
+                    if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                        missing.Add($"超分模型 {v.Name} ×{s}");
+                }
+            }
+        }
+
+        var rifeRoot = tools.RifeModelsRoot;
+        if (string.IsNullOrWhiteSpace(rifeRoot) || !Directory.Exists(rifeRoot))
+        {
+            missing.Add("补帧模型目录（Tools\\rife）");
+        }
+        else
+        {
+            var dirs = Directory.EnumerateDirectories(rifeRoot)
+                .Where(d => Path.GetFileName(d).StartsWith("rife-v", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (dirs.Count == 0) missing.Add("补帧模型（Tools\\rife 下没有任何 rife-v* 模型）");
+
+            foreach (var d in dirs)
+            {
+                var name = Path.GetFileName(d);
+                if (!File.Exists(Path.Combine(d, "flownet.param"))) missing.Add($"补帧模型 {name}（缺 flownet.param）");
+                else if (!File.Exists(Path.Combine(d, "flownet.bin"))) missing.Add($"补帧模型 {name}（缺 flownet.bin）");
+            }
+
+            foreach (var name in RifeCommandBuilder.PreferredModels)
+            {
+                if (!Directory.Exists(Path.Combine(rifeRoot, name)))
+                    missing.Add($"补帧模型 {name}（常用模型缺失）");
+            }
+        }
+
+        if (!File.Exists(tools.SfdpModelFp32)) missing.Add("去重模型 SFDP model.onnx（完美模式）");
+        if (!File.Exists(tools.SfdpModelFp16)) missing.Add("去重模型 SFDP model_fp16.onnx（性能模式）");
+
+        return missing;
+    }
+
     /// <summary>某个「超分模型 × 倍率」实际需要的 .param 路径；未知返回空串。</summary>
-    private string SrModelFile(string exeKey, string engineDir, string modelName, int scale)
+    private static string SrModelFile(ToolPaths tools, string exeKey, string engineDir, string modelName, int scale)
     {
         switch (exeKey)
         {
             case "esrgan":
-                return Path.Combine(_tools.RealEsrganModelsRoot, modelName + ".param");
+                return Path.Combine(tools.RealEsrganModelsRoot, modelName + ".param");
 
             case "cugan":
                 {
