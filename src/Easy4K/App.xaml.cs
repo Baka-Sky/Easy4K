@@ -266,6 +266,9 @@ public partial class App : Application
             splash.Activate();
 
             var sw = Stopwatch.StartNew();
+            File.AppendAllText(CrashLogPath,
+                $"[Startup @ {DateTime.Now:yyyy-MM-dd HH:mm:ss}] ToolsRoot={tools.ToolsRoot} " +
+                $"FFmpeg={tools.FFmpegExe}({tools.FFmpegExists}) FFprobe={tools.FFprobeExe}({tools.FFprobeExists})\n");
             var problem = await Task.Run(() => CheckStartupAssets(tools));
 
             if (problem is not null)
@@ -296,8 +299,8 @@ public partial class App : Application
     {
         var missing = new List<string>();
 
-        if (!tools.FFmpegExists) missing.Add("FFmpeg（Tools\\FFmpeg-8 下的 ffmpeg.exe）");
-        if (!tools.FFprobeExists) missing.Add("FFprobe（Tools\\FFmpeg-8 下的 ffprobe.exe）");
+        if (!tools.FFmpegExists) missing.Add($"FFmpeg（找不到 {tools.FFmpegExe}）");
+        if (!tools.FFprobeExists) missing.Add($"FFprobe（找不到 {tools.FFprobeExe}）");
         if (!tools.RealEsrganExists) missing.Add("Real-ESRGAN 超分引擎");
         if (!tools.RifeExists) missing.Add("RIFE 补帧引擎");
         // 全部超分模型（模型 × 倍率）、全部补帧模型（含常用白名单）、SFDP 两个去重模型：

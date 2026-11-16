@@ -22,10 +22,8 @@ public static class ToolPathResolver
     {
         var toolsRoot = ResolveToolsRoot(settings.ToolsRoot);
 
-        var ffmpegDir = Path.Combine(toolsRoot, pathConfig.FFmpegDir);
         var reDir = Path.Combine(toolsRoot, pathConfig.RealEsrganDir);
         var rifeDir = Path.Combine(toolsRoot, pathConfig.RifeDir);
-        var nvDir = Path.Combine(toolsRoot, pathConfig.NvEncDir);
         var portablePythonDir = Path.Combine(toolsRoot, "python");
         var audioSrDir = Path.Combine(toolsRoot, "AudioSR");
         // PyTorch 轨（DRBA/GMFSS/UMSS/GIMM-VFI）：独立 Python 3.12 环境 + 统一驱动脚本
@@ -40,8 +38,10 @@ public static class ToolPathResolver
         return new ToolPaths
         {
             ToolsRoot = toolsRoot,
-            FFmpegExe = Path.Combine(ffmpegDir, "bin", "ffmpeg.exe"),
-            FFprobeExe = Path.Combine(ffmpegDir, "bin", "ffprobe.exe"),
+            // 兼容两种发行布局：官方布局 <dir>\bin\ffmpeg.exe，以及把 exe 直接放在 <dir>\ 根下；
+            // 配置里的目录名对不上（如旧配置写着 FFmpeg-Lei）时也回退到默认 FFmpeg-8，避免自检误报缺失。
+            FFmpegExe = ResolveExe(toolsRoot, pathConfig.FFmpegDir, "FFmpeg-8", "ffmpeg.exe"),
+            FFprobeExe = ResolveExe(toolsRoot, pathConfig.FFmpegDir, "FFmpeg-8", "ffprobe.exe"),
             RealEsrganExe = Path.Combine(reDir, "realesrgan-ncnn-vulkan.exe"),
             RealEsrganModelsRoot = Path.Combine(reDir, "models"),
             RealCuganExe = Path.Combine(realCuganDir, "realcugan-ncnn-vulkan.exe"),
@@ -51,7 +51,7 @@ public static class ToolPathResolver
             RifeExe = Path.Combine(rifeDir, "rife-ncnn-vulkan.exe"),
             // RIFE 模型在 I:\NEWSVFI\rife\rife-v4.6\ 等子目录下，工具 exe 在 rife\ 根下
             RifeModelsRoot = rifeDir,
-            NvEncExe = Path.Combine(nvDir, "NVEncC64.exe"),
+            NvEncExe = ResolveExe(toolsRoot, pathConfig.NvEncDir, "NVEncC-7", "NVEncC64.exe"),
             // 便携 Python 解释器（现供 AudioSR 音频超分使用；补帧已统一走 NCNN，不再有 PyTorch 依赖）
             PortablePythonExe = Path.Combine(portablePythonDir, "python.exe"),
             AudioSrDir = audioSrDir,
@@ -63,5 +63,23 @@ public static class ToolPathResolver
             VfiDriverScript = Path.Combine(frameInterpDir, "vfi_driver.py"),
             SceneDetectScript = Path.Combine(toolsRoot, "SceneDetect", "scene_detect.py")
         };
+    }
+
+    /// <summary>解析单个工具 exe：依次尝试「配置目录 / 默认目录」×「bin 子目录 / 目录根」，
+    /// 都不存在时返回默认布局路径（自检据此报告具体缺哪个文件）。</summary>
+    private static string ResolveExe(string toolsRoot, string configuredDir, string defaultDir, string exeName)
+    {
+        var dirs = new List<string>();
+        if (!string.IsNullOrWhiteSpace(configuredDir)) dirs.Add(configuredDir);
+        if (!string.Equals(configuredDir, defaultDir, StringComparison.OrdinalIgnoreCase)) dirs.Add(defaultDir);
+
+        foreach (var dir in dirs)
+        {
+            var inBin = Path.Combine(toolsRoot, dir, "bin", exeName);
+            if (File.Exists(inBin)) return inBin;
+            var atRoot = Path.Combine(toolsRoot, dir, exeName);
+            if (File.Exists(atRoot)) return atRoot;
+        }
+        return Path.Combine(toolsRoot, defaultDir, "bin", exeName);
     }
 }

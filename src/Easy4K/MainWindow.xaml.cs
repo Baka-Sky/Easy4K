@@ -2392,8 +2392,14 @@ public sealed partial class MainWindow : Window
             }
 
             var package = updates[0].Package.Id.Version;
-            await ShowStoreUpdateDialogAsync(context, installed,
-                new Version(package.Major, package.Minor, package.Build, package.Revision));
+            var available = new Version(package.Major, package.Minor, package.Build, package.Revision);
+            // 商店回退/同版本（例如已装 2.1.3、商店最新 2.1.2）不提示，避免"越更新越旧"
+            if (available <= installed)
+            {
+                Vm.Logger.Info($"微软商店版本 {available} 不高于当前安装版本 {installed}，不提示更新");
+                return;
+            }
+            await ShowStoreUpdateDialogAsync(context, installed, available);
         }
         catch (Exception ex)
         {
