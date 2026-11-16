@@ -3943,7 +3943,7 @@ public partial class MainViewModel : ObservableObject
     /// MSIX 升级时 %LOCALAPPDATA% 下的旧配置不会被覆盖，读配置会让标题栏一直停在旧版本。</summary>
     public string Version =>
         typeof(MainViewModel).Assembly.GetName().Version is { Major: > 0 } v
-            ? (v.Revision > 0 ? $"{v.Major}.{v.Minor}.{v.Build}.{v.Revision}" : $"{v.Major}.{v.Minor}.{v.Build}")
+            ? $"{v.Major}.{v.Minor}.{v.Build}"
             : _app.Version;
 
     /// <summary>配置文件中保存的主题模式（light/dark/system/acrylic）</summary>

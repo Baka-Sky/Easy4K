@@ -2423,12 +2423,6 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>版本号显示规则：修订号为 0 时显示三段（2.1.3），否则显示四段（2.1.3.1）。</summary>
-    private static string FormatVersion(Version v)
-        => v.Revision > 0
-            ? $"{v.Major}.{v.Minor}.{v.Build}.{v.Revision}"
-            : $"{v.Major}.{v.Minor}.{v.Build}";
-
     /// <summary>宽松解析版本号：允许只写主版本（如 "1" → 1.0），其余不足两位时补 .0。</summary>
     private static bool TryParseVersion(string? text, out Version version)
     {
@@ -2513,7 +2507,7 @@ public sealed partial class MainWindow : Window
                 {
                     new TextBlock
                     {
-                        Text = $"当前版本: v{FormatVersion(installed)}    商店版本: v{FormatVersion(available)}",
+                        Text = $"当前版本: v{installed.Major}.{installed.Minor}.{installed.Build}    商店版本: v{available.Major}.{available.Minor}.{available.Build}",
                         TextWrapping = TextWrapping.Wrap
                     },
                     new TextBlock
