@@ -1,0 +1,42 @@
+{
+  "python": "D:\\DevTools\\python315\\python.exe",
+  "siai_script": "H:\\Easy4K\\dist\\easy4k-sfdp-siamese-net\\code\\siai_all.py",
+  "teacher_exe": "H:\\Easy4K\\dist\\sfdp-teacher\\SfdpTeacher.exe",
+
+  "data_root": "D:\\sfdp-ai\\siamese\\data",
+  "tiles_primary": "D:\\sfdp-ai\\siamese\\data\\tiles",
+  "tiles_hot": "C:\\sfdp-hot",
+  "labels_dir": "D:\\sfdp-ai\\siamese\\data\\labels",
+
+  "download": {
+    "interval_sec": 21600,
+    "extra_args": ["rank", "--pages", "20"]
+  },
+  "tiles": {
+    "interval_sec": 1800,
+    "extra_args": ["tiles", "--crop", "128", "--per-pair", "4"]
+  },
+  "teacher": {
+    "workers": 10,
+    "mode": "uhd",
+    "crop": 128,
+    "per_pair": 4,
+    "timeout_sec": 300,
+    "interval_sec": 1800
+  },
+  "train": {
+    "interval_sec": 0,
+    "extra_args": ["train", "--epochs", "999", "--crop", "128"]
+  },
+
+  "hot_cache": {
+    "enabled": true,
+    "interval_sec": 600,
+    "max_dirs_per_round": 300,
+    "min_free_gb": 15,
+    "idle_minutes": 90
+  },
+
+  "stop_at": "",
+  "log_dir": "logs"
+}
